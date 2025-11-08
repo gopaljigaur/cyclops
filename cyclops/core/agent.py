@@ -2,28 +2,10 @@
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
 import asyncio
 from cyclops.providers.base import LLMProvider
 from cyclops.providers.litellm_provider import LiteLLMProvider
-
-
-class AgentConfig(BaseModel):
-    """Configuration for an agent"""
-
-    model: str = "gpt-4o-mini"
-    temperature: float = 0.1
-    max_tokens: Optional[int] = None
-    system_prompt: Optional[str] = None
-    tool_mode: str = "auto"  # "auto", "native", or "naive"
-
-
-class Message(BaseModel):
-    """Message representation"""
-
-    role: str
-    content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+from cyclops.core.types import AgentConfig, Message
 
 
 class BaseAgent(ABC):

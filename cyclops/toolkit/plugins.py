@@ -9,15 +9,38 @@ from cyclops.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Plugin specification
-hookspec = pluggy.HookspecMarker("cyclops")
-hookimpl = pluggy.HookimplMarker("cyclops")
+
+class Toolkit:
+    """Base class for toolkit plugins
+
+    Define tool instances as class attributes and the framework
+    will automatically discover them:
+
+    class MyToolkit(Toolkit):
+        weather = WeatherTool()
+        forecast = ForecastTool()
+    """
+
+    def get_tools(self) -> List[BaseTool]:
+        """Return list of tools provided by this toolkit"""
+        tools = []
+        for attr_name in dir(self):
+            if not attr_name.startswith("_"):
+                attr = getattr(self, attr_name)
+                if isinstance(attr, BaseTool):
+                    tools.append(attr)
+        return tools
 
 
-class ToolkitSpec:
-    """Hook specifications for toolkit plugins"""
+# Internal pluggy hooks
+_hookspec = pluggy.HookspecMarker("cyclops")
+_hookimpl = pluggy.HookimplMarker("cyclops")
 
-    @hookspec  # type: ignore[empty-body]
+
+class _ToolkitSpec:
+    """Internal hook specifications"""
+
+    @_hookspec  # type: ignore[empty-body]
     def get_tools(self) -> List[BaseTool]:
         """Return list of tools provided by this toolkit"""
         ...
@@ -28,7 +51,7 @@ class PluginManager:
 
     def __init__(self, registry: Optional[ToolRegistry] = None):
         self.pm = pluggy.PluginManager("cyclops")
-        self.pm.add_hookspecs(ToolkitSpec)
+        self.pm.add_hookspecs(_ToolkitSpec)
         self.registry = registry or ToolRegistry()
 
     def load_plugins(self) -> None:
@@ -52,19 +75,20 @@ class PluginManager:
 
     def register_tools(self) -> None:
         """Register all tools from loaded plugins"""
-        # Call hook to get tools from all plugins
-        results = self.pm.hook.get_tools()
-
-        for tool_list in results:
-            if tool_list:
-                for tool in tool_list:
-                    self.registry.register(tool)
-                    logger.info(f"Registered tool: {tool.name}")
+        for name, plugin in self.pm.list_name_plugin():
+            if isinstance(plugin, Toolkit):
+                try:
+                    tools = plugin.get_tools()
+                    if tools:
+                        for tool in tools:
+                            self.registry.register(tool)
+                            logger.info(f"Registered tool: {tool.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to get tools from {name}: {e}")
 
     def get_plugin_names(self) -> List[str]:
         """Get names of loaded plugins"""
-        return list(self.pm.list_name_plugin())
+        return [name for name, _ in self.pm.list_name_plugin()]
 
 
-# Export the hook implementer decorator for toolkit authors
-__all__ = ["PluginManager", "hookimpl", "BaseTool"]
+__all__ = ["PluginManager", "Toolkit"]

@@ -1,27 +1,9 @@
 """Tool definitions and base classes"""
 
 from abc import ABC
-from typing import Any, Dict, Optional, Callable
-from pydantic import BaseModel, Field
+from typing import Any, Callable
 import inspect
-
-
-class ToolParameter(BaseModel):
-    """Tool parameter definition"""
-
-    name: str
-    type: str
-    description: Optional[str] = None
-    required: bool = True
-    default: Any = None
-
-
-class ToolDefinition(BaseModel):
-    """Tool definition metadata"""
-
-    name: str
-    description: str
-    parameters: Dict[str, ToolParameter] = Field(default_factory=dict)
+from cyclops.toolkit.types import ToolParameter, ToolDefinition
 
 
 class BaseTool(ABC):
