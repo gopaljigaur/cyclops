@@ -31,11 +31,11 @@ class ToolRegistry:
         """Get all tool definitions"""
         return {name: tool.definition for name, tool in self._tools.items()}
 
-    async def execute_tool(self, name: str, **kwargs) -> Any:
+    async def execute_tool(self, tool_name: str, **kwargs) -> Any:
         """Execute a tool by name"""
-        tool = self.get_tool(name)
+        tool = self.get_tool(tool_name)
         if not tool:
-            raise ValueError(f"Tool '{name}' not found")
+            raise ValueError(f"Tool '{tool_name}' not found")
 
         return await tool.execute(**kwargs)
 

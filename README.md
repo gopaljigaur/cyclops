@@ -16,8 +16,9 @@ A barebones core agent framework with MCP toolkit support.
 from cyclops import Agent, AgentConfig
 from cyclops.toolkit import tool
 
-@tool("get_time", "Get current time")
+@tool
 def get_time() -> str:
+    """Get current time"""
     from datetime import datetime
     return datetime.now().strftime("%H:%M:%S")
 
