@@ -4,7 +4,7 @@ Demonstrates distributing requests across multiple providers/models
 for better throughput and reliability.
 """
 
-from cyclops import Agent, AgentConfig, LiteLLMProvider
+from cyclops import Agent, AgentConfig
 from cyclops.toolkit import tool
 from litellm import Router
 
@@ -45,12 +45,9 @@ router = Router(
     num_retries=2,
 )
 
-# Create provider with router
-provider = LiteLLMProvider(model="my-model", router=router)
-
-# Create agent with tools
-config = AgentConfig(model="my-model")
-agent = Agent(config, tools=[calculate], provider=provider)
+# Create agent with router in config
+config = AgentConfig(model="my-model", router=router)
+agent = Agent(config, tools=[calculate])
 
 print("Router with Load Balancing Example\n")
 print("Requests are distributed across multiple model instances\n")

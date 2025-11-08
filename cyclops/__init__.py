@@ -6,7 +6,6 @@ __version__ = "0.1.0"
 
 from cyclops.core import (
     Agent,
-    BaseAgent,
     AgentConfig,
     AgentResponse,
     Message,
@@ -22,11 +21,9 @@ from cyclops.toolkit import (
     Toolkit,
 )
 from cyclops.mcp import MCPServer, MCPClient
-from cyclops.providers import LLMProvider, LiteLLMProvider
 
 __all__ = [
     "Agent",
-    "BaseAgent",
     "AgentConfig",
     "AgentResponse",
     "Message",
@@ -40,6 +37,4 @@ __all__ = [
     "Toolkit",
     "MCPServer",
     "MCPClient",
-    "LLMProvider",
-    "LiteLLMProvider",
 ]

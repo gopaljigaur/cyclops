@@ -1,36 +1,25 @@
 """Core agent implementation"""
 
-from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import asyncio
-from cyclops.providers.base import LLMProvider
-from cyclops.providers.litellm_provider import LiteLLMProvider
+import litellm
 from cyclops.core.types import AgentConfig, Message
 
 
-class BaseAgent(ABC):
-    """Base abstract agent class"""
+class Agent:
+    """LLM agent implementation"""
+
+    # Class-level cache for detected tool modes per model
+    _tool_mode_cache: Dict[str, str] = {}
 
     def __init__(
         self,
         config: AgentConfig,
         tools: Optional[List] = None,
-        provider: Optional[LLMProvider] = None,
     ):
         self.config = config
         self.messages: List[Message] = []
         self.tools = tools or []
-        # Create default LiteLLM provider if none provided
-        self.provider = provider or LiteLLMProvider(model=config.model)
-
-    @abstractmethod
-    def run(self, input_message: str) -> str:
-        """Run the agent with input and return response"""
-        pass
-
-    async def arun(self, input_message: str) -> str:
-        """Async version of run"""
-        return self.run(input_message)
 
     def add_message(
         self, role: str, content: str, metadata: Optional[Dict[str, Any]] = None
@@ -39,13 +28,6 @@ class BaseAgent(ABC):
         self.messages.append(
             Message(role=role, content=content, metadata=metadata or {})
         )
-
-
-class Agent(BaseAgent):
-    """Basic LLM agent implementation"""
-
-    # Class-level cache for detected tool modes per model
-    _tool_mode_cache: Dict[str, str] = {}
 
     def run(self, input_message: str) -> str:
         """Run the agent with input using LiteLLM (sync)"""
@@ -80,7 +62,7 @@ class Agent(BaseAgent):
         if self.config.system_prompt:
             messages.insert(0, {"role": "system", "content": self.config.system_prompt})
 
-        response = self.provider.completion(
+        response = self._completion(
             messages=messages,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -100,7 +82,7 @@ class Agent(BaseAgent):
 
         tools = [self._tool_to_openai_format(tool) for tool in self.tools]
 
-        response = self.provider.completion(
+        response = self._completion(
             messages=messages,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -126,7 +108,7 @@ class Agent(BaseAgent):
                     0, {"role": "system", "content": self.config.system_prompt}
                 )
 
-            final_response = self.provider.completion(
+            final_response = self._completion(
                 messages=messages,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
@@ -150,7 +132,7 @@ class Agent(BaseAgent):
         messages = [{"role": m.role, "content": m.content} for m in self.messages]
         messages.insert(0, {"role": "system", "content": system_prompt})
 
-        response = self.provider.completion(
+        response = self._completion(
             messages=messages,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -178,7 +160,7 @@ class Agent(BaseAgent):
             messages = [{"role": m.role, "content": m.content} for m in self.messages]
             messages.insert(0, {"role": "system", "content": system_prompt})
 
-            final_response = self.provider.completion(
+            final_response = self._completion(
                 messages=messages,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
@@ -330,7 +312,7 @@ class Agent(BaseAgent):
                 0, {"role": "system", "content": self.config.system_prompt}
             )
 
-        response = await self.provider.acompletion(
+        response = await self._acompletion(
             messages=llm_messages,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -362,7 +344,7 @@ class Agent(BaseAgent):
             tools = [self._tool_to_openai_format(tool) for tool in self.tools]
 
         # Call LiteLLM
-        response = await self.provider.acompletion(
+        response = await self._acompletion(
             messages=llm_messages,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -391,7 +373,7 @@ class Agent(BaseAgent):
                     0, {"role": "system", "content": self.config.system_prompt}
                 )
 
-            final_response = await self.provider.acompletion(
+            final_response = await self._acompletion(
                 messages=llm_messages,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
@@ -420,7 +402,7 @@ class Agent(BaseAgent):
         llm_messages.insert(0, {"role": "system", "content": system_prompt})
 
         # First call - model decides if it needs a tool
-        response = await self.provider.acompletion(
+        response = await self._acompletion(
             messages=llm_messages,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -456,7 +438,7 @@ class Agent(BaseAgent):
             ]
             llm_messages.insert(0, {"role": "system", "content": system_prompt})
 
-            final_response = await self.provider.acompletion(
+            final_response = await self._acompletion(
                 messages=llm_messages,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
@@ -516,3 +498,19 @@ class Agent(BaseAgent):
             return str(result)
         except Exception as e:
             return f"Error executing {tool_name}: {str(e)}"
+
+    def _completion(self, **kwargs):
+        """Call LiteLLM completion (sync)"""
+        if self.config.router:
+            return self.config.router.completion(model=self.config.model, **kwargs)
+        else:
+            return litellm.completion(model=self.config.model, **kwargs)
+
+    async def _acompletion(self, **kwargs):
+        """Call LiteLLM completion (async)"""
+        if self.config.router:
+            return await self.config.router.acompletion(
+                model=self.config.model, **kwargs
+            )
+        else:
+            return await litellm.acompletion(model=self.config.model, **kwargs)

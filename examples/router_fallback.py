@@ -3,7 +3,7 @@
 Demonstrates automatic fallback between models if one fails or is rate-limited.
 """
 
-from cyclops import Agent, AgentConfig, LiteLLMProvider
+from cyclops import Agent, AgentConfig
 from litellm import Router
 
 # Configure router with fallback models
@@ -26,12 +26,9 @@ router = Router(
     fallbacks=[{"primary-model": ["ollama/llama3.2:1b"]}],
 )
 
-# Create provider with router
-provider = LiteLLMProvider(model="primary-model", router=router)
-
-# Create agent using the router-backed provider
-config = AgentConfig(model="primary-model")  # model_name from router
-agent = Agent(config, provider=provider)
+# Create agent with router in config
+config = AgentConfig(model="primary-model", router=router)
+agent = Agent(config)
 
 print("Router with Fallback Example\n")
 print("If qwen3:4b fails, automatically falls back to llama3.2:1b\n")

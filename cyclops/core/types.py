@@ -12,6 +12,7 @@ class AgentConfig(BaseModel):
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
     tool_mode: str = "auto"
+    router: Optional[Any] = None
 
 
 class Message(BaseModel):
