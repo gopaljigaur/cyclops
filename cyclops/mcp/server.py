@@ -72,7 +72,9 @@ class MCPServer:
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             """Execute a tool"""
             try:
-                result = await self.tool_registry.execute_tool(name, **arguments)
+                result = await self.tool_registry.execute_tool(
+                    tool_name=name, **arguments
+                )
                 return [TextContent(type="text", text=str(result))]
             except Exception as e:
                 return [TextContent(type="text", text=f"Error: {str(e)}")]
