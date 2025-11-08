@@ -1,6 +1,6 @@
 """Tool definitions and base classes"""
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, Dict, Optional, Callable
 from pydantic import BaseModel, Field
 import inspect
@@ -32,10 +32,9 @@ class BaseTool(ABC):
         self.description = description
         self._definition = self._build_definition()
 
-    @abstractmethod
     async def execute(self, **kwargs) -> Any:
-        """Execute the tool with given parameters"""
-        pass
+        """Execute the tool. Subclasses should override with their own signature."""
+        raise NotImplementedError(f"Tool '{self.name}' must implement execute()")
 
     def _build_definition(self) -> ToolDefinition:
         """Build tool definition from method signature"""
