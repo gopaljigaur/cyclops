@@ -1,14 +1,37 @@
 [project]
-name = "cyclops"
+name = "cyclops-ai"
 version = "0.1.0"
 description = "Core agent framework with MCP toolkit support"
-requires-python = ">=3.12"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Gopalji Gaur"}
+]
+keywords = ["ai", "agents", "llm", "mcp", "litellm", "tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "litellm>=1.79.1",
-    "pydantic>=2.10.0",
-    "mcp>=1.20.0",
-    "pluggy>=1.5.0",
+    "pydantic>=2.12.4",
+    "mcp>=1.21.0",
+    "pluggy>=1.6.0",
+    "hatchling>=1.27.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gopalji/cyclops"
+Repository = "https://github.com/gopalji/cyclops"
+Issues = "https://github.com/gopalji/cyclops/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -16,11 +39,14 @@ build-backend = "hatchling.build"
 
 [project.entry-points."cyclops.toolkits"]
 
+[tool.hatch.build.targets.wheel]
+packages = ["cyclops"]
+
 [dependency-groups]
 dev = [
-    "pytest>=8.0.0",
-    "black>=24.0.0",
-    "ruff>=0.8.0",
-    "mypy>=1.13.0",
-    "pre-commit>=4.0.0",
+    "pytest>=9.0.0",
+    "black>=25.9.0",
+    "ruff>=0.14.4",
+    "mypy>=1.18.2",
+    "pre-commit>=4.4.0",
 ]
