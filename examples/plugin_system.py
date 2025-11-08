@@ -27,7 +27,7 @@ def main():
     plugin_manager = PluginManager(registry)
 
     # Manually register the toolkit plugin (in production, this would be via entry points)
-    plugin_manager.pm.register(WeatherToolkit())
+    plugin_manager.register(WeatherToolkit())
 
     # Load tools from plugins
     plugin_manager.register_tools()

@@ -1,8 +1,7 @@
-"""Simple pluggy-based toolkit plugin system"""
+"""Simple toolkit plugin system"""
 
-import pluggy
 import importlib.metadata
-from typing import List, Optional
+from typing import Dict, List, Optional
 from cyclops.toolkit.tool import BaseTool
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.utils.logging import get_logger
@@ -32,27 +31,18 @@ class Toolkit:
         return tools
 
 
-# Internal pluggy hooks
-_hookspec = pluggy.HookspecMarker("cyclops")
-_hookimpl = pluggy.HookimplMarker("cyclops")
-
-
-class _ToolkitSpec:
-    """Internal hook specifications"""
-
-    @_hookspec  # type: ignore[empty-body]
-    def get_tools(self) -> List[BaseTool]:
-        """Return list of tools provided by this toolkit"""
-        ...
-
-
 class PluginManager:
-    """Manages toolkit plugins using pluggy"""
+    """Manages toolkit plugins"""
 
     def __init__(self, registry: Optional[ToolRegistry] = None):
-        self.pm = pluggy.PluginManager("cyclops")
-        self.pm.add_hookspecs(_ToolkitSpec)
+        self.plugins: Dict[str, Toolkit] = {}
         self.registry = registry or ToolRegistry()
+
+    def register(self, plugin: Toolkit, name: Optional[str] = None) -> None:
+        """Register a toolkit plugin"""
+        plugin_name = name or plugin.__class__.__name__
+        self.plugins[plugin_name] = plugin
+        logger.info(f"Registered plugin: {plugin_name}")
 
     def load_plugins(self) -> None:
         """Load plugins from entry points"""
@@ -65,7 +55,7 @@ class PluginManager:
             for entry_point in toolkit_entries:
                 try:
                     plugin = entry_point.load()
-                    self.pm.register(plugin, name=entry_point.name)
+                    self.register(plugin, name=entry_point.name)
                     logger.info(f"Loaded toolkit plugin: {entry_point.name}")
                 except Exception as e:
                     logger.warning(f"Failed to load plugin {entry_point.name}: {e}")
@@ -75,7 +65,7 @@ class PluginManager:
 
     def register_tools(self) -> None:
         """Register all tools from loaded plugins"""
-        for name, plugin in self.pm.list_name_plugin():
+        for name, plugin in self.plugins.items():
             if isinstance(plugin, Toolkit):
                 try:
                     tools = plugin.get_tools()
@@ -88,7 +78,7 @@ class PluginManager:
 
     def get_plugin_names(self) -> List[str]:
         """Get names of loaded plugins"""
-        return [name for name, _ in self.pm.list_name_plugin()]
+        return list(self.plugins.keys())
 
 
 __all__ = ["PluginManager", "Toolkit"]

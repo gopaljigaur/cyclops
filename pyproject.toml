@@ -24,8 +24,6 @@ dependencies = [
     "litellm>=1.79.1",
     "pydantic>=2.12.4",
     "mcp>=1.21.0",
-    "pluggy>=1.6.0",
-    "hatchling>=1.27.0",
 ]
 
 [project.urls]
