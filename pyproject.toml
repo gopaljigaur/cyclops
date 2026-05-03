@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Gopalji Gaur"}
+    {name = "Gopalji Gaur", email = "gopaljigaur@gmail.com"}
 ]
 keywords = ["ai", "agents", "llm", "mcp", "litellm", "tools"]
 classifiers = [
