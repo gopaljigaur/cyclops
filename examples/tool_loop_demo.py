@@ -1,14 +1,14 @@
-"""Tool loop demo — multi-step agentic tool chaining
+"""Tool loop demo: multi-step agentic tool chaining
 
 Demonstrates the agentic loop where the LLM decides which tools to call,
 in what order, and how many times, until it can produce a final answer.
 
 Scenario: A research agent that must:
-  1. search_papers()    — find relevant academic papers on a topic
-  2. fetch_abstract()   — retrieve the abstract for a specific paper
-  3. count_words()      — count words in a piece of text
-  4. compute_stats()    — calculate mean, min, max of a list of numbers
-  5. format_report()    — assemble results into a formatted summary
+  1. search_papers()   : find relevant academic papers on a topic
+  2. fetch_abstract()  : retrieve the abstract for a specific paper
+  3. count_words()     : count words in a piece of text
+  4. compute_stats()   : calculate mean, min, max of a list of numbers
+  5. format_report()   : assemble results into a formatted summary
 
 The agent is given a high-level goal and must chain these tools itself.
 max_iterations is set so the loop does not run forever.
@@ -26,7 +26,7 @@ from cyclops.toolkit import tool
 # Model configuration
 # ---------------------------------------------------------------------------
 
-# Default: Ollama (free, local — https://ollama.ai, then `ollama pull qwen3:4b`)
+# Default: Ollama (free, local: https://ollama.ai, then `ollama pull qwen3:4b`)
 MODEL = "ollama/qwen3:4b"
 
 # For best multi-tool chaining, a stronger model is recommended:

@@ -1,9 +1,9 @@
-"""Structured output example — run() with response_model returns a Pydantic instance
+"""Structured output example: run() with response_model returns a Pydantic instance
 
 Demonstrates:
-  1. MovieReview — title, rating, and a free-text summary
-  2. WeatherReport — city, temperature, and conditions
-  3. CodeReview — list of issues and an overall score
+  1. MovieReview: title, rating, and a free-text summary
+  2. WeatherReport: city, temperature, and conditions
+  3. CodeReview: list of issues and an overall score
 
 The agent is instructed to emit valid JSON.  agent.run(response_model=MyModel)
 calls MyModel.model_validate_json() on the raw string and returns the typed
@@ -20,7 +20,7 @@ from cyclops import Agent, AgentConfig
 # Model configuration
 # ---------------------------------------------------------------------------
 
-# Default: Ollama (free, local — install https://ollama.ai then `ollama pull qwen3:4b`)
+# Default: Ollama (free, local: install https://ollama.ai then `ollama pull qwen3:4b`)
 MODEL = "ollama/qwen3:4b"
 
 # Alternatives:
@@ -97,7 +97,7 @@ def make_agent(schema: type) -> Agent:
 
 
 # ---------------------------------------------------------------------------
-# Demo 1 — Movie review
+# Demo 1: Movie review
 # ---------------------------------------------------------------------------
 
 
@@ -121,7 +121,7 @@ def demo_movie_review() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Demo 2 — Weather report
+# Demo 2: Weather report
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ def demo_weather_report() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Demo 3 — Code review
+# Demo 3: Code review
 # ---------------------------------------------------------------------------
 
 SAMPLE_CODE = """
@@ -192,7 +192,7 @@ def demo_code_review() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Demo 4 — Handling ValidationError
+# Demo 4: Handling ValidationError
 # ---------------------------------------------------------------------------
 
 
@@ -219,7 +219,7 @@ def demo_validation_error_handling() -> None:
     except ValidationError as exc:
         # ValidationError is raised by Pydantic if the JSON is malformed or
         # fields do not pass validation (e.g. rating out of range).
-        print("Caught ValidationError — the model returned invalid JSON.")
+        print("Caught ValidationError: the model returned invalid JSON.")
         print("Raw errors:")
         for error in exc.errors():
             print(f"  field={error['loc']}, msg={error['msg']}")

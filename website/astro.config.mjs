@@ -3,6 +3,13 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://cyclops.gopalji.me',
+  vite: {
+    server: {
+      fs: {
+        allow: ['..'],
+      },
+    },
+  },
   integrations: [
     starlight({
       title: 'Cyclops',
@@ -31,6 +38,7 @@ export default defineConfig({
             { label: 'MCP', slug: 'guides/mcp' },
             { label: 'Plugins', slug: 'guides/plugins' },
             { label: 'Cost Tracking', slug: 'guides/cost-tracking' },
+            { label: 'Hooks', slug: 'guides/hooks' },
           ],
         },
         {

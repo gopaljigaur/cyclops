@@ -3,6 +3,9 @@ title: Structured Output
 description: Get typed Pydantic objects back instead of strings.
 ---
 
+import exampleSrc from '../../../../../examples/structured_output.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
 ## response_model
 
 Pass any Pydantic `BaseModel` class as `response_model` to `run()` or `arun()`. Instead of returning a plain string, the agent instructs the LLM to produce JSON, parses it into your model, and returns a typed instance.
@@ -144,3 +147,7 @@ except ValidationError as e:
 :::note
 Not all models reliably produce valid JSON on the first attempt. GPT-4o, Claude 3.5, and Llama 3.1 70B+ are the most reliable choices. For smaller models, add `"Respond with valid JSON only."` to the system prompt.
 :::
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/structured_output.py" />

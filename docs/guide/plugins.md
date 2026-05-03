@@ -1,6 +1,6 @@
 # Plugins
 
-The plugin system lets you package tools as a `Toolkit` class, distribute it as a Python package, and have Cyclops (or an `MCPServer`) discover it automatically via entry points — no manual registration required.
+The plugin system lets you package tools as a `Toolkit` class, distribute it as a Python package, and have Cyclops (or an `MCPServer`) discover it automatically via entry points. No manual registration required.
 
 ## Toolkit base class
 
@@ -37,7 +37,7 @@ class WeatherToolkit(Toolkit):
     forecast = ForecastTool()
 ```
 
-Tools are discovered by attribute inspection — there is no registration call needed inside the class.
+Tools are discovered by attribute inspection; no registration call needed inside the class.
 
 ## PluginManager
 

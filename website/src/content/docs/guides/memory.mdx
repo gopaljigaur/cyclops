@@ -3,6 +3,9 @@ title: Memory
 description: Persist state across agent calls and sessions.
 ---
 
+import exampleSrc from '../../../../../examples/memory_persistence.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
 ## InMemoryStorage
 
 `InMemoryStorage` keeps key-value pairs in a Python dictionary. Data is lost when the process exits. Use it for single-session state, caching intermediate results, or testing.
@@ -177,3 +180,7 @@ class RedisMemory(Memory):
     async def clear(self) -> None:
         await self.client.flushdb()
 ```
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/memory_persistence.py" />
