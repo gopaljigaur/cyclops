@@ -8,7 +8,7 @@
 
   <br/>
 
-  [Quick Start](#quick-start) | [Examples](./examples) | [Docs](https://gopaljigaur.github.io/cyclops) | [Why Cyclops](#why-cyclops)
+  [Quick Start](#quick-start) | [Examples](./examples) | [Docs](https://cyclops.gopalji.me) | [Why Cyclops](#why-cyclops)
 
   <br/>
 
