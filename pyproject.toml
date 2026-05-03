@@ -21,9 +21,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "litellm>=1.79.1",
+    "litellm>=1.83.7",
     "pydantic>=2.12.4",
-    "mcp>=1.21.0",
+    "mcp>=1.23.0",
 ]
 
 [project.urls]
@@ -45,9 +45,9 @@ asyncio_mode = "auto"
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
-    "black>=25.9.0",
+    "black>=26.3.1",
     "ruff>=0.14.4",
     "mypy>=1.18.2",
     "pre-commit>=4.4.0",
