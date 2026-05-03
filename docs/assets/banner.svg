@@ -1,0 +1,31 @@
+<svg width="900" height="200" viewBox="0 0 900 200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="900" height="200" fill="#0d1117" rx="12"/>
+
+  <!-- outer ring -->
+  <circle cx="95" cy="100" r="46" fill="none" stroke="#58a6ff" stroke-width="3"/>
+  <!-- iris -->
+  <circle cx="95" cy="100" r="28" fill="none" stroke="#58a6ff" stroke-width="2" opacity="0.6"/>
+  <!-- pupil -->
+  <circle cx="95" cy="100" r="14" fill="#58a6ff"/>
+  <!-- shine -->
+  <circle cx="103" cy="90" r="5" fill="#cce7ff" opacity="0.85"/>
+
+  <!-- cyclops wordmark -->
+  <text
+    x="162" y="116"
+    font-family="'Courier New', Courier, monospace"
+    font-size="68"
+    font-weight="700"
+    fill="#58a6ff"
+    letter-spacing="-1"
+  >cyclops</text>
+
+  <!-- tagline -->
+  <text
+    x="162" y="154"
+    font-family="'Courier New', Courier, monospace"
+    font-size="17"
+    fill="#8b949e"
+    letter-spacing="0.5"
+  >minimal python agent framework · any llm · mcp native</text>
+</svg>

@@ -2,7 +2,7 @@
 
 from cyclops.core.agent import Agent
 from cyclops.core.types import AgentConfig, Message, AgentResponse, ToolCall
-from cyclops.core.memory import Memory, InMemoryStorage
+from cyclops.core.memory import Memory, InMemoryStorage, FileStorage
 
 __all__ = [
     "Agent",
@@ -12,4 +12,5 @@ __all__ = [
     "ToolCall",
     "Memory",
     "InMemoryStorage",
+    "FileStorage",
 ]

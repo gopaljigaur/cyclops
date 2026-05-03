@@ -1,0 +1,39 @@
+---
+title: Cyclops
+description: Minimal Python agent framework. Any LLM. MCP native.
+template: splash
+hero:
+  tagline: Minimal Python agent framework. Any LLM. MCP native.
+  actions:
+    - text: Get Started
+      link: /getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/gopalji/cyclops
+      icon: external
+      variant: secondary
+---
+
+import { CardGrid, Card } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Any LLM" icon="star">
+    OpenAI, Anthropic, Groq, Ollama, Together AI, and every other provider LiteLLM supports. Swap the model string, nothing else changes.
+  </Card>
+  <Card title="MCP native" icon="puzzle">
+    Connect to any MCP server with `MCPClient`, or expose your tools as an MCP server with `MCPServer`. Works with Claude Desktop, Cursor, and any MCP host.
+  </Card>
+  <Card title="Tools in one line" icon="pencil">
+    Decorate any Python function with `@tool`. Type annotations become the JSON schema. The docstring becomes the description.
+  </Card>
+  <Card title="Streaming built in" icon="rocket">
+    `stream()` and `astream()` work with and without tools. True token streaming for tool-free agents; final-answer streaming after tool execution.
+  </Card>
+  <Card title="Structured output" icon="document">
+    Pass a Pydantic model as `response_model` to get a typed instance back instead of a string. Your IDE sees the correct type.
+  </Card>
+  <Card title="Cost tracking" icon="information">
+    `run_with_response()` returns prompt tokens, completion tokens, and estimated USD cost alongside every reply.
+  </Card>
+</CardGrid>

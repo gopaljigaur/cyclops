@@ -1,9 +1,33 @@
 """Tool definitions and base classes"""
 
+import inspect
+import typing
 from abc import ABC
 from typing import Any, Callable
-import inspect
+
 from cyclops.toolkit.types import ToolParameter, ToolDefinition
+
+
+_PYTHON_TO_JSON_TYPE = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+}
+
+
+def _annotation_to_json_type(annotation) -> str:
+    """Convert a Python type annotation to a JSON schema type string."""
+    if annotation is inspect.Parameter.empty:
+        return "string"
+    origin = getattr(annotation, "__origin__", None)
+    if origin is typing.Union:
+        non_none = [a for a in annotation.__args__ if a is not type(None)]
+        if non_none:
+            return _PYTHON_TO_JSON_TYPE.get(non_none[0], "string")
+    return _PYTHON_TO_JSON_TYPE.get(annotation, "string")
 
 
 class BaseTool(ABC):
@@ -27,11 +51,7 @@ class BaseTool(ABC):
             if param_name == "kwargs":
                 continue
 
-            param_type = (
-                str(param.annotation)
-                if param.annotation != inspect.Parameter.empty
-                else "str"
-            )
+            param_type = _annotation_to_json_type(param.annotation)
             required = param.default == inspect.Parameter.empty
             default = param.default if not required else None
 
@@ -55,6 +75,27 @@ class Tool(BaseTool):
     def __init__(self, name: str, description: str, func: Callable):
         self.func = func
         super().__init__(name, description)
+
+    def _build_definition(self) -> ToolDefinition:
+        """Build tool definition from wrapped function signature"""
+        sig = inspect.signature(self.func)
+        parameters = {}
+
+        for param_name, param in sig.parameters.items():
+            if param_name in ("self", "kwargs"):
+                continue
+
+            param_type = _annotation_to_json_type(param.annotation)
+            required = param.default == inspect.Parameter.empty
+            default = param.default if not required else None
+
+            parameters[param_name] = ToolParameter(
+                name=param_name, type=param_type, required=required, default=default
+            )
+
+        return ToolDefinition(
+            name=self.name, description=self.description, parameters=parameters
+        )
 
     async def execute(self, **kwargs) -> Any:
         """Execute the wrapped function"""

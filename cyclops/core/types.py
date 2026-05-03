@@ -13,14 +13,25 @@ class AgentConfig(BaseModel):
     system_prompt: Optional[str] = None
     tool_mode: str = "auto"
     router: Optional[Any] = None
+    max_iterations: int = 10
 
 
 class Message(BaseModel):
-    """Message representation"""
+    """A single conversation message. Covers all LiteLLM message types."""
 
     role: str
-    content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "Message":
+        known = set(cls.model_fields)
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in self.model_dump().items() if v is not None}
 
 
 class ToolCall(BaseModel):
@@ -46,4 +57,13 @@ class AgentResponse(BaseModel):
     model: str = Field(description="Model used for generation")
     tokens_used: Optional[int] = Field(
         default=None, description="Number of tokens used"
+    )
+    cost: Optional[float] = Field(
+        default=None, description="Estimated cost of the API call"
+    )
+    prompt_tokens: Optional[int] = Field(
+        default=None, description="Number of prompt tokens used"
+    )
+    completion_tokens: Optional[int] = Field(
+        default=None, description="Number of completion tokens used"
     )

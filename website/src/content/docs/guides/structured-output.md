@@ -1,0 +1,146 @@
+---
+title: Structured Output
+description: Get typed Pydantic objects back instead of strings.
+---
+
+## response_model
+
+Pass any Pydantic `BaseModel` class as `response_model` to `run()` or `arun()`. Instead of returning a plain string, the agent instructs the LLM to produce JSON, parses it into your model, and returns a typed instance.
+
+```python
+from pydantic import BaseModel
+from cyclops import Agent, AgentConfig
+
+
+class WeatherReport(BaseModel):
+    city: str
+    temperature_f: float
+    condition: str
+    humidity_percent: int
+
+
+config = AgentConfig(model="groq/llama-3.1-8b-instant")
+agent = Agent(config)
+
+report = agent.run(
+    "Give me a weather report for London right now.",
+    response_model=WeatherReport,
+)
+
+print(report.city)            # "London"
+print(report.temperature_f)  # 61.5
+print(report.condition)      # "Overcast"
+```
+
+The return type is the Pydantic model instance, not a string. Your IDE will infer the correct type.
+
+## How it works
+
+Cyclops appends instructions to the system prompt telling the model to reply with a JSON object matching the model's schema. The raw string from the LLM is then passed to `response_model.model_validate_json(content)`. If the JSON is valid the instance is returned. If not, `pydantic.ValidationError` is raised.
+
+## Nested models
+
+```python
+from typing import List
+from pydantic import BaseModel
+
+
+class Ingredient(BaseModel):
+    name: str
+    amount: str
+
+
+class Recipe(BaseModel):
+    title: str
+    servings: int
+    ingredients: List[Ingredient]
+    instructions: List[str]
+
+
+recipe = agent.run(
+    "Give me a simple pasta carbonara recipe.",
+    response_model=Recipe,
+)
+
+for ingredient in recipe.ingredients:
+    print(f"  {ingredient.amount} of {ingredient.name}")
+```
+
+## Optional fields
+
+```python
+from typing import Optional
+from pydantic import BaseModel
+
+
+class PersonInfo(BaseModel):
+    name: str
+    age: Optional[int] = None
+    occupation: Optional[str] = None
+    fun_fact: str
+
+
+info = agent.run(
+    "Tell me about Albert Einstein.",
+    response_model=PersonInfo,
+)
+print(info.name, info.age)
+```
+
+## Boolean and numeric fields
+
+```python
+from pydantic import BaseModel
+
+
+class SentimentResult(BaseModel):
+    text: str
+    sentiment: str   # "positive", "negative", or "neutral"
+    confidence: float
+    contains_question: bool
+
+
+result = agent.run(
+    'Analyse the sentiment of: "I absolutely love this product!"',
+    response_model=SentimentResult,
+)
+print(result.sentiment, result.confidence)
+```
+
+## Async structured output
+
+`arun()` accepts `response_model` too:
+
+```python
+import asyncio
+
+
+async def main():
+    result = await agent.arun(
+        "List three programming languages and their main use cases.",
+        response_model=SomeModel,
+    )
+    print(result)
+
+
+asyncio.run(main())
+```
+
+## Error handling
+
+If the model returns malformed JSON, `model_validate_json` raises `pydantic.ValidationError`. Catch it and retry or fall back to plain text:
+
+```python
+from pydantic import ValidationError
+
+try:
+    result = agent.run("...", response_model=MyModel)
+except ValidationError as e:
+    print("Model returned invalid JSON:", e)
+    # Fall back to plain text:
+    text = agent.run("...")
+```
+
+:::note
+Not all models reliably produce valid JSON on the first attempt. GPT-4o, Claude 3.5, and Llama 3.1 70B+ are the most reliable choices. For smaller models, add `"Respond with valid JSON only."` to the system prompt.
+:::
