@@ -16,7 +16,7 @@ export default defineConfig({
       description: 'Minimal Python agent framework. Any LLM. MCP native.',
       favicon: '/favicon.svg',
       logo: {
-        src: '/banner.svg',
+        src: './src/assets/banner.svg',
         alt: 'Cyclops',
         replacesTitle: true,
       },
