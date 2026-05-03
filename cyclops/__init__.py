@@ -2,7 +2,7 @@
 Cyclops - Core agent framework with MCP toolkit support
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from cyclops.core import (
     Agent,
@@ -29,6 +29,7 @@ from cyclops.mcp import (
     MCPClientTool,
     tools_from_server,
 )
+from cyclops.observability import TelemetryHooks
 
 __all__ = [
     "Agent",
@@ -50,4 +51,5 @@ __all__ = [
     "MCPBridge",
     "MCPClientTool",
     "tools_from_server",
+    "TelemetryHooks",
 ]

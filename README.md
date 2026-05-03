@@ -182,6 +182,27 @@ server.add_tool(lookup)
 await server.run_stdio()
 ```
 
+## Observability
+
+Wire `TelemetryHooks` to get OpenTelemetry spans for every LLM call and tool execution. Works with any OTLP backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console.
+
+```python
+from cyclops import Agent, AgentConfig, TelemetryHooks
+
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHooks.console()))
+agent.run("What files are in the current directory?")
+```
+
+Send to Jaeger / Tempo / Datadog instead:
+
+```python
+# uv add opentelemetry-exporter-otlp-proto-grpc
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHooks.otlp("http://localhost:4317")))
+agent.run("What files are in the current directory?")
+```
+
+Span hierarchy per run: `agent.run` → `llm.completion` (with token counts + latency) and `tool.<name>` children. See [Observability guide](https://cyclops.gopalji.me/guides/observability/) for OTLP/Jaeger setup and full attribute reference.
+
 ## Providers
 
 Switch models by changing one string. Set the matching API key as an environment variable.
@@ -191,7 +212,7 @@ Switch models by changing one string. Set the matching API key as an environment
 Agent(AgentConfig(model="gpt-4o-mini"))                        # OPENAI_API_KEY
 
 # Anthropic
-Agent(AgentConfig(model="claude-3-5-haiku-20241022"))          # ANTHROPIC_API_KEY
+Agent(AgentConfig(model="claude-haiku-4-5-20251001"))          # ANTHROPIC_API_KEY
 
 # Groq (fast, free tier)
 Agent(AgentConfig(model="groq/llama-3.1-8b-instant"))          # GROQ_API_KEY
@@ -254,6 +275,7 @@ See the [`examples/`](./examples) directory:
 | [`router_fallback.py`](examples/router_fallback.py) | Automatic failover |
 | [`mcp_server.py`](examples/mcp_server.py) | Expose tools via MCP |
 | [`plugin_system.py`](examples/plugin_system.py) | Auto-discover toolkit packages |
+| [`otel_example.py`](examples/otel_example.py) | OpenTelemetry tracing |
 
 ## Development
 

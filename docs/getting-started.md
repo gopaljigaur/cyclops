@@ -138,7 +138,7 @@ agent = Agent(AgentConfig(model="ollama/qwen3:4b"))
 agent = Agent(AgentConfig(model="gpt-4o-mini"))
 
 # Anthropic
-agent = Agent(AgentConfig(model="claude-3-5-haiku-20241022"))
+agent = Agent(AgentConfig(model="claude-haiku-4-5-20251001"))
 
 # Together AI (free tier)
 agent = Agent(AgentConfig(model="together_ai/meta-llama/Llama-3-8b-chat-hf"))
