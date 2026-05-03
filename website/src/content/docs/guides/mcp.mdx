@@ -3,6 +3,9 @@ title: MCP
 description: Connect to MCP servers or publish your tools as one.
 ---
 
+import exampleSrc from '../../../../../examples/mcp_server.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) is an open standard for exposing tools to LLMs. Cyclops ships a lightweight client and server so you can consume tools from any MCP server or publish your own Cyclops tools as an MCP server.
 
 ## MCPClient
@@ -205,3 +208,7 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/mcp_server.py" />

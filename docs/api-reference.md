@@ -38,9 +38,10 @@ class AgentConfig(BaseModel):
     temperature: float = 0.1
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
-    tool_mode: str = "auto"        # "auto" | "native" | "naive"
+    tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None   # LiteLLM Router
     max_iterations: int = 10
+    hooks: Optional[AgentHooks] = None
 ```
 
 ---
@@ -76,15 +77,37 @@ class ToolCall(BaseModel):
 
 ---
 
+### AgentHooks
+
+Lifecycle callback base class. Subclass and override any methods you need.
+
+```python
+class AgentHooks:
+    def on_run_start(self, input_message: str) -> None: ...
+    def on_run_end(self, content: str) -> None: ...
+    def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
+    def on_llm_end(self, response: Any) -> None: ...
+    def on_llm_error(self, error: Exception) -> None: ...
+    def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]: ...
+    def on_tool_end(self, tool_name: str, args: Dict[str, Any], result: str) -> None: ...
+    def on_tool_error(self, tool_name: str, args: Dict[str, Any], error: Exception) -> None: ...
+```
+
+See [Hooks guide](guide/hooks.md) for full documentation.
+
+---
+
 ### Message
 
-Generic message representation used for memory and logging.
+Represents a single conversation turn. Covers all LiteLLM message types.
 
 ```python
 class Message(BaseModel):
     role: str
-    content: str
-    metadata: Dict[str, Any]
+    content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 ```
 
 ---

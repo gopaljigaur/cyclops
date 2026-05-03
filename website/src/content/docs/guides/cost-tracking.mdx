@@ -3,6 +3,9 @@ title: Cost Tracking
 description: Track tokens and estimated cost for every agent run.
 ---
 
+import exampleSrc from '../../../../../examples/cost_tracking.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
 ## run_with_response() vs run()
 
 `run()` returns a plain string. `run_with_response()` returns an `AgentResponse` that includes the text reply, every tool call made, and token/cost metadata from the LiteLLM response.
@@ -135,3 +138,7 @@ for tc in result.tool_calls:
 :::note
 Cost tracking depends on LiteLLM's internal pricing table. Ollama and other self-hosted models will have `cost=None` since no billing data is available. Token counts are still reported if the server returns usage information.
 :::
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/cost_tracking.py" />

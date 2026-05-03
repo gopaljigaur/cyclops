@@ -93,7 +93,7 @@ class RedisMemory(Memory):
 
 ## Using memory with Agent
 
-Pass any `Memory` instance as the `memory` argument to `Agent`. The agent itself does not read or write memory automatically — memory is a side channel for your application logic to pass context in and out of agent runs.
+Pass any `Memory` instance as the `memory` argument to `Agent`. The agent itself does not read or write memory automatically; memory is a side channel for your application logic to pass context in and out of agent runs.
 
 ```python
 import asyncio

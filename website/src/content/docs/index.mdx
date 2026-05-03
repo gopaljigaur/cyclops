@@ -4,6 +4,9 @@ description: Minimal Python agent framework. Any LLM. MCP native.
 template: splash
 hero:
   tagline: Minimal Python agent framework. Any LLM. MCP native.
+  image:
+    dark: ../../assets/banner-dark.svg
+    light: ../../assets/banner-light.svg
   actions:
     - text: Get Started
       link: /getting-started/
@@ -35,5 +38,8 @@ import { CardGrid, Card } from '@astrojs/starlight/components';
   </Card>
   <Card title="Cost tracking" icon="information">
     `run_with_response()` returns prompt tokens, completion tokens, and estimated USD cost alongside every reply.
+  </Card>
+  <Card title="Hooks" icon="setting">
+    Subclass `AgentHooks` to observe every LLM call and tool execution, or block specific tools at runtime with `on_tool_start`.
   </Card>
 </CardGrid>

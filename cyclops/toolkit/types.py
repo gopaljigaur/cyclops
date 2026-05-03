@@ -21,6 +21,21 @@ class ToolDefinition(BaseModel):
     description: str
     parameters: Dict[str, ToolParameter] = Field(default_factory=dict)
 
+    def to_json_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                param.name: {
+                    "type": param.type,
+                    "description": param.description or "",
+                }
+                for param in self.parameters.values()
+            },
+            "required": [
+                param.name for param in self.parameters.values() if param.required
+            ],
+        }
+
 
 class ToolResult(BaseModel):
     """Result from tool execution"""

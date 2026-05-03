@@ -1,29 +1,63 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  publish:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      contents: read
       id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v2
+        uses: astral-sh/setup-uv@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Check if version changed
+        id: version_check
+        run: |
+          CURRENT=$(python -c "import tomllib; f=open('pyproject.toml','rb'); d=tomllib.load(f); print(d['project']['version'])")
+          PUBLISHED=$(pip index versions cyclops-ai 2>/dev/null | grep -oP '(?<=cyclops-ai \()[\d.]+(?=\))' | head -1 || echo "0.0.0")
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          if [ "$CURRENT" != "$PUBLISHED" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build package
+        if: steps.version_check.outputs.changed == 'true'
         run: uv build
 
       - name: Publish to PyPI
+        if: steps.version_check.outputs.changed == 'true'
         run: uv publish
+
+      - name: Create GitHub release
+        if: steps.version_check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version_check.outputs.current }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "v$VERSION"
+          git push origin "v$VERSION" --force
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes

@@ -1,19 +1,24 @@
 """Core type definitions"""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
+
+from cyclops.core.hooks import AgentHooks
 
 
 class AgentConfig(BaseModel):
     """Configuration for an agent"""
 
+    model_config = {"arbitrary_types_allowed": True}
+
     model: str
     temperature: float = 0.1
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
-    tool_mode: str = "auto"
+    tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None
     max_iterations: int = 10
+    hooks: Optional[AgentHooks] = None
 
 
 class Message(BaseModel):

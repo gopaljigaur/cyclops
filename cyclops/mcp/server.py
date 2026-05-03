@@ -1,9 +1,11 @@
 """MCP Server implementation"""
 
 from typing import Any, Dict, List
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool as MCPTool, TextContent
+
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import BaseTool
 from cyclops.toolkit.plugins import PluginManager
@@ -22,14 +24,11 @@ class MCPServer:
         self.version = version
         self.server = Server(name)
         self.tool_registry = ToolRegistry()
-
-        # Initialize plugin system
         self.plugin_manager = PluginManager(self.tool_registry)
 
         if load_plugins:
             self.load_all_plugins()
 
-        # Register MCP handlers
         self._setup_handlers()
 
     def load_all_plugins(self):
@@ -38,39 +37,25 @@ class MCPServer:
         self.plugin_manager.register_tools()
 
     def _setup_handlers(self):
-        """Setup MCP protocol handlers"""
-
         @self.server.list_tools()
-        async def list_tools() -> List[MCPTool]:
-            """List available tools"""
+        async def handle_list_tools() -> List[MCPTool]:
             tools = []
-            for tool_name, tool in self.tool_registry._tools.items():
-                # Convert Cyclops tool to MCP tool format
+            for tool_name in self.tool_registry.list_tools():
+                tool = self.tool_registry.get_tool(tool_name)
+                if tool is None:
+                    continue
                 mcp_tool = MCPTool(
                     name=tool.name,
                     description=tool.description,
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            param.name: {
-                                "type": param.type,
-                                "description": param.description or "",
-                            }
-                            for param in tool.definition.parameters.values()
-                        },
-                        "required": [
-                            param.name
-                            for param in tool.definition.parameters.values()
-                            if param.required
-                        ],
-                    },
+                    inputSchema=tool.definition.to_json_schema(),
                 )
                 tools.append(mcp_tool)
             return tools
 
         @self.server.call_tool()
-        async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-            """Execute a tool"""
+        async def handle_call_tool(
+            name: str, arguments: Dict[str, Any]
+        ) -> List[TextContent]:
             try:
                 result = await self.tool_registry.execute_tool(
                     tool_name=name, **arguments
@@ -90,8 +75,9 @@ class MCPServer:
     async def run_stdio(self):
         """Run the MCP server with stdio transport"""
         async with stdio_server() as streams:
+            read_stream, write_stream = streams
             await self.server.run(
-                streams[0],  # read stream
-                streams[1],  # write stream
+                read_stream,
+                write_stream,
                 self.server.create_initialization_options(),
             )

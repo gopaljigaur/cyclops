@@ -22,7 +22,7 @@ Python 3.10 or later is required.
 Cyclops uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood, so credentials are just environment variables. Set the one for the provider you want.
 
 ```bash
-# Groq — free tier, fast (good for experimenting)
+# Groq: free tier, fast (good for experimenting)
 export GROQ_API_KEY="gsk_..."
 
 # OpenAI
@@ -34,7 +34,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 # Together AI
 export TOGETHERAI_API_KEY="..."
 
-# Ollama — no key needed; install from https://ollama.ai
+# Ollama: no key needed; install from https://ollama.ai
 ```
 
 You can put these in a `.env` file and load them with `python-dotenv`.

@@ -1,6 +1,6 @@
 # Streaming
 
-## stream() — no tools
+## stream(): no tools
 
 When an agent has no tools, `stream()` provides true token-by-token streaming directly from the LLM. Each iteration of the loop yields a small string chunk as it arrives.
 
@@ -17,7 +17,7 @@ print()  # final newline
 
 The streamed tokens are also accumulated into the conversation history, so the next call to `run()` or `stream()` correctly sees the full previous assistant reply.
 
-## astream() — async streaming
+## astream(): async streaming
 
 `astream()` is the async version. It returns an `AsyncIterator[str]` and must be consumed inside an `async for` loop.
 
@@ -40,14 +40,14 @@ asyncio.run(main())
 
 Use `astream()` whenever you are already in an async context, such as inside a FastAPI endpoint or an async CLI.
 
-## stream() — with tools
+## stream(): with tools
 
 When the agent has tools configured, `stream()` works in two phases:
 
 1. **Tool loop** (non-streaming): the agent sends the message, detects tool calls, executes them, and repeats until there are no more tool calls.
 2. **Final answer** (streaming): once all tool work is done, the final response is streamed token by token.
 
-From the caller's perspective the API is identical — you just iterate the generator:
+From the caller's perspective the API is identical: you just iterate the generator:
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -71,10 +71,10 @@ print()
 ```
 
 /// note
-There will be a brief pause before tokens begin for tool-enabled agents — this is expected. The tool execution must finish before the final streaming call is made.
+There will be a brief pause before tokens begin for tool-enabled agents: this is expected. The tool execution must finish before the final streaming call is made.
 ///
 
-## astream() — async with tools
+## astream(): async with tools
 
 The async path works identically to the sync path, just awaited:
 

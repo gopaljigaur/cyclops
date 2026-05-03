@@ -21,7 +21,7 @@ Python 3.10 or later is required.
 Cyclops uses LiteLLM under the hood, so provider credentials are set as environment variables. You only need the key for the provider you choose.
 
 ```bash
-# Groq — free tier, fast inference (recommended for experimenting)
+# Groq: free tier, fast inference (recommended for experimenting)
 export GROQ_API_KEY="gsk_..."
 
 # OpenAI
@@ -30,10 +30,10 @@ export OPENAI_API_KEY="sk-..."
 # Anthropic
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Together AI — free tier available
+# Together AI: free tier available
 export TOGETHERAI_API_KEY="..."
 
-# Ollama — no key needed; just install and run locally
+# Ollama: no key needed; just install and run locally
 # https://ollama.ai
 ```
 
@@ -123,7 +123,7 @@ asyncio.run(main())
 
 ## Multiple providers
 
-Cyclops supports every provider LiteLLM knows about. Swap the model string — no other changes needed.
+Cyclops supports every provider LiteLLM knows about. Swap the model string; no other changes needed.
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -145,5 +145,5 @@ agent = Agent(AgentConfig(model="together_ai/meta-llama/Llama-3-8b-chat-hf"))
 ```
 
 /// note
-Ollama runs entirely on your machine. Install it from [ollama.ai](https://ollama.ai), pull a model (`ollama pull qwen3:4b`), and use `"ollama/<model-name>"` — no API key required.
+Ollama runs entirely on your machine. Install it from [ollama.ai](https://ollama.ai), pull a model (`ollama pull qwen3:4b`), and use `"ollama/<model-name>"` (no API key required).
 ///

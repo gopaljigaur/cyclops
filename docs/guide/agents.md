@@ -19,13 +19,14 @@ config = AgentConfig(
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `model` | `str` | — | LiteLLM model string, e.g. `"gpt-4o-mini"`, `"groq/llama-3.1-8b-instant"`, `"ollama/qwen3:4b"`. |
+| `model` | `str` | required | LiteLLM model string, e.g. `"gpt-4o-mini"`, `"groq/llama-3.1-8b-instant"`, `"ollama/qwen3:4b"`. |
 | `temperature` | `float` | `0.1` | Sampling temperature. Lower values are more deterministic. |
 | `max_tokens` | `int \| None` | `None` | Maximum tokens in the response. `None` uses the model's default. |
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
 | `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
+| `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
 
 ## Constructing an Agent
 
@@ -56,7 +57,7 @@ response = agent.run("Who invented the telephone?")
 print(response)
 ```
 
-`arun()` is the async equivalent — useful inside coroutines or when running multiple agents concurrently.
+`arun()` is the async equivalent, useful inside coroutines or when running multiple agents concurrently.
 
 ```python
 import asyncio
@@ -68,7 +69,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Both methods accept an optional `response_model` parameter for structured output — see [Structured Output](structured-output.md).
+Both methods accept an optional `response_model` parameter for structured output. See [Structured Output](structured-output.md).
 
 ## run_with_response() and arun_with_response()
 
@@ -129,7 +130,7 @@ Call `reset()` to clear the conversation history and start fresh without creatin
 agent.run("Remember: the code word is banana.")
 agent.reset()
 
-# History is now empty — the agent has forgotten the code word.
+# History is now empty; the agent has forgotten the code word.
 response = agent.run("What was the code word?")
 ```
 

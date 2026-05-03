@@ -1,6 +1,6 @@
 # Examples
 
-All example scripts live in the `examples/` directory of the repository. Each one is self-contained and runnable. Most use `ollama/qwen3:4b` as the default model so they work without any API key — just install [Ollama](https://ollama.ai) and pull the model with `ollama pull qwen3:4b`.
+All example scripts live in the `examples/` directory of the repository. Each one is self-contained and runnable. Most use `ollama/qwen3:4b` as the default model so they work without any API key; just install [Ollama](https://ollama.ai) and pull the model with `ollama pull qwen3:4b`.
 
 ---
 
@@ -40,7 +40,7 @@ Uses `InMemoryStorage` to store user context (name, preferences, last topic) and
 
 **Path:** `examples/different_llms.py`
 
-A quick tour of five providers — Groq (free), Together AI (free tier), Ollama (local), and OpenAI — all running the same prompt with only the `model=` string changed. Includes the environment variable each provider requires.
+A quick tour of five providers (Groq, Together AI, Ollama, OpenAI), all running the same prompt with only the `model=` string changed. Includes the environment variable each provider requires.
 
 ---
 

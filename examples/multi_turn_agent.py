@@ -1,4 +1,4 @@
-"""Multi-turn conversation example — history, reset(), and messages inspection
+"""Multi-turn conversation example: history, reset(), and messages inspection
 
 Demonstrates:
   1. A realistic multi-turn conversation (planning a trip to Japan)
@@ -14,7 +14,7 @@ from cyclops import Agent, AgentConfig
 # Model configuration
 # ---------------------------------------------------------------------------
 
-# Default: Ollama (free, local — https://ollama.ai, then `ollama pull qwen3:4b`)
+# Default: Ollama (free, local: https://ollama.ai, then `ollama pull qwen3:4b`)
 MODEL = "ollama/qwen3:4b"
 
 # Alternatives:
@@ -105,14 +105,14 @@ def demo_reset(agent: Agent) -> None:
     print("3. Resetting conversation with agent.reset()")
     print("=" * 60)
 
-    print(f"\nBefore reset — messages in history: {len(agent.messages)}")
+    print(f"\nBefore reset: messages in history: {len(agent.messages)}")
 
     agent.reset()
 
-    print(f"After  reset — messages in history: {len(agent.messages)}")
+    print(f"After  reset: messages in history: {len(agent.messages)}")
     assert len(agent.messages) == 0, "History should be empty after reset"
 
-    # Start a completely different conversation — the agent has no memory of Japan
+    # Start a completely different conversation: the agent has no memory of Japan
     new_conversation = [
         "What is quantum entanglement in simple terms?",
         "Can it be used for faster-than-light communication?",
@@ -144,19 +144,19 @@ def demo_context_recall() -> None:
 
     # Establish a fact
     r1 = agent.run("My favourite programming language is Rust.")
-    print("\nTurn 1 — establishing a fact")
+    print("\nTurn 1: establishing a fact")
     print("  User : My favourite programming language is Rust.")
     print(f"  Agent: {r1[:200]}")
 
     # Ask something unrelated
     r2 = agent.run("What is a closure?")
-    print("\nTurn 2 — unrelated question")
+    print("\nTurn 2: unrelated question")
     print("  User : What is a closure?")
     print(f"  Agent: {r2[:200]}")
 
-    # Refer back to the earlier fact — the agent should recall it
+    # Refer back to the earlier fact: the agent should recall it
     r3 = agent.run("Can you give me an example of a closure in my favourite language?")
-    print("\nTurn 3 — refers back to earlier fact (should use Rust)")
+    print("\nTurn 3: refers back to earlier fact (should use Rust)")
     print("  User : Can you give me an example of a closure in my favourite language?")
     print(f"  Agent: {r3[:300]}")
 
