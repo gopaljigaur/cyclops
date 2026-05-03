@@ -210,11 +210,7 @@ class TestMCPBridgeUnit:
             with patch("cyclops.mcp.bridge.MCPClient") as MockClass:
                 instance = MockClass.return_value
                 instance.connect_stdio = AsyncMock()
-
-                async def fake_connect(*a, **kw):
-                    pass
-
-                instance.connect_stdio.side_effect = fake_connect
+                instance.disconnect = AsyncMock()
                 bridge.connect("myserver", ["echo", "hello"])
                 assert "myserver" in bridge._clients
         finally:

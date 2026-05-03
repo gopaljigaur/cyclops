@@ -1,10 +1,13 @@
 """Sync bridge for async MCPClient — runs a persistent event loop in a background thread."""
 
 import asyncio
+import logging
 import threading
 from typing import Any, Dict, List, Optional
 
 from cyclops.mcp.client import MCPClient
+
+logger = logging.getLogger(__name__)
 
 
 class MCPBridge:
@@ -47,11 +50,21 @@ class MCPBridge:
 
     def stop(self) -> None:
         """Disconnect all clients and stop the background loop."""
-        for name in list(self._clients):
-            try:
-                self.disconnect(name)
-            except Exception:
-                pass
+        if self._clients:
+
+            async def _disconnect_all() -> None:
+                results = await asyncio.gather(
+                    *[c.disconnect() for c in self._clients.values()],
+                    return_exceptions=True,
+                )
+                for name, result in zip(list(self._clients), results):
+                    if isinstance(result, Exception):
+                        logger.warning(
+                            "Error disconnecting MCP server %r: %s", name, result
+                        )
+                self._clients.clear()
+
+            self._run(_disconnect_all())
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=3)
 
