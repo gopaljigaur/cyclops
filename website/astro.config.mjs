@@ -7,6 +7,7 @@ export default defineConfig({
     starlight({
       title: 'Cyclops',
       description: 'Minimal Python agent framework. Any LLM. MCP native.',
+      favicon: '/favicon.svg',
       defaultLocale: 'en',
       social: {
         github: 'https://github.com/gopaljigaur/cyclops',
