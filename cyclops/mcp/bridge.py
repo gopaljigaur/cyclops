@@ -36,8 +36,9 @@ class MCPBridge:
         env: Optional[Dict[str, str]] = None,
     ) -> MCPClient:
         """Spawn an MCP server process and connect to it."""
-        if name in self._clients:
-            self._run(self._clients[name].disconnect())
+        old = self._clients.pop(name, None)
+        if old is not None:
+            self._run(old.disconnect())
         client = MCPClient()
         self._run(client.connect_stdio(command, env=env))
         self._clients[name] = client
@@ -67,6 +68,7 @@ class MCPBridge:
             self._run(_disconnect_all())
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=3)
+        self._loop.close()
 
     # ── Tool operations ───────────────────────────────────────────────────────
 

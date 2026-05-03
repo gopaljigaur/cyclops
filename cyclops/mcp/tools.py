@@ -1,6 +1,7 @@
 """MCPClientTool — wraps a remote MCP tool as a cyclops BaseTool."""
 
-from typing import TYPE_CHECKING, Any, Dict
+import asyncio
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cyclops.toolkit.tool import BaseTool
 from cyclops.toolkit.types import ToolDefinition, ToolParameter
@@ -52,11 +53,16 @@ class MCPClientTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> str:
-        return self._bridge.call_tool(self._client, self.name, kwargs)
+        return await asyncio.to_thread(
+            self._bridge.call_tool, self._client, self.name, kwargs
+        )
 
 
 def tools_from_server(
-    bridge: "MCPBridge", name: str, command: list, env: dict | None = None
+    bridge: "MCPBridge",
+    name: str,
+    command: List[str],
+    env: Optional[Dict[str, str]] = None,
 ) -> tuple["MCPClient", list[MCPClientTool]]:
     """Connect to an MCP server and return (client, list_of_tools)."""
     client = bridge.connect(name, command, env=env)
