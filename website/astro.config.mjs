@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightLlmsTxt from 'starlight-llms-txt';
 
 export default defineConfig({
   site: 'https://cyclops.gopalji.me',
@@ -12,6 +13,7 @@ export default defineConfig({
   },
   integrations: [
     starlight({
+      plugins: [starlightLlmsTxt()],
       title: 'Cyclops',
       description: 'Minimal Python agent framework. Any LLM. MCP native.',
       favicon: '/favicon.svg',
