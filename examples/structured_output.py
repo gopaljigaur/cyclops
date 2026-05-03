@@ -33,8 +33,10 @@ MODEL = "ollama/qwen3:4b"
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
+
 class MovieReview(BaseModel):
     """Structured review of a film."""
+
     title: str = Field(description="Exact movie title")
     year: int = Field(description="Release year")
     rating: float = Field(ge=0, le=10, description="Rating from 0 to 10")
@@ -44,16 +46,20 @@ class MovieReview(BaseModel):
 
 class WeatherReport(BaseModel):
     """Current weather snapshot for a city."""
+
     city: str
     country_code: str = Field(description="ISO 3166-1 alpha-2 country code, e.g. US")
     temperature_celsius: float
-    conditions: str = Field(description="Human-readable description, e.g. Partly cloudy")
+    conditions: str = Field(
+        description="Human-readable description, e.g. Partly cloudy"
+    )
     humidity_percent: Optional[int] = Field(default=None, ge=0, le=100)
     wind_kph: Optional[float] = Field(default=None, ge=0)
 
 
 class CodeIssue(BaseModel):
     """A single issue found during code review."""
+
     line: Optional[int] = Field(default=None, description="Line number if applicable")
     severity: str = Field(description="One of: critical, warning, info")
     description: str
@@ -61,6 +67,7 @@ class CodeIssue(BaseModel):
 
 class CodeReview(BaseModel):
     """Automated code review result."""
+
     language: str
     score: int = Field(ge=0, le=100, description="Overall quality score 0-100")
     issues: List[CodeIssue] = Field(default_factory=list)
@@ -71,6 +78,7 @@ class CodeReview(BaseModel):
 # ---------------------------------------------------------------------------
 # Helper: build an agent that always responds in JSON
 # ---------------------------------------------------------------------------
+
 
 def make_agent(schema: type) -> Agent:
     """Return an agent primed to output JSON matching *schema*."""
@@ -91,6 +99,7 @@ def make_agent(schema: type) -> Agent:
 # ---------------------------------------------------------------------------
 # Demo 1 — Movie review
 # ---------------------------------------------------------------------------
+
 
 def demo_movie_review() -> None:
     print("=" * 60)
@@ -114,6 +123,7 @@ def demo_movie_review() -> None:
 # ---------------------------------------------------------------------------
 # Demo 2 — Weather report
 # ---------------------------------------------------------------------------
+
 
 def demo_weather_report() -> None:
     print("=" * 60)
@@ -154,6 +164,7 @@ def fetch_user(user_id):
 PASSWORD = "hunter2"
 """
 
+
 def demo_code_review() -> None:
     print("=" * 60)
     print("3. CodeReview structured output")
@@ -184,6 +195,7 @@ def demo_code_review() -> None:
 # Demo 4 — Handling ValidationError
 # ---------------------------------------------------------------------------
 
+
 def demo_validation_error_handling() -> None:
     print("=" * 60)
     print("4. Handling ValidationError gracefully")
@@ -194,7 +206,7 @@ def demo_validation_error_handling() -> None:
         model=MODEL,
         system_prompt="Respond only with valid JSON matching the MovieReview schema.",
         temperature=0.1,
-        max_tokens=10,   # intentionally too small to trigger a bad response
+        max_tokens=10,  # intentionally too small to trigger a bad response
     )
     agent = Agent(config)
 

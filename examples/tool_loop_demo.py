@@ -42,18 +42,58 @@ MODEL = "ollama/qwen3:4b"
 # Simulated paper database
 _PAPERS = {
     "transformer": [
-        {"id": "paper-001", "title": "Attention Is All You Need", "year": 2017, "citations": 85000},
-        {"id": "paper-002", "title": "BERT: Pre-training of Deep Bidirectional Transformers", "year": 2018, "citations": 62000},
-        {"id": "paper-003", "title": "GPT-3: Language Models are Few-Shot Learners", "year": 2020, "citations": 28000},
+        {
+            "id": "paper-001",
+            "title": "Attention Is All You Need",
+            "year": 2017,
+            "citations": 85000,
+        },
+        {
+            "id": "paper-002",
+            "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+            "year": 2018,
+            "citations": 62000,
+        },
+        {
+            "id": "paper-003",
+            "title": "GPT-3: Language Models are Few-Shot Learners",
+            "year": 2020,
+            "citations": 28000,
+        },
     ],
     "reinforcement learning": [
-        {"id": "paper-004", "title": "Playing Atari with Deep Reinforcement Learning", "year": 2013, "citations": 14000},
-        {"id": "paper-005", "title": "Proximal Policy Optimization Algorithms", "year": 2017, "citations": 12000},
-        {"id": "paper-006", "title": "AlphaGo: Mastering the game of Go", "year": 2016, "citations": 9500},
+        {
+            "id": "paper-004",
+            "title": "Playing Atari with Deep Reinforcement Learning",
+            "year": 2013,
+            "citations": 14000,
+        },
+        {
+            "id": "paper-005",
+            "title": "Proximal Policy Optimization Algorithms",
+            "year": 2017,
+            "citations": 12000,
+        },
+        {
+            "id": "paper-006",
+            "title": "AlphaGo: Mastering the game of Go",
+            "year": 2016,
+            "citations": 9500,
+        },
     ],
     "diffusion": [
-        {"id": "paper-007", "title": "Denoising Diffusion Probabilistic Models", "year": 2020, "citations": 18000},
-        {"id": "paper-008", "title": "High-Resolution Image Synthesis with Latent Diffusion Models", "year": 2022, "citations": 11000},
+        {
+            "id": "paper-007",
+            "title": "Denoising Diffusion Probabilistic Models",
+            "year": 2020,
+            "citations": 18000,
+        },
+        {
+            "id": "paper-008",
+            "title": "High-Resolution Image Synthesis with Latent Diffusion Models",
+            "year": 2022,
+            "citations": 11000,
+        },
     ],
 }
 
@@ -128,6 +168,7 @@ def fetch_abstract(paper_id: str) -> str:
 # Tool 3: count_words
 # ---------------------------------------------------------------------------
 
+
 @tool
 def count_words(text: str) -> str:
     """Count the number of words in a piece of text."""
@@ -139,6 +180,7 @@ def count_words(text: str) -> str:
 # Tool 4: compute_stats
 # ---------------------------------------------------------------------------
 
+
 @tool
 def compute_stats(numbers: str) -> str:
     """Compute mean, min, max, and total of a comma-separated list of numbers."""
@@ -146,14 +188,22 @@ def compute_stats(numbers: str) -> str:
         values = [float(x.strip()) for x in numbers.split(",") if x.strip()]
         if not values:
             return json.dumps({"error": "No numbers provided"})
-        return json.dumps({
-            "count": len(values),
-            "total": sum(values),
-            "mean": round(sum(values) / len(values), 2),
-            "min": min(values),
-            "max": max(values),
-            "std_dev": round(math.sqrt(sum((x - sum(values) / len(values)) ** 2 for x in values) / len(values)), 2),
-        })
+        return json.dumps(
+            {
+                "count": len(values),
+                "total": sum(values),
+                "mean": round(sum(values) / len(values), 2),
+                "min": min(values),
+                "max": max(values),
+                "std_dev": round(
+                    math.sqrt(
+                        sum((x - sum(values) / len(values)) ** 2 for x in values)
+                        / len(values)
+                    ),
+                    2,
+                ),
+            }
+        )
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
 
@@ -161,6 +211,7 @@ def compute_stats(numbers: str) -> str:
 # ---------------------------------------------------------------------------
 # Tool 5: format_report
 # ---------------------------------------------------------------------------
+
 
 @tool
 def format_report(title: str, findings: str, conclusion: str) -> str:
@@ -175,9 +226,7 @@ def format_report(title: str, findings: str, conclusion: str) -> str:
         f"\n{'=' * 60}\n"
         f"RESEARCH REPORT: {title}\n"
         f"{'=' * 60}\n\n"
-        f"KEY FINDINGS:\n"
-        + "\n".join(bullets)
-        + f"\n\nCONCLUSION:\n  {conclusion}\n"
+        f"KEY FINDINGS:\n" + "\n".join(bullets) + f"\n\nCONCLUSION:\n  {conclusion}\n"
         f"{'=' * 60}\n"
     )
     return report
@@ -186,6 +235,7 @@ def format_report(title: str, findings: str, conclusion: str) -> str:
 # ---------------------------------------------------------------------------
 # Sync demo
 # ---------------------------------------------------------------------------
+
 
 def demo_sync_tool_loop() -> None:
     print("=" * 60)
@@ -205,7 +255,13 @@ def demo_sync_tool_loop() -> None:
         max_iterations=12,  # enough headroom for a multi-step chain
     )
 
-    all_tools = [search_papers, fetch_abstract, count_words, compute_stats, format_report]
+    all_tools = [
+        search_papers,
+        fetch_abstract,
+        count_words,
+        compute_stats,
+        format_report,
+    ]
     agent = Agent(config, tools=all_tools)
 
     task = (
@@ -222,10 +278,7 @@ def demo_sync_tool_loop() -> None:
     print(result)
 
     # Show which tools were called (visible in history)
-    tool_turns = [
-        msg for msg in agent.messages
-        if msg.get("role") == "tool"
-    ]
+    tool_turns = [msg for msg in agent.messages if msg.get("role") == "tool"]
     print(f"\nTotal tool calls made: {len(tool_turns)}")
     for t in tool_turns:
         print(f"  -> {t.get('name', 'unknown')}")
@@ -234,6 +287,7 @@ def demo_sync_tool_loop() -> None:
 # ---------------------------------------------------------------------------
 # Async demo
 # ---------------------------------------------------------------------------
+
 
 async def demo_async_tool_loop() -> None:
     print("\n" + "=" * 60)
@@ -251,7 +305,13 @@ async def demo_async_tool_loop() -> None:
         max_iterations=10,
     )
 
-    all_tools = [search_papers, fetch_abstract, count_words, compute_stats, format_report]
+    all_tools = [
+        search_papers,
+        fetch_abstract,
+        count_words,
+        compute_stats,
+        format_report,
+    ]
     agent = Agent(config, tools=all_tools)
 
     task = (

@@ -1,7 +1,5 @@
 """Tests for the Agent class"""
 
-import asyncio
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +12,7 @@ from cyclops.core.types import AgentConfig
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_config(model: str = "gpt-3.5-turbo", **kwargs) -> AgentConfig:
     return AgentConfig(model=model, **kwargs)
@@ -65,6 +64,7 @@ def _make_simple_tool(name: str = "add", description: str = "Add two numbers"):
 # test_run_no_tools
 # ---------------------------------------------------------------------------
 
+
 def test_run_no_tools():
     agent = Agent(config=_make_config())
     response = _make_completion_response("Hello, world!")
@@ -83,6 +83,7 @@ def test_run_no_tools():
 # ---------------------------------------------------------------------------
 # test_run_with_tools_loop
 # ---------------------------------------------------------------------------
+
 
 def test_run_with_tools_loop():
     """Agent loops through tool calls on first response, then returns final answer."""
@@ -112,6 +113,7 @@ def test_run_with_tools_loop():
 # test_run_with_tools_multi_iteration
 # ---------------------------------------------------------------------------
 
+
 def test_run_with_tools_multi_iteration():
     """Agent correctly handles two sequential tool call rounds before final answer."""
     tool = _make_simple_tool()
@@ -123,7 +125,10 @@ def test_run_with_tools_multi_iteration():
     second_response = _make_completion_response(content=None, tool_calls=[tc2])
     third_response = _make_completion_response(content="Done")
 
-    with patch("litellm.completion", side_effect=[first_response, second_response, third_response]):
+    with patch(
+        "litellm.completion",
+        side_effect=[first_response, second_response, third_response],
+    ):
         result = agent.run("Do two additions")
 
     assert result == "Done"
@@ -137,6 +142,7 @@ def test_run_with_tools_multi_iteration():
 # ---------------------------------------------------------------------------
 # test_stream_no_tools
 # ---------------------------------------------------------------------------
+
 
 def test_stream_no_tools():
     """stream() yields individual chunks when there are no tools."""
@@ -167,6 +173,7 @@ def test_stream_no_tools():
 # test_run_with_response_model
 # ---------------------------------------------------------------------------
 
+
 class AnswerModel(BaseModel):
     answer: str
     confidence: float
@@ -190,6 +197,7 @@ def test_run_with_response_model():
 # test_reset
 # ---------------------------------------------------------------------------
 
+
 def test_reset():
     """reset() clears conversation history."""
     agent = Agent(config=_make_config())
@@ -206,6 +214,7 @@ def test_reset():
 # ---------------------------------------------------------------------------
 # test_conversation_history
 # ---------------------------------------------------------------------------
+
 
 def test_conversation_history():
     """Multi-turn conversations accumulate history correctly."""
@@ -231,6 +240,7 @@ def test_conversation_history():
 # test_arun_no_tools (async)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_arun_no_tools():
     agent = Agent(config=_make_config())
@@ -247,6 +257,7 @@ async def test_arun_no_tools():
 # test_arun_with_tools_loop (async)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_arun_with_tools_loop():
     tool = _make_simple_tool()
@@ -256,7 +267,10 @@ async def test_arun_with_tools_loop():
     first_response = _make_completion_response(content=None, tool_calls=[tc])
     second_response = _make_completion_response(content="Result is 15.")
 
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=[first_response, second_response])):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[first_response, second_response]),
+    ):
         result = await agent.arun("What is 10 + 5?")
 
     assert result == "Result is 15."
@@ -267,6 +281,7 @@ async def test_arun_with_tools_loop():
 # ---------------------------------------------------------------------------
 # test_run_with_response_method
 # ---------------------------------------------------------------------------
+
 
 def test_run_with_response_method():
     """run_with_response() returns an AgentResponse with metadata."""

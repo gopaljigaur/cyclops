@@ -27,6 +27,7 @@ MODEL = "ollama/qwen3:4b"
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def print_turn(turn: int, question: str, answer: str, history_len: int) -> None:
     print(f"\n[Turn {turn}] History length: {history_len} messages")
     print(f"  User : {question}")
@@ -38,6 +39,7 @@ def print_turn(turn: int, question: str, answer: str, history_len: int) -> None:
 # ---------------------------------------------------------------------------
 # 1. Multi-turn trip planning conversation
 # ---------------------------------------------------------------------------
+
 
 def demo_trip_planning() -> Agent:
     print("=" * 60)
@@ -74,6 +76,7 @@ def demo_trip_planning() -> Agent:
 # 2. Inspect the accumulated message history
 # ---------------------------------------------------------------------------
 
+
 def demo_inspect_history(agent: Agent) -> None:
     print("\n" + "=" * 60)
     print("2. Inspecting agent.messages")
@@ -81,7 +84,9 @@ def demo_inspect_history(agent: Agent) -> None:
 
     messages = agent.messages  # returns a shallow copy of _history
     print(f"\nTotal messages in history: {len(messages)}")
-    print(f"Expected: {len(messages) // 2} user + {len(messages) // 2} assistant turns\n")
+    print(
+        f"Expected: {len(messages) // 2} user + {len(messages) // 2} assistant turns\n"
+    )
 
     for idx, msg in enumerate(messages):
         role = msg["role"].upper()
@@ -93,6 +98,7 @@ def demo_inspect_history(agent: Agent) -> None:
 # ---------------------------------------------------------------------------
 # 3. Reset and start a new topic
 # ---------------------------------------------------------------------------
+
 
 def demo_reset(agent: Agent) -> None:
     print("\n" + "=" * 60)
@@ -123,6 +129,7 @@ def demo_reset(agent: Agent) -> None:
 # 4. Show that context is preserved (the agent recalls earlier turns)
 # ---------------------------------------------------------------------------
 
+
 def demo_context_recall() -> None:
     print("\n" + "=" * 60)
     print("4. Demonstrating context recall across turns")
@@ -137,20 +144,20 @@ def demo_context_recall() -> None:
 
     # Establish a fact
     r1 = agent.run("My favourite programming language is Rust.")
-    print(f"\nTurn 1 — establishing a fact")
-    print(f"  User : My favourite programming language is Rust.")
+    print("\nTurn 1 — establishing a fact")
+    print("  User : My favourite programming language is Rust.")
     print(f"  Agent: {r1[:200]}")
 
     # Ask something unrelated
     r2 = agent.run("What is a closure?")
-    print(f"\nTurn 2 — unrelated question")
-    print(f"  User : What is a closure?")
+    print("\nTurn 2 — unrelated question")
+    print("  User : What is a closure?")
     print(f"  Agent: {r2[:200]}")
 
     # Refer back to the earlier fact — the agent should recall it
     r3 = agent.run("Can you give me an example of a closure in my favourite language?")
-    print(f"\nTurn 3 — refers back to earlier fact (should use Rust)")
-    print(f"  User : Can you give me an example of a closure in my favourite language?")
+    print("\nTurn 3 — refers back to earlier fact (should use Rust)")
+    print("  User : Can you give me an example of a closure in my favourite language?")
     print(f"  Agent: {r3[:300]}")
 
     print(f"\nFinal history length: {len(agent.messages)} messages")

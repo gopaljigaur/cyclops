@@ -38,9 +38,12 @@ MODEL = "gpt-4o-mini"
 # Helper: pretty-print an AgentResponse
 # ---------------------------------------------------------------------------
 
+
 def print_response(label: str, response: AgentResponse) -> None:
     print(f"\n--- {label} ---")
-    print(f"Content          : {response.content[:120]}{'...' if len(response.content) > 120 else ''}")
+    print(
+        f"Content          : {response.content[:120]}{'...' if len(response.content) > 120 else ''}"
+    )
     print(f"Model            : {response.model}")
     print(f"Prompt tokens    : {response.prompt_tokens}")
     print(f"Completion tokens: {response.completion_tokens}")
@@ -48,7 +51,7 @@ def print_response(label: str, response: AgentResponse) -> None:
     if response.cost is not None:
         print(f"Cost             : ${response.cost:.6f}")
     else:
-        print(f"Cost             : N/A (local model or no pricing data)")
+        print("Cost             : N/A (local model or no pricing data)")
     if response.tool_calls:
         print(f"Tool calls       : {[tc.name for tc in response.tool_calls]}")
 
@@ -56,6 +59,7 @@ def print_response(label: str, response: AgentResponse) -> None:
 # ---------------------------------------------------------------------------
 # 1. Single synchronous call
 # ---------------------------------------------------------------------------
+
 
 def demo_single_run() -> AgentResponse:
     print("=" * 60)
@@ -77,6 +81,7 @@ def demo_single_run() -> AgentResponse:
 # ---------------------------------------------------------------------------
 # 2. Single async call
 # ---------------------------------------------------------------------------
+
 
 async def demo_async_run() -> AgentResponse:
     print("\n" + "=" * 60)
@@ -100,6 +105,7 @@ async def demo_async_run() -> AgentResponse:
 # ---------------------------------------------------------------------------
 # 3. Accumulate cost across multiple calls in a session
 # ---------------------------------------------------------------------------
+
 
 def demo_cost_accumulation() -> None:
     print("\n" + "=" * 60)
@@ -125,7 +131,9 @@ def demo_cost_accumulation() -> None:
     total_cost = 0.0
     cost_available = False
 
-    print(f"\nAsking {len(questions)} questions to the same agent (history accumulates):\n")
+    print(
+        f"\nAsking {len(questions)} questions to the same agent (history accumulates):\n"
+    )
 
     for i, question in enumerate(questions, start=1):
         response = agent.run_with_response(question)
@@ -159,6 +167,7 @@ def demo_cost_accumulation() -> None:
 # 4. Demonstrate accessing the raw AgentResponse fields directly
 # ---------------------------------------------------------------------------
 
+
 def demo_field_access() -> None:
     print("\n" + "=" * 60)
     print("4. Direct field access on AgentResponse")
@@ -181,7 +190,9 @@ def demo_field_access() -> None:
     if response.cost is not None:
         budget = 0.01  # $0.01 example budget
         remaining = budget - response.cost
-        print(f"Cost ${response.cost:.6f} of ${budget:.2f} budget. Remaining: ${remaining:.4f}")
+        print(
+            f"Cost ${response.cost:.6f} of ${budget:.2f} budget. Remaining: ${remaining:.4f}"
+        )
     else:
         print("Cost not available for this model.")
 

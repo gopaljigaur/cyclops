@@ -5,12 +5,13 @@ import os
 
 import pytest
 
-from cyclops.core.memory import FileStorage, InMemoryStorage, MemoryItem
+from cyclops.core.memory import FileStorage, InMemoryStorage
 
 
 # ---------------------------------------------------------------------------
 # InMemoryStorage
 # ---------------------------------------------------------------------------
+
 
 class TestInMemoryStorage:
     """Tests for the in-memory storage backend."""
@@ -103,6 +104,7 @@ class TestInMemoryStorage:
 # ---------------------------------------------------------------------------
 # FileStorage
 # ---------------------------------------------------------------------------
+
 
 class TestFileStorage:
     """Tests for the file-backed persistent storage backend."""

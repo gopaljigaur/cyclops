@@ -30,6 +30,7 @@ MODEL = "ollama/qwen3:4b"
 # 1. Synchronous streaming — no tools
 # ---------------------------------------------------------------------------
 
+
 def demo_sync_stream() -> None:
     print("=" * 60)
     print("1. Synchronous streaming (no tools)")
@@ -58,6 +59,7 @@ def demo_sync_stream() -> None:
 # 2. Asynchronous streaming — no tools
 # ---------------------------------------------------------------------------
 
+
 async def demo_async_stream() -> None:
     print("=" * 60)
     print("2. Asynchronous streaming (no tools)")
@@ -84,6 +86,7 @@ async def demo_async_stream() -> None:
 # ---------------------------------------------------------------------------
 # Tool definitions for demo 3
 # ---------------------------------------------------------------------------
+
 
 @tool
 def get_stock_price(ticker: str) -> str:
@@ -116,6 +119,7 @@ def calculate_portfolio_value(ticker: str, shares: float) -> str:
 # ---------------------------------------------------------------------------
 # 3. Streaming with tools — tool calls resolved first, then answer streamed
 # ---------------------------------------------------------------------------
+
 
 def demo_stream_with_tools() -> None:
     print("=" * 60)
