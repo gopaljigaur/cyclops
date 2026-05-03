@@ -17,7 +17,7 @@ agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.con
 agent.run("Summarise the Pythagorean theorem.")
 ```
 
-`OTelHooks.console()` sets up a `TracerProvider` and `ConsoleSpanExporter` automatically — no boilerplate required. Call `hooks.flush()` after `agent.run()` if spans appear truncated.
+`OTelHooks.console()` sets up a `TracerProvider` and `ConsoleSpanExporter` automatically — no boilerplate required. Spans are flushed automatically at the end of each run.
 
 ## Span hierarchy
 

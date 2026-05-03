@@ -196,10 +196,9 @@ agent.run("What files are in the current directory?")
 Send to Jaeger / Tempo / Datadog instead:
 
 ```python
-hooks = OTelHooks.otlp("http://localhost:4317")  # uv add opentelemetry-exporter-otlp-proto-grpc
-agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=hooks))
+# uv add opentelemetry-exporter-otlp-proto-grpc
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.otlp("http://localhost:4317")))
 agent.run("What files are in the current directory?")
-hooks.flush()
 ```
 
 Span hierarchy per run: `agent.run` → `llm.completion` (with token counts + latency) and `tool.<name>` children. See [Observability guide](https://cyclops.gopalji.me/guides/observability/) for OTLP/Jaeger setup and full attribute reference.

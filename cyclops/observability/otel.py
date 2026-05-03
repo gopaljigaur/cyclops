@@ -100,6 +100,8 @@ class OTelHooks(AgentHooks):
             self._root_span.set_attribute("agent.output.length", len(content))
             self._root_span.end()
             self._root_span = None
+        if self._provider is not None:
+            self._provider.force_flush()
 
     # ── LLM lifecycle ─────────────────────────────────────────────────────────
 

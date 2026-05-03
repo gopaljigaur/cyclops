@@ -57,11 +57,9 @@ def main() -> None:
         tools=[get_weather, calculate],
     )
 
-    print("Running agent (spans will print after BatchSpanProcessor flushes)...\n")
+    print("Running agent...\n")
     agent.run("What is the weather in Tokyo, and what is 42 multiplied by 17?")
-
-    hooks.flush()
-    print("\nDone. See span output above.")
+    print("\nDone. Spans printed above.")
 
 
 if __name__ == "__main__":
