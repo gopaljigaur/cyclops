@@ -187,18 +187,19 @@ await server.run_stdio()
 Wire `OTelHooks` to get OpenTelemetry spans for every LLM call and tool execution. Works with any OTLP backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console.
 
 ```python
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, BatchSpanProcessor
 from cyclops import Agent, AgentConfig, OTelHooks
 
-provider = TracerProvider()
-provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-trace.set_tracer_provider(provider)
-
-agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks()))
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.console()))
 agent.run("What files are in the current directory?")
-provider.force_flush()
+```
+
+Send to Jaeger / Tempo / Datadog instead:
+
+```python
+hooks = OTelHooks.otlp("http://localhost:4317")  # uv add opentelemetry-exporter-otlp-proto-grpc
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=hooks))
+agent.run("What files are in the current directory?")
+hooks.flush()
 ```
 
 Span hierarchy per run: `agent.run` → `llm.completion` (with token counts + latency) and `tool.<name>` children. See [Observability guide](https://cyclops.gopalji.me/guides/observability/) for OTLP/Jaeger setup and full attribute reference.

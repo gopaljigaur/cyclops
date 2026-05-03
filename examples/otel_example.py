@@ -1,7 +1,7 @@
 """OpenTelemetry observability example.
 
 Demonstrates wiring OTelHooks to an agent and emitting spans to the console.
-Replace ConsoleSpanExporter with OTLPSpanExporter to send to Jaeger, Honeycomb,
+Use OTelHooks.otlp("http://localhost:4317") to send to Jaeger, Honeycomb,
 Grafana Tempo, Datadog, or any OTLP-compatible backend.
 
 Span hierarchy per agent.run():
@@ -11,12 +11,7 @@ Span hierarchy per agent.run():
     └── ...
 """
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-
-from cyclops import Agent, AgentConfig
-from cyclops.observability import OTelHooks
+from cyclops import Agent, AgentConfig, OTelHooks
 from cyclops.toolkit import tool
 
 MODEL = "ollama/qwen3:4b"
@@ -25,14 +20,6 @@ MODEL = "ollama/qwen3:4b"
 #   MODEL = "groq/llama-3.1-8b-instant"              # GROQ_API_KEY
 #   MODEL = "anthropic/claude-haiku-4-5-20251001"    # ANTHROPIC_API_KEY
 #   MODEL = "gpt-4o-mini"                            # OPENAI_API_KEY
-
-# ---------------------------------------------------------------------------
-# 1. Configure an OTel TracerProvider (console output for this demo)
-# ---------------------------------------------------------------------------
-
-provider = TracerProvider()
-provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-trace.set_tracer_provider(provider)
 
 
 # ---------------------------------------------------------------------------
@@ -61,15 +48,19 @@ def calculate(expression: str) -> str:
 
 
 def main() -> None:
+    # OTelHooks.console() sets up a TracerProvider + ConsoleSpanExporter in one call.
+    # Swap for OTelHooks.otlp("http://localhost:4317") to send to Jaeger/Tempo/etc.
+    hooks = OTelHooks.console()
+
     agent = Agent(
-        AgentConfig(model=MODEL, hooks=OTelHooks()),
+        AgentConfig(model=MODEL, hooks=hooks),
         tools=[get_weather, calculate],
     )
 
     print("Running agent (spans will print after BatchSpanProcessor flushes)...\n")
     agent.run("What is the weather in Tokyo, and what is 42 multiplied by 17?")
 
-    provider.force_flush()
+    hooks.flush()
     print("\nDone. See span output above.")
 
 

@@ -11,21 +11,13 @@ import { Code } from '@astrojs/starlight/components';
 ## Quick start
 
 ```python
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, BatchSpanProcessor
-
-provider = TracerProvider()
-provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-trace.set_tracer_provider(provider)
-
 from cyclops import Agent, AgentConfig, OTelHooks
 
-agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks()))
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.console()))
 agent.run("Summarise the Pythagorean theorem.")
-
-provider.force_flush()
 ```
+
+`OTelHooks.console()` sets up a `TracerProvider` and `ConsoleSpanExporter` automatically — no boilerplate required. Call `hooks.flush()` after `agent.run()` if spans appear truncated.
 
 ## Span hierarchy
 
@@ -60,22 +52,16 @@ agent.run
 
 ## Send to Jaeger (OTLP)
 
-Replace `ConsoleSpanExporter` with `OTLPSpanExporter`:
-
 ```python
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry import trace
+from cyclops import Agent, AgentConfig, OTelHooks
 
-provider = TracerProvider()
-provider.add_span_processor(
-    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"))
-)
-trace.set_tracer_provider(provider)
+hooks = OTelHooks.otlp("http://localhost:4317")
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=hooks))
+agent.run("Summarise the Pythagorean theorem.")
+hooks.flush()
 ```
 
-Install the exporter:
+Install the OTLP exporter first:
 
 ```bash
 uv add opentelemetry-exporter-otlp-proto-grpc

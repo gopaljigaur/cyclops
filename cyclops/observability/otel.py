@@ -12,15 +12,12 @@ from cyclops.core.hooks import AgentHooks
 class OTelHooks(AgentHooks):
     """AgentHooks that emits OpenTelemetry spans for every agent event.
 
-    Requires a TracerProvider to be configured before instantiation:
+    Use the factory methods for zero-config setup:
 
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter, BatchSpanProcessor
-        from opentelemetry import trace
+        hooks=OTelHooks.console()                          # print spans to stdout
+        hooks=OTelHooks.otlp("http://localhost:4317")      # send to Jaeger / Tempo / Datadog
 
-        provider = TracerProvider()
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-        trace.set_tracer_provider(provider)
+    Or configure an OTel TracerProvider externally and use OTelHooks() directly.
 
     Span hierarchy per agent.run():
         agent.run
@@ -34,10 +31,58 @@ class OTelHooks(AgentHooks):
 
     def __init__(self, tracer_name: str = "cyclops") -> None:
         self._tracer = trace.get_tracer(tracer_name)
+        self._provider: Any = None
         self._root_span: Span | None = None
         self._llm_span: Span | None = None
         self._llm_start_ns: int = 0
         self._tool_span_stack: list[tuple[str, Span]] = []
+
+    @classmethod
+    def console(cls, tracer_name: str = "cyclops") -> "OTelHooks":
+        """Return an OTelHooks instance wired to a console (stdout) exporter."""
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+            ConsoleSpanExporter,
+        )
+
+        provider = TracerProvider()
+        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        trace.set_tracer_provider(provider)
+        instance = cls(tracer_name=tracer_name)
+        instance._provider = provider
+        return instance
+
+    @classmethod
+    def otlp(
+        cls,
+        endpoint: str = "http://localhost:4317",
+        tracer_name: str = "cyclops",
+        **exporter_kwargs: Any,
+    ) -> "OTelHooks":
+        """Return an OTelHooks instance wired to an OTLP gRPC exporter.
+
+        Requires: uv add opentelemetry-exporter-otlp-proto-grpc
+        """
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[import]
+            OTLPSpanExporter,
+        )
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        provider = TracerProvider()
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, **exporter_kwargs))
+        )
+        trace.set_tracer_provider(provider)
+        instance = cls(tracer_name=tracer_name)
+        instance._provider = provider
+        return instance
+
+    def flush(self) -> None:
+        """Force-flush pending spans. Call after agent.run() when using factory methods."""
+        if self._provider is not None:
+            self._provider.force_flush()
 
     def _root_ctx(self) -> Any:
         if self._root_span is not None:
