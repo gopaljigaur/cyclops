@@ -15,6 +15,11 @@ export default defineConfig({
       title: 'Cyclops',
       description: 'Minimal Python agent framework. Any LLM. MCP native.',
       favicon: '/favicon.svg',
+      logo: {
+        src: '/banner.svg',
+        alt: 'Cyclops',
+        replacesTitle: true,
+      },
       defaultLocale: 'en',
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/gopaljigaur/cyclops' },
