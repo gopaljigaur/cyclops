@@ -28,8 +28,10 @@
 .hero > picture > img,
 .hero > img {
   order: -1;
-  max-width: 860px;
-  width: 100%;
+  width: min(860px, 100%) !important;
+  height: auto !important;
+  max-width: unset !important;
+  max-height: unset !important;
 }
 
 .hero .copy {
