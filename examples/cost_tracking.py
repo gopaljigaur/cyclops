@@ -1,4 +1,4 @@
-"""Cost and token tracking example — run_with_response() / arun_with_response()
+"""Cost and token tracking example: run_with_response() / arun_with_response()
 
 Demonstrates:
   1. Inspecting AgentResponse metadata (tokens_used, cost, prompt_tokens,
@@ -27,7 +27,7 @@ MODEL = "gpt-4o-mini"
 
 # For a free/local alternative, swap to:
 #   MODEL = "ollama/qwen3:4b"
-# Note: cost will be None for Ollama — token counts still work.
+# Note: cost will be None for Ollama: token counts still work.
 
 # Other cloud alternatives with cost data:
 #   MODEL = "claude-3-haiku-20240307"    # ANTHROPIC_API_KEY
@@ -139,7 +139,7 @@ def demo_cost_accumulation() -> None:
         response = agent.run_with_response(question)
         print_response(f"Q{i}: {question[:50]}...", response)
 
-        # Accumulate — guard against None (local models)
+        # Accumulate: guard against None (local models)
         if response.prompt_tokens is not None:
             total_prompt_tokens += response.prompt_tokens
         if response.completion_tokens is not None:
@@ -178,15 +178,15 @@ def demo_field_access() -> None:
 
     response: AgentResponse = agent.run_with_response("Name three sorting algorithms.")
 
-    # AgentResponse is a Pydantic model — all fields are typed attributes
+    # AgentResponse is a Pydantic model: all fields are typed attributes
     assert isinstance(response.content, str)
     assert response.model == MODEL
 
-    # Token fields are Optional[int] — check before using
+    # Token fields are Optional[int]: check before using
     if response.tokens_used is not None:
         print(f"Used {response.tokens_used} tokens total.")
 
-    # Cost is Optional[float] — may be None for local/unknown models
+    # Cost is Optional[float]: may be None for local/unknown models
     if response.cost is not None:
         budget = 0.01  # $0.01 example budget
         remaining = budget - response.cost

@@ -3,7 +3,10 @@ title: Hooks
 description: Observe and control agent execution with lifecycle callbacks.
 ---
 
-`AgentHooks` is a lifecycle callback system that lets you observe and control every stage of an agent run — from the initial call, through each LLM request, to every tool execution. Subclass `AgentHooks`, override the methods you need, and pass an instance to `AgentConfig`.
+import exampleSrc from '../../../../../examples/hooks_example.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
+`AgentHooks` is a lifecycle callback system that lets you observe and control every stage of an agent run: from the initial call, through each LLM request, to every tool execution. Subclass `AgentHooks`, override the methods you need, and pass an instance to `AgentConfig`.
 
 ## Quick example
 
@@ -122,3 +125,7 @@ class ErrorHooks(AgentHooks):
 ## Default behaviour
 
 The default `AgentHooks` base class implements `on_tool_start` to return `"allow"` and all other methods as no-ops. You do not need to call `super()` in your overrides.
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/hooks_example.py" />

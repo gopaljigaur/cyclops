@@ -1,6 +1,6 @@
 # Hooks
 
-`AgentHooks` is a lifecycle callback system that lets you observe and control every stage of an agent run — from the initial call, through each LLM request, to every tool execution. Subclass `AgentHooks`, override the methods you need, and pass an instance to `AgentConfig`.
+`AgentHooks` is a lifecycle callback system that lets you observe and control every stage of an agent run: from the initial call, through each LLM request, to every tool execution. Subclass `AgentHooks`, override the methods you need, and pass an instance to `AgentConfig`.
 
 ## Quick example
 

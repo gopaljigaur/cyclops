@@ -3,6 +3,13 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://cyclops.gopalji.me',
+  vite: {
+    server: {
+      fs: {
+        allow: ['..'],
+      },
+    },
+  },
   integrations: [
     starlight({
       title: 'Cyclops',

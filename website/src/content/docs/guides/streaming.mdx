@@ -3,7 +3,10 @@ title: Streaming
 description: Stream tokens from your agent in real time.
 ---
 
-## stream() — no tools
+import exampleSrc from '../../../../../examples/streaming_example.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
+## stream(): no tools
 
 When an agent has no tools, `stream()` gives true token-by-token streaming directly from the LLM. Each iteration yields a small string chunk as it arrives.
 
@@ -20,7 +23,7 @@ print()  # final newline
 
 Streamed tokens are accumulated into conversation history, so the next `run()` or `stream()` call correctly sees the full prior assistant reply.
 
-## astream() — async streaming
+## astream(): async streaming
 
 `astream()` is the async version. It returns an `AsyncIterator[str]` and must be consumed with `async for`.
 
@@ -43,7 +46,7 @@ asyncio.run(main())
 
 Use `astream()` whenever you are in an async context, such as a FastAPI endpoint or an async CLI.
 
-## stream() — with tools
+## stream(): with tools
 
 When the agent has tools configured, `stream()` works in two phases:
 
@@ -76,7 +79,7 @@ print()
 There will be a brief pause before tokens begin when tools are involved. The tool execution must finish before the final streaming call is made. This is expected behavior.
 :::
 
-## astream() — async with tools
+## astream(): async with tools
 
 The async path works identically, just awaited:
 
@@ -129,3 +132,7 @@ async def chat(message: str):
 
     return StreamingResponse(token_generator(), media_type="text/event-stream")
 ```
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/streaming_example.py" />

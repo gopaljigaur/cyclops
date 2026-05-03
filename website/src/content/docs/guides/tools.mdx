@@ -3,6 +3,9 @@ title: Tools
 description: Build tools for your agent.
 ---
 
+import exampleSrc from '../../../../../examples/agent_with_tools.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
 ## @tool decorator
 
 The easiest way to create a tool is the `@tool` decorator. It wraps any Python function (sync or async) and derives the tool name from the function name and the description from the docstring.
@@ -17,7 +20,7 @@ def get_weather(location: str) -> str:
     return f"Sunny, 72F in {location}"
 ```
 
-Both forms work — with and without parentheses:
+Both forms work, with or without parentheses:
 
 ```python
 @tool()
@@ -166,3 +169,7 @@ agent = Agent(config, tools=tools)
 :::note
 If the model does not support native function calling (some Ollama models, for example), set `tool_mode="naive"` in `AgentConfig`. Cyclops also falls back to prompt-based tool invocation automatically when `tool_mode="auto"` and the API returns a function-calling error.
 :::
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/agent_with_tools.py" />

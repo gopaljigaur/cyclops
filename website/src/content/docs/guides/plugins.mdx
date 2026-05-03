@@ -3,6 +3,9 @@ title: Plugins
 description: Package and distribute tools as reusable toolkits.
 ---
 
+import exampleSrc from '../../../../../examples/plugin_system.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
 The plugin system lets you package tools as a `Toolkit` class, distribute it as a Python package, and have Cyclops discover it automatically via entry points. No manual registration needed.
 
 ## Toolkit base class
@@ -148,3 +151,7 @@ weather = "my_weather_toolkit.plugin:WeatherToolkit"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 ```
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/plugin_system.py" />

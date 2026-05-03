@@ -1,9 +1,9 @@
-"""Streaming example — token-by-token output with agent.stream() and agent.astream()
+"""Streaming example: token-by-token output with agent.stream() and agent.astream()
 
 Demonstrates:
   1. Synchronous streaming with no tools (token-by-token)
   2. Asynchronous streaming with no tools (astream)
-  3. Streaming with tools — tool calls are resolved first, then the final
+  3. Streaming with tools: tool calls are resolved first, then the final
      answer is streamed token-by-token
 """
 
@@ -16,18 +16,18 @@ from cyclops.toolkit import tool
 # Model configuration
 # ---------------------------------------------------------------------------
 
-# Default: Ollama (free, runs locally — install at https://ollama.ai)
+# Default: Ollama (free, runs locally: install at https://ollama.ai)
 #   ollama pull qwen3:4b
 MODEL = "ollama/qwen3:4b"
 
-# Alternatives — set the right env-var first, then swap MODEL:
+# Alternatives: set the right env-var first, then swap MODEL:
 #   OpenAI  : MODEL = "gpt-4o-mini"          (OPENAI_API_KEY)
 #   Groq    : MODEL = "groq/llama-3.1-8b-instant"  (GROQ_API_KEY)
 #   Anthropic: MODEL = "claude-3-haiku-20240307"    (ANTHROPIC_API_KEY)
 
 
 # ---------------------------------------------------------------------------
-# 1. Synchronous streaming — no tools
+# 1. Synchronous streaming: no tools
 # ---------------------------------------------------------------------------
 
 
@@ -47,7 +47,7 @@ def demo_sync_stream() -> None:
     print(f"\nPrompt: {prompt}\n")
     print("Response (streaming): ", end="", flush=True)
 
-    # agent.stream() returns Iterator[str] — each chunk is a small string
+    # agent.stream() returns Iterator[str]: each chunk is a small string
     # (usually a word or a few characters, depending on the model)
     for chunk in agent.stream(prompt):
         print(chunk, end="", flush=True)
@@ -56,7 +56,7 @@ def demo_sync_stream() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Asynchronous streaming — no tools
+# 2. Asynchronous streaming: no tools
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +76,7 @@ async def demo_async_stream() -> None:
     print(f"\nPrompt: {prompt}\n")
     print("Response (astream): ", end="", flush=True)
 
-    # agent.astream() is an AsyncIterator[str] — use `async for`
+    # agent.astream() is an AsyncIterator[str]: use `async for`
     async for chunk in agent.astream(prompt):
         print(chunk, end="", flush=True)
 
@@ -91,7 +91,7 @@ async def demo_async_stream() -> None:
 @tool
 def get_stock_price(ticker: str) -> str:
     """Look up the current stock price for a ticker symbol"""
-    # Simulated prices — in production this would call a real API
+    # Simulated prices: in production this would call a real API
     mock_prices = {
         "AAPL": 189.30,
         "GOOGL": 175.12,
@@ -117,7 +117,7 @@ def calculate_portfolio_value(ticker: str, shares: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3. Streaming with tools — tool calls resolved first, then answer streamed
+# 3. Streaming with tools: tool calls resolved first, then answer streamed
 # ---------------------------------------------------------------------------
 
 
