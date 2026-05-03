@@ -15,3 +15,33 @@
 .sl-markdown-content pre {
   border: 1px solid var(--sl-color-gray-5);
 }
+
+/* Splash hero: single-column centered layout with banner on top */
+.hero {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  gap: 1.5rem !important;
+}
+
+.hero > img {
+  order: -1;
+  width: min(860px, 100%) !important;
+  height: auto !important;
+  max-width: unset !important;
+  max-height: unset !important;
+}
+
+.hero .copy {
+  align-items: center !important;
+}
+
+.hero .actions {
+  justify-content: center !important;
+}
+
+/* Hide H1 title — banner SVG already contains the wordmark */
+.hero h1[data-page-title] {
+  display: none;
+}
