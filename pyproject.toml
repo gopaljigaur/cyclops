@@ -27,9 +27,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gopalji/cyclops"
-Repository = "https://github.com/gopalji/cyclops"
-Issues = "https://github.com/gopalji/cyclops/issues"
+Homepage = "https://github.com/gopaljigaur/cyclops"
+Repository = "https://github.com/gopaljigaur/cyclops"
+Issues = "https://github.com/gopaljigaur/cyclops/issues"
 
 [build-system]
 requires = ["hatchling"]

@@ -8,15 +8,15 @@
 
   <br/>
 
-  [Quick Start](#quick-start) | [Examples](./examples) | [Docs](https://gopalji.github.io/cyclops) | [Why Cyclops](#why-cyclops)
+  [Quick Start](#quick-start) | [Examples](./examples) | [Docs](https://gopaljigaur.github.io/cyclops) | [Why Cyclops](#why-cyclops)
 
   <br/>
 
   [![PyPI](https://img.shields.io/pypi/v/cyclops-ai?color=58a6ff&label=PyPI)](https://pypi.org/project/cyclops-ai)
   [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/cyclops-ai)
   [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-  [![Tests](https://img.shields.io/github/actions/workflow/status/gopalji/cyclops/ci.yml?label=tests)](https://github.com/gopalji/cyclops/actions)
-  [![Stars](https://img.shields.io/github/stars/gopalji/cyclops?style=social)](https://github.com/gopalji/cyclops)
+  [![Tests](https://img.shields.io/github/actions/workflow/status/gopaljigaur/cyclops/ci.yml?label=tests)](https://github.com/gopaljigaur/cyclops/actions)
+  [![Stars](https://img.shields.io/github/stars/gopaljigaur/cyclops?style=social)](https://github.com/gopaljigaur/cyclops)
 
 </div>
 
@@ -258,7 +258,7 @@ See the [`examples/`](./examples) directory:
 ## Development
 
 ```bash
-git clone https://github.com/gopalji/cyclops
+git clone https://github.com/gopaljigaur/cyclops
 cd cyclops
 uv sync
 uv run pre-commit install
