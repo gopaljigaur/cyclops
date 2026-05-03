@@ -12,7 +12,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/gopalji/cyclops',
+          href: 'https://github.com/gopaljigaur/cyclops',
         },
       ],
       sidebar: [
@@ -45,7 +45,7 @@ export default defineConfig({
       ],
       customCss: ['./src/styles/custom.css'],
       editLink: {
-        baseUrl: 'https://github.com/gopalji/cyclops/edit/main/website/',
+        baseUrl: 'https://github.com/gopaljigaur/cyclops/edit/main/website/',
       },
     }),
   ],
