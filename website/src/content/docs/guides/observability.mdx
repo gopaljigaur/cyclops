@@ -6,18 +6,18 @@ description: Emit OpenTelemetry spans for every agent event.
 import exampleSrc from '../../../../../examples/otel_example.py?raw';
 import { Code } from '@astrojs/starlight/components';
 
-`OTelHooks` instruments every agent run with [OpenTelemetry](https://opentelemetry.io/) spans. Configure any OTLP-compatible backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console — then pass `OTelHooks()` to `AgentConfig`.
+`TelemetryHooks` instruments every agent run with [OpenTelemetry](https://opentelemetry.io/) spans. Configure any OTLP-compatible backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console — then pass `TelemetryHooks()` to `AgentConfig`.
 
 ## Quick start
 
 ```python
-from cyclops import Agent, AgentConfig, OTelHooks
+from cyclops import Agent, AgentConfig, TelemetryHooks
 
-agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.console()))
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHooks.console()))
 agent.run("Summarise the Pythagorean theorem.")
 ```
 
-`OTelHooks.console()` sets up a `TracerProvider` and `ConsoleSpanExporter` automatically — no boilerplate required. Spans are flushed automatically at the end of each run.
+`TelemetryHooks.console()` sets up a `TracerProvider` and `ConsoleSpanExporter` automatically — no boilerplate required. Spans are flushed automatically at the end of each run.
 
 ## Span hierarchy
 
@@ -53,9 +53,9 @@ agent.run
 ## Send to Jaeger (OTLP)
 
 ```python
-from cyclops import Agent, AgentConfig, OTelHooks
+from cyclops import Agent, AgentConfig, TelemetryHooks
 
-hooks = OTelHooks.otlp("http://localhost:4317")
+hooks = TelemetryHooks.otlp("http://localhost:4317")
 agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=hooks))
 agent.run("Summarise the Pythagorean theorem.")
 hooks.flush()

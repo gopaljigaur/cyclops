@@ -1,7 +1,7 @@
 """OpenTelemetry observability example.
 
-Demonstrates wiring OTelHooks to an agent and emitting spans to the console.
-Use OTelHooks.otlp("http://localhost:4317") to send to Jaeger, Honeycomb,
+Demonstrates wiring TelemetryHooks to an agent and emitting spans to the console.
+Use TelemetryHooks.otlp("http://localhost:4317") to send to Jaeger, Honeycomb,
 Grafana Tempo, Datadog, or any OTLP-compatible backend.
 
 Span hierarchy per agent.run():
@@ -11,7 +11,7 @@ Span hierarchy per agent.run():
     └── ...
 """
 
-from cyclops import Agent, AgentConfig, OTelHooks
+from cyclops import Agent, AgentConfig, TelemetryHooks
 from cyclops.toolkit import tool
 
 MODEL = "ollama/qwen3:4b"
@@ -43,14 +43,14 @@ def calculate(expression: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3. Run agent with OTelHooks
+# 3. Run agent with TelemetryHooks
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
-    # OTelHooks.console() sets up a TracerProvider + ConsoleSpanExporter in one call.
-    # Swap for OTelHooks.otlp("http://localhost:4317") to send to Jaeger/Tempo/etc.
-    hooks = OTelHooks.console()
+    # TelemetryHooks.console() sets up a TracerProvider + ConsoleSpanExporter in one call.
+    # Swap for TelemetryHooks.otlp("http://localhost:4317") to send to Jaeger/Tempo/etc.
+    hooks = TelemetryHooks.console()
 
     agent = Agent(
         AgentConfig(model=MODEL, hooks=hooks),

@@ -184,12 +184,12 @@ await server.run_stdio()
 
 ## Observability
 
-Wire `OTelHooks` to get OpenTelemetry spans for every LLM call and tool execution. Works with any OTLP backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console.
+Wire `TelemetryHooks` to get OpenTelemetry spans for every LLM call and tool execution. Works with any OTLP backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console.
 
 ```python
-from cyclops import Agent, AgentConfig, OTelHooks
+from cyclops import Agent, AgentConfig, TelemetryHooks
 
-agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.console()))
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHooks.console()))
 agent.run("What files are in the current directory?")
 ```
 
@@ -197,7 +197,7 @@ Send to Jaeger / Tempo / Datadog instead:
 
 ```python
 # uv add opentelemetry-exporter-otlp-proto-grpc
-agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks.otlp("http://localhost:4317")))
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHooks.otlp("http://localhost:4317")))
 agent.run("What files are in the current directory?")
 ```
 

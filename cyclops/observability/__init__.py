@@ -1,3 +1,3 @@
-from cyclops.observability.otel import OTelHooks
+from cyclops.observability.otel import TelemetryHooks
 
-__all__ = ["OTelHooks"]
+__all__ = ["TelemetryHooks"]

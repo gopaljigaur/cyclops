@@ -9,15 +9,15 @@ from opentelemetry.trace import Span
 from cyclops.core.hooks import AgentHooks
 
 
-class OTelHooks(AgentHooks):
+class TelemetryHooks(AgentHooks):
     """AgentHooks that emits OpenTelemetry spans for every agent event.
 
     Use the factory methods for zero-config setup:
 
-        hooks=OTelHooks.console()                          # print spans to stdout
-        hooks=OTelHooks.otlp("http://localhost:4317")      # send to Jaeger / Tempo / Datadog
+        hooks=TelemetryHooks.console()                          # print spans to stdout
+        hooks=TelemetryHooks.otlp("http://localhost:4317")      # send to Jaeger / Tempo / Datadog
 
-    Or configure an OTel TracerProvider externally and use OTelHooks() directly.
+    Or configure an OTel TracerProvider externally and use TelemetryHooks() directly.
 
     Span hierarchy per agent.run():
         agent.run
@@ -38,8 +38,8 @@ class OTelHooks(AgentHooks):
         self._tool_span_stack: list[tuple[str, Span]] = []
 
     @classmethod
-    def console(cls, tracer_name: str = "cyclops") -> "OTelHooks":
-        """Return an OTelHooks instance wired to a console (stdout) exporter."""
+    def console(cls, tracer_name: str = "cyclops") -> "TelemetryHooks":
+        """Return an TelemetryHooks instance wired to a console (stdout) exporter."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
@@ -59,8 +59,8 @@ class OTelHooks(AgentHooks):
         endpoint: str = "http://localhost:4317",
         tracer_name: str = "cyclops",
         **exporter_kwargs: Any,
-    ) -> "OTelHooks":
-        """Return an OTelHooks instance wired to an OTLP gRPC exporter.
+    ) -> "TelemetryHooks":
+        """Return an TelemetryHooks instance wired to an OTLP gRPC exporter.
 
         Requires: uv add opentelemetry-exporter-otlp-proto-grpc
         """
