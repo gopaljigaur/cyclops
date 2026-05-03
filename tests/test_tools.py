@@ -7,13 +7,18 @@ from typing import Optional
 import pytest
 
 from cyclops.toolkit.decorators import tool
-from cyclops.toolkit.tool import BaseTool, Tool, _annotation_to_json_type, _PYTHON_TO_JSON_TYPE
-from cyclops.toolkit.types import ToolDefinition, ToolParameter
+from cyclops.toolkit.tool import (
+    BaseTool,
+    Tool,
+    _annotation_to_json_type,
+)
+from cyclops.toolkit.types import ToolDefinition
 
 
 # ---------------------------------------------------------------------------
 # _annotation_to_json_type
 # ---------------------------------------------------------------------------
+
 
 class TestAnnotationToJsonType:
     """Unit tests for the _annotation_to_json_type helper."""
@@ -62,6 +67,7 @@ class TestAnnotationToJsonType:
 # ---------------------------------------------------------------------------
 # @tool decorator
 # ---------------------------------------------------------------------------
+
 
 class TestToolDecorator:
     """Tests for the @tool decorator behaviour."""
@@ -176,6 +182,7 @@ class TestToolDecorator:
 # BaseTool subclassing
 # ---------------------------------------------------------------------------
 
+
 class TestBaseTool:
     """Tests for direct BaseTool subclass usage."""
 
@@ -189,7 +196,7 @@ class TestBaseTool:
 
     def test_subclass_execute_async(self):
         class EchoTool(BaseTool):
-            async def execute(self, text: str) -> str:
+            async def execute(self, text: str) -> str:  # type: ignore[override]
                 return text
 
         t = EchoTool(name="echo", description="Echoes text")
@@ -198,7 +205,7 @@ class TestBaseTool:
 
     def test_build_definition_from_subclass_signature(self):
         class MultiplyTool(BaseTool):
-            async def execute(self, a: int, b: int) -> int:
+            async def execute(self, a: int, b: int) -> int:  # type: ignore[override]
                 return a * b
 
         t = MultiplyTool(name="multiply", description="Multiply two numbers")
@@ -212,7 +219,7 @@ class TestBaseTool:
 
     def test_definition_property_returns_correct_object(self):
         class SimpleTool(BaseTool):
-            async def execute(self, x: str) -> str:
+            async def execute(self, x: str) -> str:  # type: ignore[override]
                 return x
 
         t = SimpleTool(name="simple", description="Simple tool")
@@ -222,6 +229,7 @@ class TestBaseTool:
 # ---------------------------------------------------------------------------
 # Tool (function-based)
 # ---------------------------------------------------------------------------
+
 
 class TestFunctionTool:
     """Tests for the function-based Tool class."""

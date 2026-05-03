@@ -38,7 +38,7 @@ class BaseTool(ABC):
         self.description = description
         self._definition = self._build_definition()
 
-    async def execute(self, **kwargs) -> Any:
+    async def execute(self, **kwargs):
         """Execute the tool. Subclasses should override with their own signature."""
         raise NotImplementedError(f"Tool '{self.name}' must implement execute()")
 
