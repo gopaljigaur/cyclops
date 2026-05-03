@@ -29,6 +29,7 @@ config = AgentConfig(
 | `tool_mode` | `str` | `"auto"` | `"auto"` detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router` or `None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
 | `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
+| `hooks` | `AgentHooks` or `None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](/guides/hooks/). |
 
 ## Constructing an Agent
 

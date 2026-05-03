@@ -49,9 +49,10 @@ class AgentConfig(BaseModel):
     temperature: float = 0.1
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
-    tool_mode: str = "auto"      # "auto" | "native" | "naive"
+    tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None  # LiteLLM Router
     max_iterations: int = 10
+    hooks: Optional[AgentHooks] = None
 ```
 
 | Field | Default | Description |
@@ -63,6 +64,7 @@ class AgentConfig(BaseModel):
 | `tool_mode` | `"auto"` | `"auto"` auto-detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based fallback. |
 | `router` | `None` | Optional LiteLLM Router for fallback and load balancing. |
 | `max_iterations` | `10` | Maximum tool-call rounds per run. |
+| `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
 
 ---
 
@@ -114,15 +116,48 @@ class ToolCall(BaseModel):
 
 ---
 
+### AgentHooks
+
+Lifecycle callback base class. Subclass and override any methods you need.
+
+```python
+class AgentHooks:
+    def on_run_start(self, input_message: str) -> None: ...
+    def on_run_end(self, content: str) -> None: ...
+    def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
+    def on_llm_end(self, response: Any) -> None: ...
+    def on_llm_error(self, error: Exception) -> None: ...
+    def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]: ...
+    def on_tool_end(self, tool_name: str, args: Dict[str, Any], result: str) -> None: ...
+    def on_tool_error(self, tool_name: str, args: Dict[str, Any], error: Exception) -> None: ...
+```
+
+| Method | When it fires | Return value |
+|---|---|---|
+| `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
+| `on_run_end` | After `run()` or `arun()` returns | `None` |
+| `on_llm_start` | Before each LiteLLM completion call | `None` |
+| `on_llm_end` | After each non-streaming completion call | `None` |
+| `on_llm_error` | When a LiteLLM call raises an exception | `None` |
+| `on_tool_start` | Before each tool execution | `"deny"` to block, anything else to allow |
+| `on_tool_end` | After a tool executes successfully | `None` |
+| `on_tool_error` | When a tool raises an exception | `None` |
+
+See [Hooks guide](/guides/hooks/) for full documentation.
+
+---
+
 ### Message
 
-Generic message representation used for memory and logging.
+Represents a single conversation turn. Covers all LiteLLM message types.
 
 ```python
 class Message(BaseModel):
     role: str
-    content: str
-    metadata: Dict[str, Any]
+    content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 ```
 
 ---

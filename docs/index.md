@@ -14,6 +14,7 @@ Cyclops is a lightweight Python agent framework that lets you build LLM-powered 
 - **Cost & token tracking** — `run_with_response()` returns an `AgentResponse` with prompt tokens, completion tokens, and estimated cost.
 - **MCP support** — Expose Cyclops tools as an MCP server or consume any MCP server as a tool source.
 - **Plugin system** — Package tools as `Toolkit` classes and distribute them as Python packages with entry-point auto-discovery.
+- **Hooks** — Subclass `AgentHooks` to observe every LLM call, every tool execution, and optionally block tools at runtime.
 - **Router support** — Pass a LiteLLM `Router` for automatic fallback, retries, and load balancing across backends.
 
 ## Quick install

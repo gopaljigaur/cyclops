@@ -31,6 +31,7 @@ export default defineConfig({
             { label: 'MCP', slug: 'guides/mcp' },
             { label: 'Plugins', slug: 'guides/plugins' },
             { label: 'Cost Tracking', slug: 'guides/cost-tracking' },
+            { label: 'Hooks', slug: 'guides/hooks' },
           ],
         },
         {
