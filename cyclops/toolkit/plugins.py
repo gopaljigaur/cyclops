@@ -66,15 +66,14 @@ class PluginManager:
     def register_tools(self) -> None:
         """Register all tools from loaded plugins"""
         for name, plugin in self.plugins.items():
-            if isinstance(plugin, Toolkit):
-                try:
-                    tools = plugin.get_tools()
-                    if tools:
-                        for tool in tools:
-                            self.registry.register(tool)
-                            logger.info(f"Registered tool: {tool.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to get tools from {name}: {e}")
+            try:
+                tools = plugin.get_tools()
+                if tools:
+                    for tool in tools:
+                        self.registry.register(tool)
+                        logger.info(f"Registered tool: {tool.name}")
+            except Exception as e:
+                logger.warning(f"Failed to get tools from {name}: {e}")
 
     def get_plugin_names(self) -> List[str]:
         """Get names of loaded plugins"""

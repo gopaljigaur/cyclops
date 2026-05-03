@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from abc import ABC
-from typing import Any, Callable, get_args, get_origin
+from typing import Any, Callable, Dict, get_args, get_origin
 
 from cyclops.toolkit.types import ToolParameter, ToolDefinition
 
@@ -30,7 +30,6 @@ def _annotation_to_json_type(annotation) -> str:
         return "string"
     origin = get_origin(annotation)
     if origin is not None:
-        # Handle Union (typing.Union and PEP 604 X | Y)
         is_union = origin is typing.Union
         if not is_union and hasattr(types, "UnionType"):
             is_union = isinstance(annotation, types.UnionType)
@@ -39,9 +38,25 @@ def _annotation_to_json_type(annotation) -> str:
             if non_none:
                 return _annotation_to_json_type(non_none[0])
             return "string"
-        # Handle generic aliases: list[str], dict[str, int], etc.
         return _ORIGIN_TO_JSON_TYPE.get(origin, "string")
     return _PYTHON_TO_JSON_TYPE.get(annotation, "string")
+
+
+def _params_from_sig(sig) -> Dict[str, ToolParameter]:
+    """Extract ToolParameter dict from an inspect.Signature."""
+    parameters = {}
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "kwargs"):
+            continue
+        param_type = _annotation_to_json_type(param.annotation)
+        required = param.default == inspect.Parameter.empty
+        parameters[param_name] = ToolParameter(
+            name=param_name,
+            type=param_type,
+            required=required,
+            default=param.default if not required else None,
+        )
+    return parameters
 
 
 class BaseTool(ABC):
@@ -57,22 +72,7 @@ class BaseTool(ABC):
         raise NotImplementedError(f"Tool '{self.name}' must implement execute()")
 
     def _build_definition(self) -> ToolDefinition:
-        """Build tool definition from method signature"""
-        sig = inspect.signature(self.execute)
-        parameters = {}
-
-        for param_name, param in sig.parameters.items():
-            if param_name == "kwargs":
-                continue
-
-            param_type = _annotation_to_json_type(param.annotation)
-            required = param.default == inspect.Parameter.empty
-            default = param.default if not required else None
-
-            parameters[param_name] = ToolParameter(
-                name=param_name, type=param_type, required=required, default=default
-            )
-
+        parameters = _params_from_sig(inspect.signature(self.execute))
         return ToolDefinition(
             name=self.name, description=self.description, parameters=parameters
         )
@@ -88,31 +88,17 @@ class Tool(BaseTool):
 
     def __init__(self, name: str, description: str, func: Callable):
         self.func = func
+        self._is_async = inspect.iscoroutinefunction(func)
         super().__init__(name, description)
 
     def _build_definition(self) -> ToolDefinition:
-        """Build tool definition from wrapped function signature"""
-        sig = inspect.signature(self.func)
-        parameters = {}
-
-        for param_name, param in sig.parameters.items():
-            if param_name in ("self", "kwargs"):
-                continue
-
-            param_type = _annotation_to_json_type(param.annotation)
-            required = param.default == inspect.Parameter.empty
-            default = param.default if not required else None
-
-            parameters[param_name] = ToolParameter(
-                name=param_name, type=param_type, required=required, default=default
-            )
-
+        parameters = _params_from_sig(inspect.signature(self.func))
         return ToolDefinition(
             name=self.name, description=self.description, parameters=parameters
         )
 
     async def execute(self, **kwargs) -> Any:
         """Execute the wrapped function"""
-        if inspect.iscoroutinefunction(self.func):
+        if self._is_async:
             return await self.func(**kwargs)
         return self.func(**kwargs)

@@ -2,11 +2,12 @@
 Cyclops - Core agent framework with MCP toolkit support
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from cyclops.core import (
     Agent,
     AgentConfig,
+    AgentHooks,
     AgentResponse,
     Message,
     Memory,
@@ -26,6 +27,7 @@ from cyclops.mcp import MCPServer, MCPClient
 __all__ = [
     "Agent",
     "AgentConfig",
+    "AgentHooks",
     "AgentResponse",
     "Message",
     "Memory",

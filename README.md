@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/banner.svg" alt="Cyclops" width="900"/>
+  <img src="https://raw.githubusercontent.com/gopaljigaur/cyclops/main/docs/assets/banner.svg" alt="Cyclops" width="900"/>
 
   <br/>
   <br/>

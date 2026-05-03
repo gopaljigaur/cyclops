@@ -10,9 +10,13 @@ import litellm
 
 from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
 
+_MAX_ITER_MSG = "Reached maximum tool call iterations."
+_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+_TOOL_UNSUPPORTED_KEYWORDS = ("tool", "function", "unsupported")
+
 
 def _run_coroutine_sync(coro) -> Any:
-    """Run a coroutine synchronously, even when an event loop is already running.
+    """Run a coroutine synchronously without blocking an active event loop.
 
     Uses a ThreadPoolExecutor when a loop is active (e.g. Jupyter, nested async)
     so the caller's loop is never blocked or re-entered.
@@ -23,6 +27,11 @@ def _run_coroutine_sync(coro) -> Any:
             return pool.submit(asyncio.run, coro).result()
     except RuntimeError:
         return asyncio.run(coro)
+
+
+def _is_tool_unsupported_error(e: Exception) -> bool:
+    error_str = str(e).lower()
+    return any(kw in error_str for kw in _TOOL_UNSUPPORTED_KEYWORDS)
 
 
 class Agent:
@@ -40,6 +49,7 @@ class Agent:
         self.config = config
         self._history: List[Dict[str, Any]] = []
         self.tools = tools or []
+        self._tools_by_name: Dict[str, Any] = {t.name: t for t in self.tools}
         self.memory = memory
 
     # ------------------------------------------------------------------
@@ -57,6 +67,8 @@ class Agent:
 
     def run(self, input_message: str, response_model: Optional[Type] = None) -> Any:
         """Run the agent synchronously. Returns str or Pydantic model instance."""
+        if self.config.hooks:
+            self.config.hooks.on_run_start(input_message)
         if not self.tools:
             content = self._run_no_tools(input_message)
         else:
@@ -67,15 +79,13 @@ class Agent:
                 try:
                     content = self._run_with_tools(input_message)
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if any(
-                        kw in error_str for kw in ["tool", "function", "unsupported"]
-                    ):
-                        self._tool_mode_cache[self.config.model] = "naive"
-                        content = self._run_naive(input_message)
-                    else:
+                    if not _is_tool_unsupported_error(e):
                         raise
+                    self._tool_mode_cache[self.config.model] = "naive"
+                    content = self._run_naive(input_message)
 
+        if self.config.hooks:
+            self.config.hooks.on_run_end(content)
         if response_model is not None:
             return response_model.model_validate_json(content)
         return content
@@ -84,6 +94,8 @@ class Agent:
         self, input_message: str, response_model: Optional[Type] = None
     ) -> Any:
         """Run the agent asynchronously. Returns str or Pydantic model instance."""
+        if self.config.hooks:
+            self.config.hooks.on_run_start(input_message)
         if not self.tools:
             content = await self._arun_no_tools(input_message)
         else:
@@ -94,21 +106,21 @@ class Agent:
                 try:
                     content = await self._arun_with_tools(input_message)
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if any(
-                        kw in error_str for kw in ["tool", "function", "unsupported"]
-                    ):
-                        self._tool_mode_cache[self.config.model] = "naive"
-                        content = await self._arun_naive(input_message)
-                    else:
+                    if not _is_tool_unsupported_error(e):
                         raise
+                    self._tool_mode_cache[self.config.model] = "naive"
+                    content = await self._arun_naive(input_message)
 
+        if self.config.hooks:
+            self.config.hooks.on_run_end(content)
         if response_model is not None:
             return response_model.model_validate_json(content)
         return content
 
     def run_with_response(self, input_message: str) -> AgentResponse:
         """Run and return a full AgentResponse with cost/token metadata."""
+        if self.config.hooks:
+            self.config.hooks.on_run_start(input_message)
         if not self.tools:
             content, raw_response = self._run_no_tools_tracked(input_message)
             tool_calls: List[ToolCall] = []
@@ -124,21 +136,22 @@ class Agent:
                         input_message
                     )
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if any(
-                        kw in error_str for kw in ["tool", "function", "unsupported"]
-                    ):
-                        self._tool_mode_cache[self.config.model] = "naive"
-                        content = self._run_naive(input_message)
-                        raw_response = None
-                        tool_calls = []
-                    else:
+                    if not _is_tool_unsupported_error(e):
                         raise
+                    self._tool_mode_cache[self.config.model] = "naive"
+                    content = self._run_naive(input_message)
+                    raw_response = None
+                    tool_calls = []
 
-        return self._build_agent_response(content, raw_response, tool_calls)
+        response = self._build_agent_response(content, raw_response, tool_calls)
+        if self.config.hooks:
+            self.config.hooks.on_run_end(response.content)
+        return response
 
     async def arun_with_response(self, input_message: str) -> AgentResponse:
         """Run async and return a full AgentResponse with cost/token metadata."""
+        if self.config.hooks:
+            self.config.hooks.on_run_start(input_message)
         if not self.tools:
             content, raw_response = await self._arun_no_tools_tracked(input_message)
             tool_calls: List[ToolCall] = []
@@ -156,21 +169,25 @@ class Agent:
                         tool_calls,
                     ) = await self._arun_with_tools_tracked(input_message)
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if any(
-                        kw in error_str for kw in ["tool", "function", "unsupported"]
-                    ):
-                        self._tool_mode_cache[self.config.model] = "naive"
-                        content = await self._arun_naive(input_message)
-                        raw_response = None
-                        tool_calls = []
-                    else:
+                    if not _is_tool_unsupported_error(e):
                         raise
+                    self._tool_mode_cache[self.config.model] = "naive"
+                    content = await self._arun_naive(input_message)
+                    raw_response = None
+                    tool_calls = []
 
-        return self._build_agent_response(content, raw_response, tool_calls)
+        response = self._build_agent_response(content, raw_response, tool_calls)
+        if self.config.hooks:
+            self.config.hooks.on_run_end(response.content)
+        return response
 
     def stream(self, input_message: str) -> Iterator[str]:
-        """Stream output tokens. True token streaming for native mode; naive mode yields full response as one chunk."""
+        """Stream output tokens. True token streaming for native mode; naive mode yields full response as one chunk.
+
+        on_run_end is NOT fired for streaming — exhaust the iterator yourself if needed.
+        """
+        if self.config.hooks:
+            self.config.hooks.on_run_start(input_message)
         if not self.tools:
             yield from self._stream_no_tools(input_message)
         else:
@@ -181,18 +198,20 @@ class Agent:
                 try:
                     self._run_with_tools_prepare(input_message)
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if any(
-                        kw in error_str for kw in ["tool", "function", "unsupported"]
-                    ):
-                        self._tool_mode_cache[self.config.model] = "naive"
-                        yield self._run_naive(input_message)
-                        return
-                    raise
+                    if not _is_tool_unsupported_error(e):
+                        raise
+                    self._tool_mode_cache[self.config.model] = "naive"
+                    yield self._run_naive(input_message)
+                    return
                 yield from self._stream_final_answer()
 
     async def astream(self, input_message: str) -> AsyncIterator[str]:
-        """Async stream output tokens. True token streaming for native mode; naive mode yields full response as one chunk."""
+        """Async stream output tokens. True token streaming for native mode; naive mode yields full response as one chunk.
+
+        on_run_end is NOT fired for streaming — exhaust the iterator yourself if needed.
+        """
+        if self.config.hooks:
+            self.config.hooks.on_run_start(input_message)
         if not self.tools:
             async for chunk in self._astream_no_tools(input_message):
                 yield chunk
@@ -204,14 +223,11 @@ class Agent:
                 try:
                     await self._arun_with_tools_prepare(input_message)
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if any(
-                        kw in error_str for kw in ["tool", "function", "unsupported"]
-                    ):
-                        self._tool_mode_cache[self.config.model] = "naive"
-                        yield await self._arun_naive(input_message)
-                        return
-                    raise
+                    if not _is_tool_unsupported_error(e):
+                        raise
+                    self._tool_mode_cache[self.config.model] = "naive"
+                    yield await self._arun_naive(input_message)
+                    return
                 async for chunk in self._astream_final_answer():
                     yield chunk
 
@@ -220,14 +236,7 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _run_no_tools(self, input_message: str) -> str:
-        self._history.append({"role": "user", "content": input_message})
-        response = self._completion(
-            messages=self._build_messages(),
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-        )
-        content = response.choices[0].message.content or ""
-        self._history.append({"role": "assistant", "content": content})
+        content, _ = self._run_no_tools_tracked(input_message)
         return content
 
     def _run_no_tools_tracked(self, input_message: str):
@@ -262,58 +271,11 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _run_with_tools(self, input_message: str) -> str:
-        self._history.append({"role": "user", "content": input_message})
-        tools_schema = self._get_tools_schema()
-
-        for _ in range(self.config.max_iterations):
-            response = self._completion(
-                messages=self._build_messages(),
-                tools=tools_schema,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-            )
-            msg = response.choices[0].message
-
-            if not msg.tool_calls:
-                content = msg.content or ""
-                self._history.append({"role": "assistant", "content": content})
-                return content
-
-            # Record assistant message with tool calls
-            self._history.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-            )
-
-            # Execute each tool
-            for tc in msg.tool_calls:
-                result = self._execute_tool_sync(tc)
-                self._history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                        "name": tc.function.name,
-                    }
-                )
-
-        return "Reached maximum tool call iterations."
+        content, _, _ = self._run_with_tools_tracked(input_message)
+        return content
 
     def _run_with_tools_tracked(self, input_message: str):
-        """Like _run_with_tools but returns (content, last_response, tool_calls)."""
+        """Returns (content, last_response, tool_calls)."""
         self._history.append({"role": "user", "content": input_message})
         tools_schema = self._get_tools_schema()
         all_tool_calls: List[ToolCall] = []
@@ -334,24 +296,7 @@ class Agent:
                 self._history.append({"role": "assistant", "content": content})
                 return content, last_response, all_tool_calls
 
-            self._history.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-            )
-
+            self._append_tool_call_message(msg)
             for tc in msg.tool_calls:
                 result = self._execute_tool_sync(tc)
                 args = (
@@ -361,22 +306,12 @@ class Agent:
                 )
                 all_tool_calls.append(
                     ToolCall(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=args,
-                        result=result,
+                        id=tc.id, name=tc.function.name, arguments=args, result=result
                     )
                 )
-                self._history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                        "name": tc.function.name,
-                    }
-                )
+                self._append_tool_result(tc, result)
 
-        return "Reached maximum tool call iterations.", last_response, all_tool_calls
+        return _MAX_ITER_MSG, last_response, all_tool_calls
 
     def _run_with_tools_prepare(self, input_message: str) -> None:
         """Run the tool loop without streaming; history is ready for final stream."""
@@ -397,38 +332,12 @@ class Agent:
                 self._history.append({"role": "assistant", "content": content})
                 return
 
-            self._history.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-            )
-
+            self._append_tool_call_message(msg)
             for tc in msg.tool_calls:
                 result = self._execute_tool_sync(tc)
-                self._history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                        "name": tc.function.name,
-                    }
-                )
+                self._append_tool_result(tc, result)
 
-        self._history.append(
-            {"role": "assistant", "content": "Reached maximum tool call iterations."}
-        )
+        self._history.append({"role": "assistant", "content": _MAX_ITER_MSG})
 
     def _stream_final_answer(self) -> Iterator[str]:
         """Stream a fresh final answer, replacing the pre-computed one from the tool loop."""
@@ -456,7 +365,7 @@ class Agent:
     def _run_naive(self, input_message: str) -> str:
         self._history.append({"role": "user", "content": input_message})
         system_prompt = (
-            self.config.system_prompt or "You are a helpful assistant."
+            self.config.system_prompt or _DEFAULT_SYSTEM_PROMPT
         ) + self._build_tools_prompt()
 
         for _ in range(self.config.max_iterations):
@@ -474,29 +383,22 @@ class Agent:
 
             tool_name = tool_call["tool"]
             tool_args = tool_call.get("args", {})
-            tool = next((t for t in self.tools if t.name == tool_name), None)
-            result = self._execute_tool_by_dict(tool, tool_name, tool_args)
+            tool = self._tools_by_name.get(tool_name)
+            result = self._invoke_tool_sync(tool, tool_name, tool_args)
 
             self._history.append(
                 {"role": "assistant", "content": f"[Used tool: {tool_name}]"}
             )
             self._history.append({"role": "user", "content": f"Tool result: {result}"})
 
-        return "Reached maximum tool call iterations."
+        return _MAX_ITER_MSG
 
     # ------------------------------------------------------------------
     # Async internals — no tools
     # ------------------------------------------------------------------
 
     async def _arun_no_tools(self, input_message: str) -> str:
-        self._history.append({"role": "user", "content": input_message})
-        response = await self._acompletion(
-            messages=self._build_messages(),
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-        )
-        content = response.choices[0].message.content or ""
-        self._history.append({"role": "assistant", "content": content})
+        content, _ = await self._arun_no_tools_tracked(input_message)
         return content
 
     async def _arun_no_tools_tracked(self, input_message: str):
@@ -531,53 +433,8 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def _arun_with_tools(self, input_message: str) -> str:
-        self._history.append({"role": "user", "content": input_message})
-        tools_schema = self._get_tools_schema()
-
-        for _ in range(self.config.max_iterations):
-            response = await self._acompletion(
-                messages=self._build_messages(),
-                tools=tools_schema,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-            )
-            msg = response.choices[0].message
-
-            if not msg.tool_calls:
-                content = msg.content or ""
-                self._history.append({"role": "assistant", "content": content})
-                return content
-
-            self._history.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-            )
-
-            for tc in msg.tool_calls:
-                result = await self._execute_tool_async(tc)
-                self._history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                        "name": tc.function.name,
-                    }
-                )
-
-        return "Reached maximum tool call iterations."
+        content, _, _ = await self._arun_with_tools_tracked(input_message)
+        return content
 
     async def _arun_with_tools_tracked(self, input_message: str):
         self._history.append({"role": "user", "content": input_message})
@@ -600,26 +457,11 @@ class Agent:
                 self._history.append({"role": "assistant", "content": content})
                 return content, last_response, all_tool_calls
 
-            self._history.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
+            self._append_tool_call_message(msg)
+            results = await asyncio.gather(
+                *[self._execute_tool_async(tc) for tc in msg.tool_calls]
             )
-
-            for tc in msg.tool_calls:
-                result = await self._execute_tool_async(tc)
+            for tc, result in zip(msg.tool_calls, results):
                 args = (
                     json.loads(tc.function.arguments)
                     if isinstance(tc.function.arguments, str)
@@ -627,22 +469,12 @@ class Agent:
                 )
                 all_tool_calls.append(
                     ToolCall(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=args,
-                        result=result,
+                        id=tc.id, name=tc.function.name, arguments=args, result=result
                     )
                 )
-                self._history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                        "name": tc.function.name,
-                    }
-                )
+                self._append_tool_result(tc, result)
 
-        return "Reached maximum tool call iterations.", last_response, all_tool_calls
+        return _MAX_ITER_MSG, last_response, all_tool_calls
 
     async def _arun_with_tools_prepare(self, input_message: str) -> None:
         self._history.append({"role": "user", "content": input_message})
@@ -662,38 +494,14 @@ class Agent:
                 self._history.append({"role": "assistant", "content": content})
                 return
 
-            self._history.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
+            self._append_tool_call_message(msg)
+            results = await asyncio.gather(
+                *[self._execute_tool_async(tc) for tc in msg.tool_calls]
             )
+            for tc, result in zip(msg.tool_calls, results):
+                self._append_tool_result(tc, result)
 
-            for tc in msg.tool_calls:
-                result = await self._execute_tool_async(tc)
-                self._history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                        "name": tc.function.name,
-                    }
-                )
-
-        self._history.append(
-            {"role": "assistant", "content": "Reached maximum tool call iterations."}
-        )
+        self._history.append({"role": "assistant", "content": _MAX_ITER_MSG})
 
     async def _astream_final_answer(self) -> AsyncIterator[str]:
         """Async stream a fresh final answer, replacing the pre-computed one from the tool loop."""
@@ -721,7 +529,7 @@ class Agent:
     async def _arun_naive(self, input_message: str) -> str:
         self._history.append({"role": "user", "content": input_message})
         system_prompt = (
-            self.config.system_prompt or "You are a helpful assistant."
+            self.config.system_prompt or _DEFAULT_SYSTEM_PROMPT
         ) + self._build_tools_prompt()
 
         for _ in range(self.config.max_iterations):
@@ -739,14 +547,23 @@ class Agent:
 
             tool_name = tool_call["tool"]
             tool_args = tool_call.get("args", {})
-            tool = next((t for t in self.tools if t.name == tool_name), None)
+            tool = self._tools_by_name.get(tool_name)
 
             if not tool:
                 result = f"Error: Tool '{tool_name}' not found"
+            elif (
+                self.config.hooks is not None
+                and self.config.hooks.on_tool_start(tool_name, tool_args) == "deny"
+            ):
+                result = f"[Tool '{tool_name}' was not approved]"
             else:
                 try:
                     result = str(await tool.execute(**tool_args))
+                    if self.config.hooks:
+                        self.config.hooks.on_tool_end(tool_name, tool_args, result)
                 except Exception as e:
+                    if self.config.hooks:
+                        self.config.hooks.on_tool_error(tool_name, tool_args, e)
                     result = f"Error executing {tool_name}: {str(e)}"
 
             self._history.append(
@@ -754,59 +571,105 @@ class Agent:
             )
             self._history.append({"role": "user", "content": f"Tool result: {result}"})
 
-        return "Reached maximum tool call iterations."
+        return _MAX_ITER_MSG
 
     # ------------------------------------------------------------------
     # Tool execution helpers
     # ------------------------------------------------------------------
 
-    def _execute_tool_sync(self, tool_call) -> str:
-        """Execute a tool call synchronously."""
-        tool_name = tool_call.function.name
-        tool_args = tool_call.function.arguments
-
-        tool = next((t for t in self.tools if t.name == tool_name), None)
+    def _invoke_tool_sync(self, tool, tool_name: str, args: dict) -> str:
+        """Execute a resolved tool synchronously, applying hook gates."""
         if not tool:
             return f"Error: Tool '{tool_name}' not found"
-
+        if (
+            self.config.hooks is not None
+            and self.config.hooks.on_tool_start(tool_name, args) == "deny"
+        ):
+            return f"[Tool '{tool_name}' was not approved]"
         try:
-            args = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
             if inspect.iscoroutinefunction(tool.execute):
                 result = _run_coroutine_sync(tool.execute(**args))
             else:
                 result = tool.execute(**args)
-            return str(result)
+            result_str = str(result)
+            if self.config.hooks:
+                self.config.hooks.on_tool_end(tool_name, args, result_str)
+            return result_str
         except Exception as e:
+            if self.config.hooks:
+                self.config.hooks.on_tool_error(tool_name, args, e)
             return f"Error executing {tool_name}: {str(e)}"
+
+    def _execute_tool_sync(self, tool_call) -> str:
+        """Execute a tool call synchronously."""
+        tool_name = tool_call.function.name
+        tool_args = tool_call.function.arguments
+        tool = self._tools_by_name.get(tool_name)
+        try:
+            args = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+        except Exception:
+            args = {}
+        return self._invoke_tool_sync(tool, tool_name, args)
 
     async def _execute_tool_async(self, tool_call) -> str:
         """Execute a tool call asynchronously."""
         tool_name = tool_call.function.name
         tool_args = tool_call.function.arguments
-
-        tool = next((t for t in self.tools if t.name == tool_name), None)
+        tool = self._tools_by_name.get(tool_name)
         if not tool:
             return f"Error: Tool '{tool_name}' not found"
-
         try:
             args = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+        except Exception:
+            args = {}
+        if (
+            self.config.hooks is not None
+            and self.config.hooks.on_tool_start(tool_name, args) == "deny"
+        ):
+            return f"[Tool '{tool_name}' was not approved]"
+        try:
             result = await tool.execute(**args)
-            return str(result)
+            result_str = str(result)
+            if self.config.hooks:
+                self.config.hooks.on_tool_end(tool_name, args, result_str)
+            return result_str
         except Exception as e:
+            if self.config.hooks:
+                self.config.hooks.on_tool_error(tool_name, args, e)
             return f"Error executing {tool_name}: {str(e)}"
 
-    def _execute_tool_by_dict(self, tool, tool_name: str, args: dict) -> str:
-        """Execute a tool (possibly None) from dict args synchronously."""
-        if not tool:
-            return f"Error: Tool '{tool_name}' not found"
-        try:
-            if inspect.iscoroutinefunction(tool.execute):
-                result = _run_coroutine_sync(tool.execute(**args))
-            else:
-                result = tool.execute(**args)
-            return str(result)
-        except Exception as e:
-            return f"Error executing {tool_name}: {str(e)}"
+    # ------------------------------------------------------------------
+    # History helpers
+    # ------------------------------------------------------------------
+
+    def _append_tool_call_message(self, msg) -> None:
+        self._history.append(
+            {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+        )
+
+    def _append_tool_result(self, tc, result: str) -> None:
+        self._history.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+                "name": tc.function.name,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Message building
@@ -817,17 +680,6 @@ class Agent:
     ) -> List[Dict[str, Any]]:
         """Build message list for LiteLLM, optionally prepending a system prompt."""
         messages = list(self._history)
-        sys = system_prompt_override or self.config.system_prompt
-        if sys:
-            messages = [{"role": "system", "content": sys}] + messages
-        return messages
-
-    def _build_messages_from(
-        self,
-        history: List[Dict[str, Any]],
-        system_prompt_override: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        messages = list(history)
         sys = system_prompt_override or self.config.system_prompt
         if sys:
             messages = [{"role": "system", "content": sys}] + messages
@@ -847,21 +699,7 @@ class Agent:
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        param.name: {
-                            "type": param.type,
-                            "description": param.description or "",
-                        }
-                        for param in tool.definition.parameters.values()
-                    },
-                    "required": [
-                        param.name
-                        for param in tool.definition.parameters.values()
-                        if param.required
-                    ],
-                },
+                "parameters": tool.definition.to_json_schema(),
             },
         }
 
@@ -931,16 +769,42 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _completion(self, **kwargs):
-        if self.config.router:
-            return self.config.router.completion(model=self.config.model, **kwargs)
-        return litellm.completion(model=self.config.model, **kwargs)
+        messages = kwargs.get("messages", [])
+        if self.config.hooks:
+            self.config.hooks.on_llm_start(messages)
+        try:
+            if self.config.router:
+                response = self.config.router.completion(
+                    model=self.config.model, **kwargs
+                )
+            else:
+                response = litellm.completion(model=self.config.model, **kwargs)
+        except Exception as e:
+            if self.config.hooks:
+                self.config.hooks.on_llm_error(e)
+            raise
+        if not kwargs.get("stream") and self.config.hooks:
+            self.config.hooks.on_llm_end(response)
+        return response
 
     async def _acompletion(self, **kwargs):
-        if self.config.router:
-            return await self.config.router.acompletion(
-                model=self.config.model, **kwargs
-            )
-        return await litellm.acompletion(model=self.config.model, **kwargs)
+        messages = kwargs.get("messages", [])
+        if self.config.hooks:
+            self.config.hooks.on_llm_start(messages)
+        try:
+            if self.config.router:
+                response = await self.config.router.acompletion(
+                    model=self.config.model, **kwargs
+                )
+            else:
+                response = await litellm.acompletion(model=self.config.model, **kwargs)
+        except Exception as e:
+            if self.config.hooks:
+                self.config.hooks.on_llm_error(e)
+            raise
+        if not kwargs.get("stream") and self.config.hooks:
+            self.config.hooks.on_llm_end(response)
+        return response
 
     # ------------------------------------------------------------------
     # AgentResponse builder
