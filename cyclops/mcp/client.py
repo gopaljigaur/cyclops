@@ -1,6 +1,8 @@
 """MCP Client implementation"""
 
+import contextlib
 from typing import Any, Dict, List, Optional
+
 from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
 
@@ -11,6 +13,7 @@ class MCPClient:
     def __init__(self):
         self.client: Optional[ClientSession] = None
         self._connected = False
+        self._exit_stack: Optional[contextlib.AsyncExitStack] = None
 
     async def connect_stdio(
         self, command: List[str], env: Optional[Dict[str, str]] = None
@@ -19,25 +22,23 @@ class MCPClient:
         server_params = StdioServerParameters(
             command=command[0], args=command[1:], env=env
         )
-
-        # Store the context manager for cleanup
-        self._stdio_context = stdio_client(server_params)
-        read_stream, write_stream = await self._stdio_context.__aenter__()
-
-        self.client = ClientSession(read_stream, write_stream)
-        await self.client.__aenter__()
-
-        # Initialize the session
-        await self.client.initialize()
-
+        self._exit_stack = contextlib.AsyncExitStack()
+        read_stream, write_stream = await self._exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        client = await self._exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        self.client = client
+        await client.initialize()
         self._connected = True
 
     async def disconnect(self):
         """Disconnect from MCP server"""
-        if self.client:
-            await self.client.__aexit__(None, None, None)
-        if hasattr(self, "_stdio_context"):
-            await self._stdio_context.__aexit__(None, None, None)
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+        self.client = None
         self._connected = False
 
     async def list_tools(self) -> List[Dict[str, Any]]:
@@ -62,7 +63,6 @@ class MCPClient:
 
         response = await self.client.call_tool(name=name, arguments=arguments)
 
-        # Extract text content from response
         result_parts = []
         for content in response.content:
             if hasattr(content, "text"):
