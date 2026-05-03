@@ -170,7 +170,7 @@ class Agent:
         return self._build_agent_response(content, raw_response, tool_calls)
 
     def stream(self, input_message: str) -> Iterator[str]:
-        """Stream output tokens. True streaming for no-tools; tool calls processed first."""
+        """Stream output tokens. True token streaming for native mode; naive mode yields full response as one chunk."""
         if not self.tools:
             yield from self._stream_no_tools(input_message)
         else:
@@ -192,7 +192,7 @@ class Agent:
                 yield from self._stream_final_answer()
 
     async def astream(self, input_message: str) -> AsyncIterator[str]:
-        """Async stream output tokens."""
+        """Async stream output tokens. True token streaming for native mode; naive mode yields full response as one chunk."""
         if not self.tools:
             async for chunk in self._astream_no_tools(input_message):
                 yield chunk

@@ -7,13 +7,10 @@ export default defineConfig({
     starlight({
       title: 'Cyclops',
       description: 'Minimal Python agent framework. Any LLM. MCP native.',
+      favicon: '/favicon.svg',
       defaultLocale: 'en',
       social: [
-        {
-          icon: 'github',
-          label: 'GitHub',
-          href: 'https://github.com/gopalji/cyclops',
-        },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/gopaljigaur/cyclops' },
       ],
       sidebar: [
         {
@@ -45,7 +42,7 @@ export default defineConfig({
       ],
       customCss: ['./src/styles/custom.css'],
       editLink: {
-        baseUrl: 'https://github.com/gopalji/cyclops/edit/main/website/',
+        baseUrl: 'https://github.com/gopaljigaur/cyclops/edit/main/website/',
       },
     }),
   ],

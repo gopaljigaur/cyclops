@@ -1,0 +1,10 @@
+<svg width="50" height="50" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+  <!-- outer ring -->
+  <circle cx="25" cy="25" r="23" fill="none" stroke="#58a6ff" stroke-width="2"/>
+  <!-- iris -->
+  <circle cx="25" cy="25" r="14" fill="none" stroke="#58a6ff" stroke-width="1.5" opacity="0.6"/>
+  <!-- pupil -->
+  <circle cx="25" cy="25" r="7" fill="#58a6ff"/>
+  <!-- shine -->
+  <circle cx="29" cy="20" r="2.5" fill="#cce7ff" opacity="0.85"/>
+</svg>
