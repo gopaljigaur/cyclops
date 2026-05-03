@@ -18,14 +18,13 @@
 
 /* Splash hero: single-column centered layout with banner on top */
 .hero {
+  display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   text-align: center !important;
   gap: 1.5rem !important;
 }
 
-.hero > picture,
-.hero > picture > img,
 .hero > img {
   order: -1;
   width: min(860px, 100%) !important;
