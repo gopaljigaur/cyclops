@@ -28,7 +28,7 @@
 .hero > picture > img,
 .hero > img {
   order: -1;
-  max-width: 560px;
+  max-width: 860px;
   width: 100%;
 }
 
