@@ -76,7 +76,6 @@ from cyclops import Agent, AgentConfig, AgentHooks
 class UsageHooks(AgentHooks):
     def __init__(self):
         self.total_tokens = 0
-        self.total_cost = 0.0
 
     def on_llm_end(self, response) -> None:
         usage = getattr(response, "usage", None)
