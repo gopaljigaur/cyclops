@@ -119,9 +119,21 @@ class Agent:
                 raw_response = None
                 tool_calls = []
             else:
-                content, raw_response, tool_calls = self._run_with_tools_tracked(
-                    input_message
-                )
+                try:
+                    content, raw_response, tool_calls = self._run_with_tools_tracked(
+                        input_message
+                    )
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if any(
+                        kw in error_str for kw in ["tool", "function", "unsupported"]
+                    ):
+                        self._tool_mode_cache[self.config.model] = "naive"
+                        content = self._run_naive(input_message)
+                        raw_response = None
+                        tool_calls = []
+                    else:
+                        raise
 
         return self._build_agent_response(content, raw_response, tool_calls)
 
@@ -137,9 +149,23 @@ class Agent:
                 raw_response = None
                 tool_calls = []
             else:
-                content, raw_response, tool_calls = await self._arun_with_tools_tracked(
-                    input_message
-                )
+                try:
+                    (
+                        content,
+                        raw_response,
+                        tool_calls,
+                    ) = await self._arun_with_tools_tracked(input_message)
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if any(
+                        kw in error_str for kw in ["tool", "function", "unsupported"]
+                    ):
+                        self._tool_mode_cache[self.config.model] = "naive"
+                        content = await self._arun_naive(input_message)
+                        raw_response = None
+                        tool_calls = []
+                    else:
+                        raise
 
         return self._build_agent_response(content, raw_response, tool_calls)
 
@@ -148,9 +174,22 @@ class Agent:
         if not self.tools:
             yield from self._stream_no_tools(input_message)
         else:
-            # Process tool calls (non-streaming), then stream the final answer
-            self._run_with_tools_prepare(input_message)
-            yield from self._stream_final_answer()
+            tool_mode = self._get_tool_mode()
+            if tool_mode == "naive":
+                yield self._run_naive(input_message)
+            else:
+                try:
+                    self._run_with_tools_prepare(input_message)
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if any(
+                        kw in error_str for kw in ["tool", "function", "unsupported"]
+                    ):
+                        self._tool_mode_cache[self.config.model] = "naive"
+                        yield self._run_naive(input_message)
+                        return
+                    raise
+                yield from self._stream_final_answer()
 
     async def astream(self, input_message: str) -> AsyncIterator[str]:
         """Async stream output tokens."""
@@ -158,9 +197,23 @@ class Agent:
             async for chunk in self._astream_no_tools(input_message):
                 yield chunk
         else:
-            await self._arun_with_tools_prepare(input_message)
-            async for chunk in self._astream_final_answer():
-                yield chunk
+            tool_mode = self._get_tool_mode()
+            if tool_mode == "naive":
+                yield await self._arun_naive(input_message)
+            else:
+                try:
+                    await self._arun_with_tools_prepare(input_message)
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if any(
+                        kw in error_str for kw in ["tool", "function", "unsupported"]
+                    ):
+                        self._tool_mode_cache[self.config.model] = "naive"
+                        yield await self._arun_naive(input_message)
+                        return
+                    raise
+                async for chunk in self._astream_final_answer():
+                    yield chunk
 
     # ------------------------------------------------------------------
     # Sync internals — no tools
@@ -340,8 +393,6 @@ class Agent:
             msg = response.choices[0].message
 
             if not msg.tool_calls:
-                # No pending tool calls — history ends with assistant turn; ready to stream
-                # But we already have the final response, so just record it
                 content = msg.content or ""
                 self._history.append({"role": "assistant", "content": content})
                 return
@@ -374,6 +425,10 @@ class Agent:
                         "name": tc.function.name,
                     }
                 )
+
+        self._history.append(
+            {"role": "assistant", "content": "Reached maximum tool call iterations."}
+        )
 
     def _stream_final_answer(self) -> Iterator[str]:
         """Stream a fresh final answer, replacing the pre-computed one from the tool loop."""
@@ -635,6 +690,10 @@ class Agent:
                         "name": tc.function.name,
                     }
                 )
+
+        self._history.append(
+            {"role": "assistant", "content": "Reached maximum tool call iterations."}
+        )
 
     async def _astream_final_answer(self) -> AsyncIterator[str]:
         """Async stream a fresh final answer, replacing the pre-computed one from the tool loop."""

@@ -62,7 +62,7 @@ db_tool = DatabaseTool()
 
 ## Sync vs async tools
 
-Both sync functions and async coroutines work. The agent calls sync tools synchronously inside `asyncio.run()` when needed, and awaits async tools directly in async contexts. Prefer async for I/O-bound work.
+Both sync functions and async coroutines work. The agent calls sync tools directly, and runs async tools from sync contexts using a nested-loop-safe fallback (ThreadPoolExecutor) when needed. Prefer async for I/O-bound work.
 
 ```python
 import httpx

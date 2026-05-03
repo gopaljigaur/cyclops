@@ -1,9 +1,10 @@
 """Tool definitions and base classes"""
 
 import inspect
+import types
 import typing
 from abc import ABC
-from typing import Any, Callable
+from typing import Any, Callable, get_args, get_origin
 
 from cyclops.toolkit.types import ToolParameter, ToolDefinition
 
@@ -17,16 +18,29 @@ _PYTHON_TO_JSON_TYPE = {
     dict: "object",
 }
 
+_ORIGIN_TO_JSON_TYPE = {
+    list: "array",
+    dict: "object",
+}
+
 
 def _annotation_to_json_type(annotation) -> str:
     """Convert a Python type annotation to a JSON schema type string."""
     if annotation is inspect.Parameter.empty:
         return "string"
-    origin = getattr(annotation, "__origin__", None)
-    if origin is typing.Union:
-        non_none = [a for a in annotation.__args__ if a is not type(None)]
-        if non_none:
-            return _PYTHON_TO_JSON_TYPE.get(non_none[0], "string")
+    origin = get_origin(annotation)
+    if origin is not None:
+        # Handle Union (typing.Union and PEP 604 X | Y)
+        is_union = origin is typing.Union
+        if not is_union and hasattr(types, "UnionType"):
+            is_union = isinstance(annotation, types.UnionType)
+        if is_union:
+            non_none = [a for a in get_args(annotation) if a is not type(None)]
+            if non_none:
+                return _annotation_to_json_type(non_none[0])
+            return "string"
+        # Handle generic aliases: list[str], dict[str, int], etc.
+        return _ORIGIN_TO_JSON_TYPE.get(origin, "string")
     return _PYTHON_TO_JSON_TYPE.get(annotation, "string")
 
 
