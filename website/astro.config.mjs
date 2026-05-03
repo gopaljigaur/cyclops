@@ -39,6 +39,7 @@ export default defineConfig({
             { label: 'Plugins', slug: 'guides/plugins' },
             { label: 'Cost Tracking', slug: 'guides/cost-tracking' },
             { label: 'Hooks', slug: 'guides/hooks' },
+            { label: 'Observability', slug: 'guides/observability' },
           ],
         },
         {

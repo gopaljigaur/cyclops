@@ -126,7 +126,7 @@ Agent(AgentConfig(model="ollama/qwen3:4b"))
 Agent(AgentConfig(model="gpt-4o-mini"))
 
 # Anthropic
-Agent(AgentConfig(model="claude-3-5-haiku-20241022"))
+Agent(AgentConfig(model="claude-haiku-4-5-20251001"))
 
 # Together AI
 Agent(AgentConfig(model="together_ai/meta-llama/Llama-3-8b-chat-hf"))

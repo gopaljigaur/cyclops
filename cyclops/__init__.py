@@ -29,6 +29,7 @@ from cyclops.mcp import (
     MCPClientTool,
     tools_from_server,
 )
+from cyclops.observability import OTelHooks
 
 __all__ = [
     "Agent",
@@ -50,4 +51,5 @@ __all__ = [
     "MCPBridge",
     "MCPClientTool",
     "tools_from_server",
+    "OTelHooks",
 ]

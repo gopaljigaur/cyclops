@@ -33,7 +33,7 @@ def main() -> None:
 
         agent = Agent(
             AgentConfig(
-                model="anthropic/claude-3-5-haiku-20241022",
+                model="anthropic/claude-haiku-4-5-20251001",
                 system_prompt="You are a helpful assistant. Use the available tools when asked.",
             ),
             tools=mcp_tools,

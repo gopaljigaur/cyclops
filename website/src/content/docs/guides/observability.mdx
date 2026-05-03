@@ -1,0 +1,101 @@
+---
+title: Observability
+description: Emit OpenTelemetry spans for every agent event.
+---
+
+import exampleSrc from '../../../../../examples/otel_example.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
+`OTelHooks` instruments every agent run with [OpenTelemetry](https://opentelemetry.io/) spans. Configure any OTLP-compatible backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console — then pass `OTelHooks()` to `AgentConfig`.
+
+## Quick start
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, BatchSpanProcessor
+
+provider = TracerProvider()
+provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+trace.set_tracer_provider(provider)
+
+from cyclops import Agent, AgentConfig, OTelHooks
+
+agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=OTelHooks()))
+agent.run("Summarise the Pythagorean theorem.")
+
+provider.force_flush()
+```
+
+## Span hierarchy
+
+Each `agent.run()` call produces a root span with nested children:
+
+```
+agent.run
+├── llm.completion
+├── tool.<name>
+├── llm.completion
+└── tool.<name>
+```
+
+## Span attributes
+
+| Span | Attribute | Description |
+|---|---|---|
+| `agent.run` | `agent.input.length` | Character length of the input message |
+| `agent.run` | `agent.output.length` | Character length of the final response |
+| `llm.completion` | `llm.message_count` | Number of messages sent to the LLM |
+| `llm.completion` | `llm.model` | Model identifier returned by the API |
+| `llm.completion` | `llm.prompt_tokens` | Prompt token count |
+| `llm.completion` | `llm.completion_tokens` | Completion token count |
+| `llm.completion` | `llm.total_tokens` | Total token count |
+| `llm.completion` | `llm.latency_ms` | Round-trip latency in milliseconds |
+| `tool.<name>` | `tool.name` | Tool name |
+| `tool.<name>` | `tool.args_count` | Number of arguments passed |
+| `tool.<name>` | `tool.result.length` | Character length of the tool result |
+| Any | `error` | `true` when the span represents a failure |
+| Any | `error.message` | Exception message |
+| Any | `error.type` | Exception class name |
+
+## Send to Jaeger (OTLP)
+
+Replace `ConsoleSpanExporter` with `OTLPSpanExporter`:
+
+```python
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry import trace
+
+provider = TracerProvider()
+provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"))
+)
+trace.set_tracer_provider(provider)
+```
+
+Install the exporter:
+
+```bash
+uv add opentelemetry-exporter-otlp-proto-grpc
+```
+
+Start Jaeger locally:
+
+```bash
+docker run -d --name jaeger \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  jaegertracing/all-in-one:latest
+```
+
+Then open [http://localhost:16686](http://localhost:16686) and search for service `cyclops`.
+
+## Known limitation
+
+`on_run_end` is not called for `stream()` / `astream()`, so the root `agent.run` span is not closed for streaming runs. Use `run()` or `arun()` if you need complete traces.
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/otel_example.py" />
