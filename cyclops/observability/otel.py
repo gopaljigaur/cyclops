@@ -139,14 +139,23 @@ class TelemetryHooks(AgentHooks):
             self._llm_span.set_attribute("error.type", type(error).__name__)
             self._llm_span.end()
             self._llm_span = None
+        if self._root_span is not None:
+            self._root_span.set_attribute("error", True)
+            self._root_span.set_attribute("error.message", str(error))
+            self._root_span.set_attribute("error.type", type(error).__name__)
+            self._root_span.end()
+            self._root_span = None
+        if self._provider is not None:
+            self._provider.force_flush()
 
     # ── Tool lifecycle ────────────────────────────────────────────────────────
 
-    def on_tool_start(self, tool_name: str, args: dict[str, Any]) -> None:
+    def on_tool_start(self, tool_name: str, args: dict[str, Any]) -> str | None:
         span = self._tracer.start_span(f"tool.{tool_name}", context=self._root_ctx())
         span.set_attribute("tool.name", tool_name)
         span.set_attribute("tool.args_count", len(args))
         self._tool_span_stack.append((tool_name, span))
+        return None
 
     def on_tool_end(self, tool_name: str, args: dict[str, Any], result: str) -> None:
         span = self._pop_tool_span(tool_name)
