@@ -22,7 +22,13 @@ from cyclops.toolkit import (
     PluginManager,
     Toolkit,
 )
-from cyclops.mcp import MCPServer, MCPClient
+from cyclops.mcp import (
+    MCPServer,
+    MCPClient,
+    MCPBridge,
+    MCPClientTool,
+    tools_from_server,
+)
 
 __all__ = [
     "Agent",
@@ -41,4 +47,7 @@ __all__ = [
     "Toolkit",
     "MCPServer",
     "MCPClient",
+    "MCPBridge",
+    "MCPClientTool",
+    "tools_from_server",
 ]
