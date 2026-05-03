@@ -1,0 +1,131 @@
+---
+title: Streaming
+description: Stream tokens from your agent in real time.
+---
+
+## stream() — no tools
+
+When an agent has no tools, `stream()` gives true token-by-token streaming directly from the LLM. Each iteration yields a small string chunk as it arrives.
+
+```python
+from cyclops import Agent, AgentConfig
+
+config = AgentConfig(model="groq/llama-3.1-8b-instant")
+agent = Agent(config)
+
+for token in agent.stream("Write a haiku about the ocean."):
+    print(token, end="", flush=True)
+print()  # final newline
+```
+
+Streamed tokens are accumulated into conversation history, so the next `run()` or `stream()` call correctly sees the full prior assistant reply.
+
+## astream() — async streaming
+
+`astream()` is the async version. It returns an `AsyncIterator[str]` and must be consumed with `async for`.
+
+```python
+import asyncio
+from cyclops import Agent, AgentConfig
+
+
+async def main():
+    config = AgentConfig(model="groq/llama-3.1-8b-instant")
+    agent = Agent(config)
+
+    async for token in agent.astream("Explain how rainbows form."):
+        print(token, end="", flush=True)
+    print()
+
+
+asyncio.run(main())
+```
+
+Use `astream()` whenever you are in an async context, such as a FastAPI endpoint or an async CLI.
+
+## stream() — with tools
+
+When the agent has tools configured, `stream()` works in two phases:
+
+1. **Tool loop** (non-streaming): the agent sends the message, detects tool calls, executes them, and repeats until no more tool calls are pending.
+2. **Final answer** (streaming): once all tool work is done, the final response streams token by token.
+
+From the caller's perspective the API is identical. Just iterate the generator:
+
+```python
+from cyclops import Agent, AgentConfig
+from cyclops.toolkit import tool
+from datetime import datetime
+
+
+@tool
+def current_time() -> str:
+    """Return the current UTC time."""
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+config = AgentConfig(model="groq/llama-3.1-8b-instant")
+agent = Agent(config, tools=[current_time])
+
+for token in agent.stream("What time is it, and what day of the week is today?"):
+    print(token, end="", flush=True)
+print()
+```
+
+:::note
+There will be a brief pause before tokens begin when tools are involved. The tool execution must finish before the final streaming call is made. This is expected behavior.
+:::
+
+## astream() — async with tools
+
+The async path works identically, just awaited:
+
+```python
+import asyncio
+from cyclops import Agent, AgentConfig
+from cyclops.toolkit import tool
+
+
+@tool
+async def lookup_price(ticker: str) -> str:
+    """Return a mock stock price for a ticker symbol."""
+    prices = {"AAPL": 189.50, "GOOGL": 172.30, "MSFT": 415.00}
+    return str(prices.get(ticker.upper(), "unknown"))
+
+
+async def main():
+    config = AgentConfig(model="groq/llama-3.1-8b-instant")
+    agent = Agent(config, tools=[lookup_price])
+
+    async for token in agent.astream("What is the price of Apple stock?"):
+        print(token, end="", flush=True)
+    print()
+
+
+asyncio.run(main())
+```
+
+## Streaming over HTTP (Server-Sent Events)
+
+A common pattern is to expose the stream over HTTP with FastAPI:
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from cyclops import Agent, AgentConfig
+
+app = FastAPI()
+config = AgentConfig(model="groq/llama-3.1-8b-instant")
+
+
+@app.get("/chat")
+async def chat(message: str):
+    agent = Agent(config)
+
+    async def token_generator():
+        async for token in agent.astream(message):
+            yield f"data: {token}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(token_generator(), media_type="text/event-stream")
+```

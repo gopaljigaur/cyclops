@@ -11,6 +11,7 @@ from cyclops.core import (
     Message,
     Memory,
     InMemoryStorage,
+    FileStorage,
 )
 from cyclops.toolkit import (
     BaseTool,
@@ -29,6 +30,7 @@ __all__ = [
     "Message",
     "Memory",
     "InMemoryStorage",
+    "FileStorage",
     "BaseTool",
     "tool",
     "ToolResult",
