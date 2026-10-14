@@ -21,7 +21,7 @@ class Agent:
     ): ...
 ```
 
-**Methods:** `run`, `arun`, `stream`, `astream`, `run_with_response`, `arun_with_response`, `reset`
+**Methods:** `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `reset`
 
 **Properties:** `messages`
 
@@ -74,6 +74,21 @@ class Usage(BaseModel):
     cached_tokens: int
     total_tokens: int
     cost: Optional[float]  # None when LiteLLM can't price a completion
+```
+
+---
+
+### Events
+
+`cyclops.core.events`: what `stream_events()` and `astream_events()` yield. Every event has `agent_path: Tuple[str, ...]`, empty for the agent that was run. See [Streaming](guide/streaming.md#run-events).
+
+```python
+class TextDelta(Event):        text: str
+class ReasoningDelta(Event):   text: str
+class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
+class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
+class StepFinished(Event):     step: int; usage: Optional[Usage]
+class RunFinished(Event):      result: RunResult
 ```
 
 ---

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -9,7 +10,7 @@ from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
-from cyclops.core.hooks import AgentHooks, current_tool_call_id
+from cyclops.core.hooks import RUN_STOPPED, AgentHooks, current_tool_call_id
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
@@ -121,8 +122,8 @@ class TelemetryHooks(AgentHooks):
         span = self._tracer.start_span(
             name, context=ctx, kind=kind, attributes=attributes
         )
-        # Only tool spans become current. A chat span may be a stream, whose
-        # generator runs in the consumer's context and may never be closed.
+        # Only tool spans become current, so a tool and any run nested in it
+        # are traced under the tool's span.
         token = otel_context.attach(trace.set_span_in_context(span)) if attach else None
         _frame.set(_Frame(span, parent, token, run))
 
@@ -139,8 +140,8 @@ class TelemetryHooks(AgentHooks):
     def _fail(frame: _Frame | None, error: BaseException) -> None:
         if frame is None:
             return
-        if isinstance(error, GeneratorExit):
-            # The consumer stopped reading a stream; that is not a failure.
+        if isinstance(error, asyncio.CancelledError) and error.args == (RUN_STOPPED,):
+            # The caller stopped the run, e.g. by closing its stream; not a failure.
             frame.span.end()
             return
         frame.span.set_attribute("error.type", type(error).__qualname__)

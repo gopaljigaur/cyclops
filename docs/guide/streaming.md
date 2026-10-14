@@ -97,6 +97,45 @@ async def main():
 asyncio.run(main())
 ```
 
+## Run events
+
+`astream_events()` (and its sync twin `stream_events()`) streams everything a run does as typed events from `cyclops.core.events`, ending with `RunFinished`:
+
+```python
+from cyclops.core.events import (
+    ReasoningDelta,
+    RunFinished,
+    StepFinished,
+    TextDelta,
+    ToolCallFinished,
+    ToolCallStarted,
+)
+
+async for event in agent.astream_events("What is 2 + 3?"):
+    if isinstance(event, TextDelta):
+        print(event.text, end="", flush=True)
+    elif isinstance(event, ToolCallStarted):
+        print(f"\n-> {event.name}({event.arguments})")
+    elif isinstance(event, ToolCallFinished):
+        print(f"<- {event.result}{' (error)' if event.is_error else ''}")
+    elif isinstance(event, RunFinished):
+        result = event.result
+        print(f"\n{result.stop_reason}: {result.tokens_used} tokens, ${result.cost}")
+```
+
+| Event | Fields | When |
+|---|---|---|
+| `TextDelta` | `text` | A piece of the answer text. |
+| `ReasoningDelta` | `text` | A piece of the model's reasoning, for models that return it. |
+| `ToolCallStarted` | `call_id`, `name`, `arguments` | Before a tool runs. `call_id` is `None` in naive tool mode. |
+| `ToolCallFinished` | `call_id`, `name`, `result`, `is_error` | After a tool returns, fails, or is cancelled. `result` is the text sent to the model. |
+| `StepFinished` | `step`, `usage` | After one completion and the tool calls it asked for. |
+| `RunFinished` | `result` | Last event, with the run's `RunResult`, including usage and cost. |
+
+Every event has `agent_path`, the names of the nested agents it came from, outermost first. It is empty for events of the agent you ran.
+
+A failed run doesn't raise from `astream_events()`: it ends with `RunFinished` whose result has `stop_reason="error"`. `astream()` and `stream()` yield only the text and raise the error. The run waits for you to take each event before it goes on, so a loop you `break` out of holds the run where it is. Closing the iterator (or leaving an `aclosing()` block) cancels the run; tool calls in progress get a cancelled result so the conversation stays valid. If a tool or hook raises `CancelledError`, the iterator raises it too.
+
 ## Building a streaming HTTP endpoint
 
 A common pattern is to expose the stream over HTTP using Server-Sent Events:

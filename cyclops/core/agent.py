@@ -18,12 +18,22 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    TypeVar,
 )
 
 import litellm
 from litellm.utils import supports_prompt_caching
 
-from cyclops.core.hooks import _tool_call_id
+from cyclops.core.events import (
+    Event,
+    ReasoningDelta,
+    RunFinished,
+    StepFinished,
+    TextDelta,
+    ToolCallFinished,
+    ToolCallStarted,
+)
+from cyclops.core.hooks import RUN_STOPPED, _tool_call_id
 from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
@@ -35,6 +45,7 @@ _CANCELLED_RESULT = "Tool call cancelled."
 # accept only text in a tool message.
 _TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
 _DONE = object()
+T = TypeVar("T")
 # Providers that cache a prompt prefix at cache_control markers (on vertex_ai
 # only for Anthropic models). Gemini turns them into billed cachedContents
 # resources instead, and OpenAI caches without them.
@@ -134,7 +145,7 @@ def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
     return task.result()
 
 
-def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
+def _iterate_sync(agen: AsyncGenerator[T, None]) -> Iterator[T]:
     """Drive an async generator from sync code in one task on the shared loop.
 
     One task keeps the generator's context across chunks. The task fetches a
@@ -192,6 +203,23 @@ def _usage(response) -> Optional[Usage]:
     )
 
 
+class _Run:
+    """One run in progress: its result so far and, when streamed, its events."""
+
+    def __init__(self, model: str, events: Optional[asyncio.Queue] = None) -> None:
+        self.result = RunResult(model=model)
+        self.events = events
+
+    def emit(self, event: Event) -> None:
+        if self.events is not None:
+            self.events.put_nowait(event)
+
+    async def taken(self) -> None:
+        """Wait until the caller has taken every event emitted so far."""
+        if self.events is not None:
+            await self.events.join()
+
+
 class Agent:
     """LLM agent implementation"""
 
@@ -236,7 +264,9 @@ class Agent:
         self, input_message: str, response_model: Optional[Type] = None
     ) -> Any:
         """Run the agent asynchronously. Returns str or Pydantic model instance."""
-        result = await self._result(input_message, response_model)
+        result = await self._execute(
+            input_message, _Run(self.config.model), False, response_model
+        )
         if result.error is not None:
             raise result.error
         if response_model is not None:
@@ -253,19 +283,7 @@ class Agent:
         An exception during the run ends it with stop_reason "error" instead of
         raising.
         """
-        return await self._result(input_message)
-
-    async def _result(
-        self, input_message: str, response_model: Optional[Type] = None
-    ) -> RunResult:
-        run = RunResult(model=self.config.model)
-        try:
-            async for _ in self._loop(input_message, run, False, response_model):
-                pass
-        except Exception as e:
-            run.stop_reason = "error"
-            run.error = e
-        return run
+        return await self._execute(input_message, _Run(self.config.model), False)
 
     def stream(self, input_message: str) -> Iterator[str]:
         """Stream output tokens. Naive tool mode yields the final answer as one chunk."""
@@ -273,35 +291,77 @@ class Agent:
 
     async def astream(self, input_message: str) -> AsyncGenerator[str, None]:
         """Async stream output tokens. Naive tool mode yields the final answer as one chunk."""
-        # aclosing passes an early close down to the LiteLLM stream.
-        run = RunResult(model=self.config.model)
-        async with aclosing(self._loop(input_message, run, stream=True)) as loop:
-            async for chunk in loop:
-                yield chunk
+        async with aclosing(self.astream_events(input_message)) as events:
+            async for event in events:
+                if isinstance(event, TextDelta):
+                    yield event.text
+                elif isinstance(event, RunFinished) and event.result.error is not None:
+                    raise event.result.error
+
+    def stream_events(self, input_message: str) -> Iterator[Event]:
+        """Stream the run's events; the last one is RunFinished."""
+        return _iterate_sync(self.astream_events(input_message))
+
+    async def astream_events(self, input_message: str) -> AsyncGenerator[Event, None]:
+        """Async stream the run's events; the last one is RunFinished.
+
+        A failed run ends with RunFinished and stop_reason "error" instead of
+        raising. The run waits for the caller to take each event; closing the
+        iterator early cancels it.
+        """
+        events: asyncio.Queue = asyncio.Queue()
+        run = _Run(self.config.model, events)
+        task = asyncio.ensure_future(self._execute(input_message, run, True))
+        # Marks the end of a run that stopped without RunFinished.
+        task.add_done_callback(events.put_nowait)
+        try:
+            while True:
+                event = await events.get()
+                if event is task:
+                    task.result()
+                yield event
+                events.task_done()
+                if isinstance(event, RunFinished):
+                    return
+        finally:
+            # A no-op once the run is done.
+            task.cancel(RUN_STOPPED)
+            await asyncio.wait([task])
 
     # ------------------------------------------------------------------
     # The agent loop
     # ------------------------------------------------------------------
 
+    async def _execute(
+        self,
+        input_message: str,
+        run: _Run,
+        stream: bool,
+        response_model: Optional[Type] = None,
+    ) -> RunResult:
+        """Run one turn and emit its events, ending with RunFinished."""
+        try:
+            await self._loop(input_message, run, stream, response_model)
+        except Exception as e:
+            run.result.stop_reason = "error"
+            run.result.error = e
+        run.emit(RunFinished(result=run.result))
+        return run.result
+
     async def _loop(
         self,
         input_message: str,
-        run: RunResult,
+        run: _Run,
         stream: bool,
-        response_model: Optional[Type] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Run one turn, yielding text deltas when streaming, and fill in `run`."""
+        response_model: Optional[Type],
+    ) -> None:
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
         try:
             start = len(self._history)
             mode = self._get_tool_mode()
             try:
-                async with aclosing(
-                    self._steps(input_message, run, stream, mode, response_model)
-                ) as steps:
-                    async for chunk in steps:
-                        yield chunk
+                await self._steps(input_message, run, stream, mode, response_model)
             except litellm.UnsupportedParamsError:
                 if mode != "native" or self.config.tool_mode != "auto":
                     raise
@@ -309,29 +369,28 @@ class Agent:
                     raise
                 self._detected_tool_mode = "naive"
                 del self._history[start:]
-                async with aclosing(
-                    self._steps(input_message, run, stream, "naive", response_model)
-                ) as steps:
-                    async for chunk in steps:
-                        yield chunk
+                await self._steps(input_message, run, stream, "naive", response_model)
         except BaseException as e:
             # Failures, cancellation and a stream closed early all end the run here.
             if self.config.hooks:
                 self.config.hooks.on_run_error(e)
             raise
         if self.config.hooks:
-            self.config.hooks.on_run_end(run.content)
+            self.config.hooks.on_run_end(run.result.content)
 
     async def _steps(
         self,
         input_message: str,
-        run: RunResult,
+        run: _Run,
         stream: bool,
         mode: str,
         response_model: Optional[Type],
-    ) -> AsyncGenerator[str, None]:
+    ) -> None:
         self._history.append({"role": "user", "content": input_message})
+        result = run.result
         naive = mode == "naive"
+        # Naive mode never streams deltas: the text may be a tool call.
+        streamed = stream and not naive
         kwargs: Dict[str, Any] = {
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
@@ -362,66 +421,66 @@ class Agent:
         # Limits count what is known, even once the reported totals are not.
         spent_tokens, spent_cost = 0, 0.0
         for step in range(self.config.max_steps if mode != "none" else 1):
+            await run.taken()
             if step and self._over_budget(spent_tokens, spent_cost):
-                run.stop_reason = "budget"
+                result.stop_reason = "budget"
                 return
             messages = self._build_messages(system_prompt)
             response: Any
-            # Naive mode never streams deltas: the text may be a tool call.
-            if stream and not naive:
+            if streamed:
                 chunks = []
                 async with aclosing(
                     self._astream_completion(messages, kwargs)
                 ) as completion:
                     async for chunk in completion:
                         chunks.append(chunk)
-                        delta = (
-                            chunk.choices[0].delta.content if chunk.choices else None
-                        )
-                        if delta:
-                            yield delta
+                        delta = chunk.choices[0].delta if chunk.choices else None
+                        # LiteLLM sets reasoning_content on a delta only when present.
+                        reasoning = getattr(delta, "reasoning_content", None)
+                        if reasoning:
+                            run.emit(ReasoningDelta(text=reasoning))
+                        if delta and delta.content:
+                            run.emit(TextDelta(text=delta.content))
+                        await run.taken()
                 response = litellm.stream_chunk_builder(chunks, messages=messages)
             else:
                 response = await self._acompletion(messages=messages, **kwargs)
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
-            run.steps += 1
+            result.steps += 1
             step_usage = _usage(response)
             if step_usage is not None:
                 spent_tokens += step_usage.total_tokens
                 spent_cost += step_usage.cost or 0.0
-            if run.usage is None or step_usage is None:
-                run.usage = None
+            if result.usage is None or step_usage is None:
+                result.usage = None
             else:
-                run.usage += step_usage
+                result.usage += step_usage
             msg = response.choices[0].message
-
-            if not naive and msg.tool_calls:
-                await self._run_native_tool_calls(msg, run)
-                continue
-
             content = msg.content or ""
-            tool_call = self._parse_naive_tool_call(content) if naive else None
-            if tool_call:
-                name = tool_call["tool"]
-                result = await self._call_tool(name, tool_call.get("args", {}))
-                text, images = _split_images(result.to_message_content())
-                self._history.append(
-                    {"role": "assistant", "content": f"[Used tool: {name}]"}
-                )
-                message: Any = f"Tool result: {text}"
-                if images:
-                    message = [{"type": "text", "text": message}, *images]
-                self._history.append({"role": "user", "content": message})
-                continue
+            assistant = self._assistant_message(msg, msg.content)
+            naive_call = self._parse_naive_tool_call(content) if naive else None
+            if not streamed:
+                if "reasoning_content" in assistant:
+                    run.emit(ReasoningDelta(text=assistant["reasoning_content"]))
+                if content and not naive_call:
+                    run.emit(TextDelta(text=content))
 
-            self._history.append(self._assistant_message(msg, content))
-            run.content = content
-            if stream and naive:
-                yield content
-            return
+            done = False
+            if not naive and msg.tool_calls:
+                await self._run_native_tool_calls(msg, assistant, run)
+            elif naive_call:
+                await self._run_naive_tool_call(naive_call, run)
+            else:
+                assistant["content"] = content
+                self._history.append(assistant)
+                result.content = content
+                done = True
+            run.emit(StepFinished(step=result.steps, usage=step_usage))
+            if done:
+                return
 
-        run.stop_reason = "max_steps"
+        result.stop_reason = "max_steps"
 
     def _over_budget(self, tokens: int, cost: float) -> bool:
         """True once tokens or cost reached max_total_tokens or max_cost."""
@@ -431,35 +490,53 @@ class Agent:
         max_cost = self.config.max_cost
         return max_cost is not None and cost >= max_cost
 
-    async def _run_native_tool_calls(self, msg, run: RunResult) -> None:
-        self._append_tool_call_message(msg)
+    async def _run_naive_tool_call(self, call: Dict[str, Any], run: _Run) -> None:
+        name = call["tool"]
+        result = await self._call_tool(run, None, name, call.get("args", {}))
+        text, images = _split_images(result.to_message_content())
+        self._history.append({"role": "assistant", "content": f"[Used tool: {name}]"})
+        message: Any = f"Tool result: {text}"
+        if images:
+            message = [{"type": "text", "text": message}, *images]
+        self._history.append({"role": "user", "content": message})
+
+    async def _run_native_tool_calls(
+        self, msg, assistant: Dict[str, Any], run: _Run
+    ) -> None:
+        self._append_tool_call_message(msg, assistant)
         tasks = [
-            asyncio.ensure_future(self._execute_tool_call(tc)) for tc in msg.tool_calls
+            asyncio.ensure_future(self._execute_tool_call(tc, run))
+            for tc in msg.tool_calls
         ]
         try:
             # Shielded so the tools are cancelled once, here, and can clean up.
             results = await asyncio.shield(asyncio.gather(*tasks))
-        except asyncio.CancelledError:
-            # Stop the other calls too, then answer every call to keep the
-            # transcript valid.
+        except asyncio.CancelledError as e:
+            # Stop the other calls too, with the same reason, then answer every
+            # call to keep the transcript valid.
             for task in tasks:
-                task.cancel()
+                task.cancel(*e.args)
             await asyncio.wait(tasks)
             for tc, task in zip(msg.tool_calls, tasks):
-                self._append_tool_result(
-                    tc,
-                    (
-                        _CANCELLED_RESULT
-                        if task.cancelled()
-                        else _split_images(task.result()[1].to_message_content())[0]
-                    ),
-                )
+                if task.cancelled():
+                    text = _CANCELLED_RESULT
+                    run.emit(
+                        ToolCallFinished(
+                            call_id=tc.id,
+                            name=tc.function.name,
+                            result=text,
+                            is_error=True,
+                        )
+                    )
+                else:
+                    text = _split_images(task.result()[1].to_message_content())[0]
+                self._append_tool_result(tc, text)
             raise
         moved_images: List[Dict[str, Any]] = []
         for tc, (args, result) in zip(msg.tool_calls, results):
             content: Any = result.to_message_content()
             text, images = _split_images(content)
-            run.tool_calls.append(
+            run.result.tool_calls.append(
                 ToolCall(id=tc.id, name=tc.function.name, arguments=args, result=text)
             )
             if images and not self._tool_message_images_supported():
@@ -475,33 +552,53 @@ class Agent:
     # Tool execution helpers
     # ------------------------------------------------------------------
 
-    async def _execute_tool_call(self, tool_call) -> Tuple[Dict[str, Any], ToolResult]:
+    async def _execute_tool_call(
+        self, tool_call, run: _Run
+    ) -> Tuple[Dict[str, Any], ToolResult]:
         """Parse a native tool call's arguments and run it. Returns (args, result)."""
         name = tool_call.function.name
         raw = tool_call.function.arguments
+        error = None
         try:
             # Some providers send "" for a call without arguments.
             args = json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
-            return {}, ToolResult.error_result(
-                f"arguments for {name} are not valid JSON: {e}"
-            )
+            args, error = {}, f"arguments for {name} are not valid JSON: {e}"
         if not isinstance(args, dict):
-            return {}, ToolResult.error_result(
-                f"arguments for {name} must be a JSON object"
-            )
-        return args, await self._call_tool(name, args, tool_call.id)
+            args, error = {}, f"arguments for {name} must be a JSON object"
+        return args, await self._call_tool(run, tool_call.id, name, args, error)
 
     async def _call_tool(
-        self, name: str, args: Dict[str, Any], call_id: Optional[str] = None
+        self,
+        run: _Run,
+        call_id: Optional[str],
+        name: str,
+        args: Dict[str, Any],
+        error: Optional[str] = None,
     ) -> ToolResult:
-        """Run a tool by name with current_tool_call_id() set for its hooks."""
-        # Reset after, so a run nested in an outer tool leaves the outer id intact.
-        token = _tool_call_id.set(call_id)
-        try:
-            return await self._run_tool(name, args)
-        finally:
-            _tool_call_id.reset(token)
+        """Run a tool, or report error instead, between its two events.
+
+        current_tool_call_id() is call_id while the tool's hooks run.
+        """
+        run.emit(ToolCallStarted(call_id=call_id, name=name, arguments=args))
+        if error:
+            result = ToolResult.error_result(error)
+        else:
+            # Reset after, so a run nested in an outer tool leaves the outer id intact.
+            token = _tool_call_id.set(call_id)
+            try:
+                result = await self._run_tool(name, args)
+            finally:
+                _tool_call_id.reset(token)
+        run.emit(
+            ToolCallFinished(
+                call_id=call_id,
+                name=name,
+                result=_split_images(result.to_message_content())[0],
+                is_error=result.is_error,
+            )
+        )
+        return result
 
     async def _run_tool(self, name: str, args: Dict[str, Any]) -> ToolResult:
         """Run a tool by name, applying hook gates. Sync tools run in a worker thread."""
@@ -536,8 +633,7 @@ class Agent:
     # History helpers
     # ------------------------------------------------------------------
 
-    def _append_tool_call_message(self, msg) -> None:
-        message = self._assistant_message(msg, msg.content)
+    def _append_tool_call_message(self, msg, message: Dict[str, Any]) -> None:
         message["tool_calls"] = [
             {
                 "id": tc.id,
