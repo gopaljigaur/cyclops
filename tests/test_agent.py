@@ -1135,7 +1135,10 @@ def test_tool_results_are_rendered_for_the_model():
 
     tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
     assert tool_messages == ['{"rows": 2}', "two rows", "Error: no access"]
-    assert [c.args[2] for c in hooks.on_tool_end.call_args_list] == tool_messages
+    # Parallel tools finish in any order.
+    assert sorted(c.args[2] for c in hooks.on_tool_end.call_args_list) == sorted(
+        tool_messages
+    )
 
 
 def test_raising_tool_is_marked_as_error():
