@@ -53,7 +53,7 @@ The server's input schema is sent to the model as is, including nested objects a
 
 ### Results
 
-`execute()` returns a `ToolResult`. A result with `isError` set becomes an error result. Text content becomes a string; when the result has images, it becomes a list of content parts (`{"type": "text", ...}` and `{"type": "image_url", ...}` with a data URL). A result with only `structuredContent` becomes its JSON text.
+`execute()` returns a `ToolResult`. Text and image content become its `content` blocks (`TextContent`, `ImageContent`) and `structuredContent` becomes its `result`; the agent sends it to the model like any other tool result. A result with `isError` set becomes an error result carrying the server's text. The server's tool annotations (`readOnlyHint` and the others) become the tool's `ToolAnnotations`.
 
 ### Server sets per agent or per run
 
@@ -99,6 +99,8 @@ finally:
 ## MCPServer
 
 `MCPServer` wraps a `ToolRegistry` and exposes its tools over the stdio MCP protocol. Any MCP-compatible client (Claude Desktop, Cursor, tiny-agents) can connect to it.
+
+A tool that returns a `ToolResult` has its text and image content blocks served as MCP content. A tool that raises, or returns an error result, is served with `isError` set.
 
 ### add_tool
 

@@ -10,11 +10,11 @@ import time
 from pathlib import Path
 
 import pytest
-from mcp.types import CallToolResult, ImageContent, TextContent
+from mcp import types as mt
 
 from cyclops.mcp import MCPBridge, MCPClient, MCPServer, to_tool_result
 from cyclops.mcp.tools import _mcp_schema_to_params
-from cyclops.toolkit.types import ToolResult
+from cyclops.toolkit.types import ImageContent, TextContent, ToolResult
 
 SERVER = str(Path(__file__).parent / "fixtures" / "mcp_demo_server.py")
 COMMAND = [sys.executable, SERVER]
@@ -46,7 +46,12 @@ class TestStdio:
 
     async def test_call_returns_success_result(self, mcp):
         result = await _tool(mcp, "demo__add").execute(a=2, b=3)
-        assert result == ToolResult.success_result("5")
+        assert result.success
+        assert result.content == [TextContent(text="5")]
+        assert result.result == {"result": 5}
+
+    async def test_annotations_are_mapped(self, mcp):
+        assert _tool(mcp, "demo__add").definition.annotations.read_only is True
 
     async def test_input_schema_is_passed_through(self, mcp):
         tool = _tool(mcp, "demo__distance")
@@ -54,7 +59,7 @@ class TestStdio:
         assert schema == tool.tool.inputSchema
         assert "$defs" in schema
         result = await tool.execute(points=[{"x": 0, "y": 0}, {"x": 3, "y": 4}])
-        assert result.result == "5.0"
+        assert result.to_message_content() == "5.0"
 
     async def test_is_error_maps_to_error_result(self, mcp):
         result = await _tool(mcp, "demo__fail").execute()
@@ -64,9 +69,9 @@ class TestStdio:
     async def test_image_maps_to_content_parts(self, mcp):
         result = await _tool(mcp, "demo__picture").execute()
         assert result.success
-        [part] = result.result
-        assert part["type"] == "image_url"
-        assert part["image_url"]["url"].startswith("data:image/png;base64,")
+        [block] = result.content
+        assert isinstance(block, ImageContent)
+        assert block.mime_type == "image/png"
 
     async def test_call_timeout_gives_error_result(self):
         async with MCPClient() as client:
@@ -76,26 +81,26 @@ class TestStdio:
         assert "Timed out" in result.error
 
     async def test_reconnects_after_server_exits_mid_call(self, mcp):
-        first = (await _tool(mcp, "demo__pid").execute()).result
+        first = (await _tool(mcp, "demo__pid").execute()).to_message_content()
         crashed = await _tool(mcp, "demo__crash").execute()
         assert crashed.error == "Connection closed"
-        second = (await _tool(mcp, "demo__pid").execute()).result
+        second = (await _tool(mcp, "demo__pid").execute()).to_message_content()
         assert second != first
 
     async def test_reconnects_after_server_is_killed(self, mcp):
-        first = (await _tool(mcp, "demo__pid").execute()).result
+        first = (await _tool(mcp, "demo__pid").execute()).to_message_content()
         os.kill(int(first), signal.SIGKILL)
         await asyncio.sleep(0.5)
         second = await _tool(mcp, "demo__pid").execute()
-        assert second.success and second.result != first
+        assert second.success and second.to_message_content() != first
 
     async def test_concurrent_calls_share_one_reconnect(self, mcp):
-        first = (await _tool(mcp, "demo__pid").execute()).result
+        first = (await _tool(mcp, "demo__pid").execute()).to_message_content()
         os.kill(int(first), signal.SIGKILL)
         await asyncio.sleep(0.5)
         pid = _tool(mcp, "demo__pid")
         results = await asyncio.gather(*[pid.execute() for _ in range(3)])
-        assert len({r.result for r in results}) == 1
+        assert len({r.to_message_content() for r in results}) == 1
         assert len(_live_sessions()) == 1
 
     async def test_tools_must_run_on_the_attach_loop(self, mcp):
@@ -233,8 +238,8 @@ async def test_http_transports_send_headers(http_server):
         )
         add = await _tool(client, "remote__add").execute(a=1, b=1)
         header = await _tool(client, "remote__header").execute(name="x-demo")
-    assert add.result == "2"
-    assert header.result == "hi"
+    assert add.to_message_content() == "2"
+    assert header.to_message_content() == "hi"
 
 
 async def test_http_call_may_outlast_connect_timeout(http_server):
@@ -244,7 +249,7 @@ async def test_http_call_may_outlast_connect_timeout(http_server):
             "remote", url=url, transport=transport, connect_timeout=1, call_timeout=10
         )
         result = await _tool(client, "remote__slow").execute(seconds=2)
-    assert result == ToolResult.success_result("done")
+    assert result.to_message_content() == "done"
 
 
 def test_bridge_tools_work_from_another_loop():
@@ -252,7 +257,7 @@ def test_bridge_tools_work_from_another_loop():
     try:
         tools = bridge.attach("demo", COMMAND)
         add = next(t for t in tools if t.name == "demo__add")
-        assert asyncio.run(add.execute(a=4, b=5)).result == "9"
+        assert asyncio.run(add.execute(a=4, b=5)).to_message_content() == "9"
         assert bridge.connected_names == ["demo"]
         assert [t.name for t in bridge.tools(["demo"])] == [t.name for t in tools]
     finally:
@@ -262,17 +267,26 @@ def test_bridge_tools_work_from_another_loop():
 
 def test_to_tool_result_mixed_content():
     result = to_tool_result(
-        CallToolResult(
+        mt.CallToolResult(
             content=[
-                TextContent(type="text", text="see"),
-                ImageContent(type="image", data="AAAA", mimeType="image/png"),
+                mt.TextContent(type="text", text="see"),
+                mt.ImageContent(type="image", data="AAAA", mimeType="image/png"),
             ]
         )
     )
-    assert result.result == [
-        {"type": "text", "text": "see"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    assert result.content == [
+        TextContent(text="see"),
+        ImageContent(data="AAAA", mime_type="image/png"),
     ]
+
+
+def test_to_tool_result_error_keeps_text():
+    result = to_tool_result(
+        mt.CallToolResult(
+            content=[mt.TextContent(type="text", text="bad input")], isError=True
+        )
+    )
+    assert result == ToolResult.error_result("bad input")
 
 
 class TestMCPSchemaToParams:
@@ -330,11 +344,12 @@ class TestMCPSchemaToParams:
 
 
 def test_to_tool_result_structured_only():
-    result = to_tool_result(CallToolResult(content=[], structuredContent={"a": 1}))
-    assert result == ToolResult.success_result('{"a": 1}')
+    result = to_tool_result(mt.CallToolResult(content=[], structuredContent={"a": 1}))
+    assert result.result == {"a": 1}
+    assert result.to_message_content() == '{"a": 1}'
 
 
-async def test_server_returns_is_error_for_failures():
+async def test_server_serves_tool_results():
     server = MCPServer(load_plugins=False)
 
     def explode() -> str:
@@ -345,6 +360,17 @@ async def test_server_returns_is_error_for_failures():
     server.add_function_tool(
         "refuse", "Fails as a result", lambda: ToolResult.error_result("denied")
     )
+    server.add_function_tool(
+        "photo",
+        "An image",
+        lambda: ToolResult(
+            content=[
+                TextContent(text="a pixel"),
+                ImageContent(data="AAAA", mime_type="image/png"),
+            ]
+        ),
+    )
+    server.add_function_tool("data", "A dict", lambda: {"a": 1})
 
     from mcp.shared.memory import create_connected_server_and_client_session
 
@@ -352,9 +378,14 @@ async def test_server_returns_is_error_for_failures():
         failed = await session.call_tool("explode", {})
         ok = await session.call_tool("echo", {"text": "hi"})
         refused = await session.call_tool("refuse", {})
+        photo = await session.call_tool("photo", {})
+        data = await session.call_tool("data", {})
     assert failed.isError is True
     assert "nope" in failed.content[0].text
     assert ok.isError is False
     assert ok.content[0].text == "hi"
     assert refused.isError is True
     assert refused.content[0].text == "denied"
+    assert [c.type for c in photo.content] == ["text", "image"]
+    assert photo.content[1].mimeType == "image/png"
+    assert data.content[0].text == '{"a": 1}'

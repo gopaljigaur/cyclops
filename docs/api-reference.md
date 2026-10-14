@@ -329,7 +329,7 @@ class MCPClient:
 
 ### MCPClientTool
 
-A `BaseTool` for one tool on an attached server. Await `execute()` on the loop that attached the server. It returns a `ToolResult`: an error result when the server sets `isError` or the call fails, otherwise the text, or a list of content parts when the result has images. `definition.to_json_schema()` returns the server's input schema unchanged.
+A `BaseTool` for one tool on an attached server. Await `execute()` on the loop that attached the server. It returns a `ToolResult`: an error result when the server sets `isError` or the call fails, otherwise text and image `content` blocks with `structuredContent` as `result`. `definition.input_schema` is the server's input schema, unchanged.
 
 ---
 
@@ -353,7 +353,7 @@ class MCPBridge:
 
 ### MCPServer
 
-Exposes Cyclops tools as an MCP server over stdio. A tool that raises returns a result with `isError` set.
+Exposes Cyclops tools as an MCP server over stdio. A tool's `ToolResult` content blocks are served as MCP text and image content; a tool that raises or returns an error result is served with `isError` set.
 
 ```python
 class MCPServer:

@@ -1,19 +1,19 @@
 """MCPClientTool: a remote MCP tool as a cyclops BaseTool."""
 
-import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from mcp.types import (
-    CallToolResult,
-    EmbeddedResource,
-    ImageContent,
-    TextContent,
-    TextResourceContents,
-    Tool,
-)
+from mcp import types as mcp_types
 
 from cyclops.toolkit.tool import BaseTool
-from cyclops.toolkit.types import ToolDefinition, ToolParameter, ToolResult
+from cyclops.toolkit.types import (
+    ContentBlock,
+    ImageContent,
+    TextContent,
+    ToolAnnotations,
+    ToolDefinition,
+    ToolParameter,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from cyclops.mcp.bridge import MCPBridge
@@ -41,42 +41,40 @@ def _mcp_schema_to_params(input_schema: Dict[str, Any]) -> Dict[str, ToolParamet
     return params
 
 
-class MCPToolDefinition(ToolDefinition):
-    """A tool definition whose JSON schema is the server's, unchanged."""
-
-    input_schema: Dict[str, Any]
-
-    def to_json_schema(self) -> Dict[str, Any]:
-        return self.input_schema
-
-
-def to_tool_result(result: CallToolResult) -> ToolResult:
+def to_tool_result(result: mcp_types.CallToolResult) -> ToolResult:
     """Map an MCP tool result onto a ToolResult.
 
-    Text only gives a string; with images the result is a list of
-    OpenAI style content parts. ``isError`` gives an error result.
+    Text and images become content blocks and ``structuredContent`` becomes
+    ``result``. ``isError`` gives an error result carrying the text.
     """
-    parts: List[Dict[str, Any]] = []
+    blocks: List[ContentBlock] = []
     for content in result.content:
-        if isinstance(content, TextContent):
-            parts.append({"type": "text", "text": content.text})
-        elif isinstance(content, ImageContent):
-            url = f"data:{content.mimeType};base64,{content.data}"
-            parts.append({"type": "image_url", "image_url": {"url": url}})
-        elif isinstance(content, EmbeddedResource) and isinstance(
-            content.resource, TextResourceContents
+        if isinstance(content, mcp_types.TextContent):
+            blocks.append(TextContent(text=content.text))
+        elif isinstance(content, mcp_types.ImageContent):
+            blocks.append(ImageContent(data=content.data, mime_type=content.mimeType))
+        elif isinstance(content, mcp_types.EmbeddedResource) and isinstance(
+            content.resource, mcp_types.TextResourceContents
         ):
-            parts.append({"type": "text", "text": content.resource.text})
+            blocks.append(TextContent(text=content.resource.text))
         else:
-            parts.append({"type": "text", "text": content.model_dump_json()})
-    if not parts and result.structuredContent is not None:
-        parts.append({"type": "text", "text": json.dumps(result.structuredContent)})
-    text = "\n".join(p["text"] for p in parts if p["type"] == "text")
+            blocks.append(TextContent(text=content.model_dump_json()))
     if result.isError:
+        text = "\n".join(b.text for b in blocks if isinstance(b, TextContent))
         return ToolResult.error_result(text)
-    if all(p["type"] == "text" for p in parts):
-        return ToolResult.success_result(text)
-    return ToolResult.success_result(parts)
+    return ToolResult(result=result.structuredContent, content=blocks)
+
+
+def _annotations(tool: mcp_types.Tool) -> ToolAnnotations:
+    hints = tool.annotations
+    if hints is None:
+        return ToolAnnotations()
+    return ToolAnnotations(
+        read_only=hints.readOnlyHint,
+        destructive=hints.destructiveHint,
+        idempotent=hints.idempotentHint,
+        open_world=hints.openWorldHint,
+    )
 
 
 class MCPClientTool(BaseTool):
@@ -86,20 +84,21 @@ class MCPClientTool(BaseTool):
         self,
         client: "MCPClient",
         server: str,
-        tool: Tool,
+        tool: mcp_types.Tool,
         name: Optional[str] = None,
     ) -> None:
         self.client = client
         self.server = server
         self.tool = tool
-        super().__init__(name or tool.name, tool.description or "")
+        super().__init__(name or tool.name, tool.description or "", _annotations(tool))
 
     def _build_definition(self) -> ToolDefinition:
-        return MCPToolDefinition(
+        return ToolDefinition(
             name=self.name,
             description=self.description,
             parameters=_mcp_schema_to_params(self.tool.inputSchema),
             input_schema=self.tool.inputSchema,
+            annotations=self.annotations,
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:

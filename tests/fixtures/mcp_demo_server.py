@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.server import Context
+from mcp.types import ToolAnnotations
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -26,7 +27,7 @@ class Point(BaseModel):
     y: int
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def add(a: int, b: int) -> int:
     """Add two numbers"""
     return a + b
