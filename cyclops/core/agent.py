@@ -29,8 +29,9 @@ from cyclops.toolkit.types import ToolResult
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 _CANCELLED_RESULT = "Tool call cancelled."
 # LiteLLM turns image parts of a tool message into the provider's own image
-# blocks for these providers; others accept only text in a tool message.
-_TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini", "vertex_ai"}
+# blocks for these providers (on vertex_ai only for Gemini models); others
+# accept only text in a tool message.
+_TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
 _DONE = object()
 
 
@@ -40,6 +41,12 @@ def _split_images(content: Any) -> Tuple[str, List[Dict[str, Any]]]:
         return content, []
     text = "\n".join(p["text"] for p in content if p["type"] == "text")
     return text, [p for p in content if p["type"] == "image_url"]
+
+
+def _takes_tool_message_images(model: str, provider: str) -> bool:
+    if provider == "vertex_ai":
+        return model.startswith("gemini")
+    return provider in _TOOL_MESSAGE_IMAGE_PROVIDERS
 
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
@@ -524,8 +531,11 @@ class Agent:
         """True if every deployment of the model takes images in a tool message."""
         params = self._deployments()
         return bool(params) and all(
-            (p.get("custom_llm_provider") or litellm.get_llm_provider(p["model"])[1])
-            in _TOOL_MESSAGE_IMAGE_PROVIDERS
+            _takes_tool_message_images(
+                *litellm.get_llm_provider(
+                    p["model"], custom_llm_provider=p.get("custom_llm_provider")
+                )[:2]
+            )
             for p in params
         )
 

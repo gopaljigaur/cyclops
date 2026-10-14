@@ -7,7 +7,6 @@ import pytest
 
 from cyclops.core.memory import FileStorage, InMemoryStorage
 
-
 # ---------------------------------------------------------------------------
 # InMemoryStorage
 # ---------------------------------------------------------------------------

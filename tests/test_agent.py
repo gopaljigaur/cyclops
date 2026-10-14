@@ -1238,3 +1238,52 @@ def test_streamed_run_renders_tool_results():
         assert list(agent.stream("go")) == ["sorry"]
 
     assert agent.messages[2]["content"] == "Error: no access"
+
+
+def test_denied_and_unknown_tools_are_reported_as_errors():
+    class Deny(AgentHooks):
+        def on_tool_start(self, tool_name, args):
+            return "deny"
+
+    agent = Agent(config=_make_config(hooks=Deny()), tools=[_make_simple_tool()])
+    _run_tool_calls(agent, "add", "missing")
+
+    tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    assert tool_messages == [
+        "Error: Tool 'add' was not approved",
+        "Error: Tool 'missing' not found",
+    ]
+
+
+@pytest.mark.parametrize(
+    "deployments, kept",
+    [
+        (["anthropic/claude-3-5-sonnet-latest", "gemini/gemini-1.5-pro"], True),
+        (["anthropic/claude-3-5-sonnet-latest", "openai/gpt-4o"], False),
+        (["vertex_ai/gemini-1.5-pro"], True),
+        (["vertex_ai/meta/llama3-405b-instruct-maas"], False),
+    ],
+)
+def test_tool_image_route_checks_every_router_deployment(deployments, kept):
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "smart", "litellm_params": {"model": d}} for d in deployments
+        ]
+    )
+    tool_calls = [_make_tool_call("tc_1", "chart", "{}")]
+    router.acompletion = AsyncMock(
+        side_effect=[
+            _make_completion_response(content=None, tool_calls=tool_calls),
+            _make_completion_response(content="done"),
+        ]
+    )
+    agent = Agent(config=_make_config("smart", router=router), tools=[_chart_tool()])
+    agent.run("go")
+
+    roles = [m["role"] for m in agent.messages]
+    if kept:
+        assert roles == ["user", "assistant", "tool", "assistant"]
+        assert agent.messages[2]["content"][1] == _IMAGE_PART
+    else:
+        assert roles == ["user", "assistant", "tool", "user", "assistant"]
+        assert agent.messages[2]["content"] == "a chart"
