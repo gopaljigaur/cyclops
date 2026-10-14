@@ -136,7 +136,7 @@ response = agent.run("What was the code word?")
 
 ## max_iterations
 
-When tools are in use the agent can call tools multiple times in a row before producing the final answer. `max_iterations` caps how many tool-call rounds are allowed. If the cap is hit the agent returns the string `"Reached maximum tool call iterations."`.
+When tools are in use the agent can call tools multiple times in a row before producing the final answer. `max_iterations` caps how many tool-call rounds are allowed. If the cap is hit the run stops with `stop_reason="max_iterations"` on the `AgentResponse` from `run_with_response()`, and `content` is empty.
 
 ```python
 config = AgentConfig(
