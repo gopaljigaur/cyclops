@@ -81,7 +81,7 @@ async def fetch_url(url: str) -> str:
 
 Cyclops builds the JSON schema of a tool's parameters with pydantic from the function signature, so any type pydantic understands works: `list[str]` gets `items`, `Literal` and `Enum` become `enum`, `Optional[T]` allows `null`, pydantic models become nested objects, and default values are kept. Parameters without a default are required.
 
-Parameter descriptions come from a Google or NumPy style docstring, or from `Annotated[..., Field(description=...)]`. The docstring text before the parameter section becomes the tool description.
+Parameter descriptions come from a Google or NumPy style docstring, or from `Annotated[..., Field(description=...)]`. When both describe a parameter, the docstring wins. The docstring text before the parameter section becomes the tool description.
 
 ```python
 from typing import Annotated, Literal
@@ -111,7 +111,7 @@ def search(
     return f"Results for '{query}'"
 ```
 
-When a function tool is called, its arguments are validated against the same schema, so `filters` arrives as a list of `Filter` instances. A `BaseTool` subclass gets its schema from the signature of `execute()` and receives the arguments as passed.
+When a function tool is called, its arguments are validated against the same schema, so `filters` arrives as a list of `Filter` instances. Unknown arguments are rejected unless the function takes `**kwargs`. A `BaseTool` subclass gets its schema from the signature of `execute()` and receives the arguments as passed.
 
 ## Tool results
 
@@ -135,7 +135,7 @@ def render_chart(series: list[float]) -> ToolResult:
     )
 ```
 
-`ToolResult.to_message_content()` renders a result as the content of an OpenAI-style tool message: a string for text, or a list of content parts when there are images. `result` is rendered as JSON only when there are no content blocks.
+`ToolResult.to_message_content()` renders a result as the content of a tool message in OpenAI chat format: a string for text, or a list of `text` and `image_url` parts when there are images. OpenAI itself accepts only text parts in a tool message. A failed result starts with `Error:`, and `result` is rendered as JSON only when there are no content blocks.
 
 ## Annotations
 

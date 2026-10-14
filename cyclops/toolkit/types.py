@@ -102,15 +102,18 @@ class ToolResult(BaseModel):
         return cls(success=False, result=result, error=error)
 
     def to_message_content(self) -> Union[str, List[Dict[str, Any]]]:
-        """Render as the content of an OpenAI-style tool message.
+        """Render as the content of a tool message in OpenAI chat format.
 
-        Text only results render as a string, results with images as a list of
-        content parts. ``result`` is rendered as JSON only when there are no
-        content blocks, since those usually already describe it.
+        Text only results render as a string. Results with images render as
+        a list of ``text`` and ``image_url`` parts; OpenAI itself accepts only
+        text parts in a tool message, so images need another route there.
+        ``result`` is rendered as JSON only when there are no content blocks,
+        since those usually already describe it.
         """
         parts: List[Dict[str, Any]] = []
-        if self.error:
-            parts.append({"type": "text", "text": f"Error: {self.error}"})
+        if self.is_error:
+            error = self.error or "tool execution failed"
+            parts.append({"type": "text", "text": f"Error: {error}"})
         for block in self.content:
             if isinstance(block, TextContent):
                 parts.append({"type": "text", "text": block.text})

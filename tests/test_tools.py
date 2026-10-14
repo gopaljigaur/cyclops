@@ -477,6 +477,33 @@ class TestToolResult:
         assert r.is_error is True
         assert r.to_message_content() == "Error: boom"
 
+    def test_failure_without_error_text(self):
+        r = ToolResult(success=False, content=[TextContent(text="denied")])
+        assert r.to_message_content() == "Error: tool execution failed\ndenied"
+        assert ToolResult(success=False).to_message_content() == (
+            "Error: tool execution failed"
+        )
+
+    def test_error_with_content(self):
+        r = ToolResult(
+            success=False,
+            error="partial failure",
+            content=[TextContent(text="1 of 2 done")],
+        )
+        assert r.to_message_content() == "Error: partial failure\n1 of 2 done"
+
+    def test_mixed_content_keeps_order(self):
+        image = ImageContent(data="aGk=", mime_type="image/png")
+        r = ToolResult(
+            content=[TextContent(text="before"), image, TextContent(text="after")]
+        )
+        assert [p["type"] for p in r.to_message_content()] == [
+            "text",
+            "image_url",
+            "text",
+        ]
+        assert r.to_message_content()[2] == {"type": "text", "text": "after"}
+
     def test_text_content(self):
         r = ToolResult(content=[TextContent(text="a"), TextContent(text="b")])
         assert r.to_message_content() == "a\nb"
