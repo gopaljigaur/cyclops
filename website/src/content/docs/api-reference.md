@@ -23,6 +23,7 @@ class Agent:
 
 | Method | Signature | Description |
 |---|---|---|
+| `start` | `start(input_message: str, *, stream: bool = True, response_model: Optional[Type] = None) -> RunHandle` | Start a run on the running event loop; await, iterate, steer or cancel it. |
 | `run` | `run(input_message: str, response_model: Optional[Type] = None) -> Any` | Run synchronously. Returns `str` or a Pydantic model instance. |
 | `arun` | `arun(input_message: str, response_model: Optional[Type] = None) -> Any` | Run asynchronously. |
 | `run_with_response` | `run_with_response(input_message: str) -> RunResult` | Run synchronously; return the result, stop reason, usage and cost. |
@@ -77,6 +78,20 @@ class AgentConfig(BaseModel):
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
 | `max_guard_rounds` | `3` | How many times per run guards may send the model back. |
+
+---
+
+### RunHandle
+
+Returned by `Agent.start(input_message, *, stream=True, response_model=None)`. See [Agents](/guides/agents/#start-steer-and-cancel-a-run).
+
+```python
+class RunHandle:
+    def __await__(self): ...            # await handle -> RunResult
+    def __aiter__(self): ...            # async for event in handle (once)
+    def steer(self, message: str) -> None: ...
+    def cancel(self) -> None: ...
+```
 
 ---
 

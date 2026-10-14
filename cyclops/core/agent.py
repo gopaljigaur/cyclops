@@ -13,6 +13,7 @@ from typing import (
     Awaitable,
     Callable,
     Dict,
+    Generator,
     Iterator,
     List,
     Optional,
@@ -252,20 +253,83 @@ class _HooksMiddleware(ToolMiddleware):
 
 
 class _Run:
-    """One run in progress: its result so far and, when streamed, its events."""
+    """One run in progress: its result so far, its events and its steering."""
 
-    def __init__(self, model: str, events: Optional[asyncio.Queue] = None) -> None:
+    def __init__(self, model: str) -> None:
         self.result = RunResult(model=model)
-        self.events = events
+        self.events: asyncio.Queue = asyncio.Queue()
+        # Set by astream_events, whose caller takes the events as they come.
+        self.paced = False
+        self.steering: List[str] = []
+        self.started = False
+        self.cancelled = False
 
     def emit(self, event: Event) -> None:
-        if self.events is not None:
-            self.events.put_nowait(event)
+        self.events.put_nowait(event)
 
     async def taken(self) -> None:
-        """Wait until the caller has taken every event emitted so far."""
-        if self.events is not None:
+        """When paced, wait until the caller has taken every event emitted so far."""
+        if self.paced:
             await self.events.join()
+
+
+class RunHandle:
+    """A run started with Agent.start().
+
+    Await it for the RunResult, and iterate it (once) for the run's events.
+    """
+
+    def __init__(self, run: _Run, task: "asyncio.Task[RunResult]") -> None:
+        self._run = run
+        self._task = task
+        self._iterated = False
+        # Marks the end of a run that stopped without RunFinished.
+        task.add_done_callback(run.events.put_nowait)
+
+    def __await__(self) -> Generator[Any, None, RunResult]:
+        return self._task.__await__()
+
+    def __aiter__(self) -> AsyncGenerator[Event, None]:
+        if self._iterated:
+            raise RuntimeError("A run's events can be iterated only once")
+        self._iterated = True
+        return self._events()
+
+    async def _events(self) -> AsyncGenerator[Event, None]:
+        events = self._run.events
+        while True:
+            event = await events.get()
+            if event is self._task:
+                self._task.result()
+            yield event
+            events.task_done()
+            if isinstance(event, RunFinished):
+                return
+
+    def steer(self, message: str) -> None:
+        """Add a user message that the model sees in its next completion.
+
+        A message that arrives during a completion goes into the one after,
+        once the step's tool calls finish; if that completion was the final
+        answer, the run takes another step to answer it when its limits allow,
+        and otherwise leaves it in the history for the next run. Steering a
+        finished run raises RuntimeError.
+        """
+        if self._task.done():
+            raise RuntimeError("The run has finished")
+        self._run.steering.append(message)
+
+    def cancel(self) -> None:
+        """Stop the run; awaiting it then gives stop_reason "cancelled".
+
+        Tool calls in progress are cancelled and get a cancelled result. A
+        second call does nothing.
+        """
+        if self._run.cancelled:
+            return
+        self._run.cancelled = True
+        if self._run.started:
+            self._task.cancel(RUN_STOPPED)
 
 
 class Agent:
@@ -304,6 +368,25 @@ class Agent:
         """Return a copy of the current conversation history."""
         return list(self._history)
 
+    def start(
+        self,
+        input_message: str,
+        *,
+        stream: bool = True,
+        response_model: Optional[Type] = None,
+    ) -> RunHandle:
+        """Start a run in a task on the running event loop and return its handle.
+
+        With stream=False the completions aren't streamed, so each step's text
+        arrives as one TextDelta. response_model asks the provider for that
+        schema when it supports one; the result's content is the raw JSON.
+        """
+        run = _Run(self.config.model)
+        task = asyncio.get_running_loop().create_task(
+            self._execute(input_message, run, stream, response_model)
+        )
+        return RunHandle(run, task)
+
     def run(self, input_message: str, response_model: Optional[Type] = None) -> Any:
         """Run the agent synchronously. Returns str or Pydantic model instance."""
         return _run_coroutine_sync(self.arun, input_message, response_model)
@@ -312,8 +395,8 @@ class Agent:
         self, input_message: str, response_model: Optional[Type] = None
     ) -> Any:
         """Run the agent asynchronously. Returns str or Pydantic model instance."""
-        result = await self._execute(
-            input_message, _Run(self.config.model), False, response_model
+        result = await self.start(
+            input_message, stream=False, response_model=response_model
         )
         if result.error is not None:
             raise result.error
@@ -331,7 +414,7 @@ class Agent:
         An exception during the run ends it with stop_reason "error" instead of
         raising.
         """
-        return await self._execute(input_message, _Run(self.config.model), False)
+        return await self.start(input_message, stream=False)
 
     def stream(self, input_message: str) -> Iterator[str]:
         """Stream output tokens. Naive tool mode yields the final answer as one chunk."""
@@ -357,24 +440,15 @@ class Agent:
         raising. The run waits for the caller to take each event; closing the
         iterator early cancels it.
         """
-        events: asyncio.Queue = asyncio.Queue()
-        run = _Run(self.config.model, events)
-        task = asyncio.ensure_future(self._execute(input_message, run, True))
-        # Marks the end of a run that stopped without RunFinished.
-        task.add_done_callback(events.put_nowait)
+        handle = self.start(input_message)
+        handle._run.paced = True
         try:
-            while True:
-                event = await events.get()
-                if event is task:
-                    task.result()
-                yield event
-                events.task_done()
-                if isinstance(event, RunFinished):
-                    return
+            async with aclosing(handle.__aiter__()) as events:
+                async for event in events:
+                    yield event
         finally:
-            # A no-op once the run is done.
-            task.cancel(RUN_STOPPED)
-            await asyncio.wait([task])
+            handle.cancel()
+            await asyncio.wait([handle._task])
 
     # ------------------------------------------------------------------
     # The agent loop
@@ -388,8 +462,16 @@ class Agent:
         response_model: Optional[Type] = None,
     ) -> RunResult:
         """Run one turn and emit its events, ending with RunFinished."""
+        run.started = True
         try:
+            if run.cancelled:
+                # Cancelled before the task started: no hooks, no completion.
+                raise asyncio.CancelledError(RUN_STOPPED)
             await self._loop(input_message, run, stream, response_model)
+        except asyncio.CancelledError as e:
+            if e.args != (RUN_STOPPED,):
+                raise
+            run.result.stop_reason = "cancelled"
         except Exception as e:
             run.result.stop_reason = "error"
             run.result.error = e
@@ -423,6 +505,9 @@ class Agent:
             if self.config.hooks:
                 self.config.hooks.on_run_error(e)
             raise
+        # Steering the run had no step left for waits for the next run.
+        self._history += [{"role": "user", "content": m} for m in run.steering]
+        run.steering.clear()
         if self.config.hooks:
             self.config.hooks.on_run_end(run.result.content)
 
@@ -472,9 +557,6 @@ class Agent:
         # Guard feedback waiting to be sent once another step is allowed.
         feedback: Optional[str] = None
         limit = self.config.max_steps
-        if mode == "none":
-            # A run without tools always answers.
-            limit = max(limit, 1)
         for step in range(limit):
             await run.taken()
             if step and self._over_budget(spent_tokens, spent_cost):
@@ -483,6 +565,12 @@ class Agent:
             if feedback is not None:
                 self._history.append({"role": "user", "content": feedback})
                 feedback = None
+            # Cleared only once the completion returns, so a naive fallback
+            # that drops this attempt sends them again.
+            steered = len(run.steering)
+            self._history += [
+                {"role": "user", "content": m} for m in run.steering[:steered]
+            ]
             messages = self._build_messages(system_prompt)
             response: Any
             if streamed:
@@ -505,6 +593,7 @@ class Agent:
                 response = await self._acompletion(messages=messages, **kwargs)
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
+            del run.steering[:steered]
             result.steps += 1
             step_usage = _usage(response)
             if step_usage is not None:
@@ -529,6 +618,15 @@ class Agent:
                 await self._run_native_tool_calls(msg, assistant, run)
             elif naive_call:
                 await self._run_naive_tool_call(naive_call, run)
+            elif (
+                run.steering
+                and step + 1 < limit
+                and not self._over_budget(spent_tokens, spent_cost)
+            ):
+                # A steer came in while the model answered: answer it in the
+                # next step. Guards judge the answer the run ends on.
+                assistant["content"] = content
+                self._history.append(assistant)
             else:
                 assistant["content"] = content
                 self._history.append(assistant)

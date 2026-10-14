@@ -25,7 +25,7 @@ config = AgentConfig(
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` uses native function calling and switches this agent to `"naive"` if LiteLLM reports the model does not support tools; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
-| `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds included. A run without tools makes at least one. |
+| `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds included; at least 1. |
 | `max_total_tokens` | `int \| None` | `None` | Most tokens one run may use, checked between steps. |
 | `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
@@ -111,6 +111,31 @@ async def main():
 ```
 
 See [Streaming](streaming.md) for detailed examples.
+
+## start(): steer and cancel a run
+
+`start()` begins a run in a task on the running event loop and returns a `RunHandle`. Await the handle for the `RunResult`, iterate it (once) for the run's [events](streaming.md#run-events), and use it to steer or stop the run while it works.
+
+```python
+from cyclops.core.events import TextDelta, ToolCallStarted
+
+handle = agent.start("Research the three largest moons of Jupiter.")
+
+async for event in handle:
+    if isinstance(event, ToolCallStarted) and event.name == "web_search":
+        handle.steer("Only use sources from the last five years.")
+    elif isinstance(event, TextDelta):
+        print(event.text, end="", flush=True)
+
+result = await handle
+```
+
+- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the history for the next run (a run that already answered completes with that answer). Steering a run that has finished raises `RuntimeError`.
+- `handle.cancel()` stops the run. Tool calls in progress are cancelled and get a cancelled result, so the conversation stays valid, and awaiting the handle gives `stop_reason="cancelled"`. A completion in progress is dropped. Calling it again does nothing.
+
+Cancelling the task that awaits a handle (or `arun()`) also cancels the run, but as a plain `asyncio.CancelledError`: the await raises it and there is no `"cancelled"` result.
+
+`start(input, stream=False)` makes the completions without streaming, so each step's text arrives as one `TextDelta`. `arun()`, `arun_with_response()` and `astream()` are shortcuts over `start()`. Iterating a handle doesn't hold the run back the way `astream_events()` does: events wait in the handle until you read them.
 
 ## Conversation history
 
