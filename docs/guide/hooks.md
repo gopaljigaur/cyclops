@@ -34,9 +34,9 @@ agent.run("What is the weather in London?")
 | Method | When it fires | Return value |
 |---|---|---|
 | `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
-| `on_run_end(content)` | After `run()` or `arun()` returns (not called for `stream()`/`astream()`) | `None` |
+| `on_run_end(content)` | When a run finishes, streamed or not | `None` |
 | `on_llm_start(messages)` | Before each LiteLLM completion call | `None` |
-| `on_llm_end(response)` | After each non-streaming LiteLLM completion call | `None` |
+| `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
 | `on_tool_start(tool_name, args)` | Before each tool execution | `"deny"` to block, anything else to allow |
 | `on_tool_end(tool_name, args, result)` | After a tool executes successfully | `None` |

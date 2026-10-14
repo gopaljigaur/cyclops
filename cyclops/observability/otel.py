@@ -24,9 +24,6 @@ class TelemetryHooks(AgentHooks):
         ├── llm.completion   (model, prompt_tokens, completion_tokens, latency_ms)
         ├── tool.<name>      (tool.name, tool.args_count, tool.result.length)
         └── ...
-
-    Note: on_run_end is not called for stream()/astream(), so the root span
-    is not closed for streaming runs.
     """
 
     def __init__(self, tracer_name: str = "cyclops") -> None:

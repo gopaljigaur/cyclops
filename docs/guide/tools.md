@@ -166,5 +166,5 @@ agent = Agent(config, tools=tools)
 ```
 
 /// note
-If the model does not support native function calling (e.g. some Ollama models), set `tool_mode="naive"` in `AgentConfig`. Cyclops will fall back to prompt-based tool invocation automatically when `tool_mode="auto"` and the API returns an error about unsupported tools.
+If the model does not support native function calling (e.g. some Ollama models), set `tool_mode="naive"` in `AgentConfig`. With `tool_mode="auto"`, Cyclops falls back to prompt-based tool invocation for that agent when LiteLLM raises `UnsupportedParamsError` and `litellm.get_supported_openai_params` does not list `tools` for the model (through a Router, for every deployment behind the alias). Any other error is raised unchanged.
 ///

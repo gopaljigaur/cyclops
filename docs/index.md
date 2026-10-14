@@ -9,7 +9,7 @@ Cyclops is a lightweight Python agent framework that lets you build LLM-powered 
 - **Any LLM provider**: OpenAI, Anthropic, Groq, Ollama, and every provider LiteLLM supports via a single `model=` string.
 - **Tool use**: Decorate a plain Python function with `@tool` and pass it to the agent. Supports both sync and async tools.
 - **Structured output**: Pass a Pydantic model as `response_model` and get a typed object back instead of a string.
-- **Streaming**: True token-by-token streaming for no-tool runs; streamed final answer after tool calls for tool runs.
+- **Streaming**: True token-by-token streaming for every completion, including runs that call tools.
 - **Memory**: `InMemoryStorage` for ephemeral state and `FileStorage` for JSON-backed persistence across restarts.
 - **Cost & token tracking**: `run_with_response()` returns an `AgentResponse` with prompt tokens, completion tokens, and estimated cost.
 - **MCP support**: Expose Cyclops tools as an MCP server or consume any MCP server as a tool source.

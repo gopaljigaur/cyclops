@@ -55,10 +55,12 @@ class AgentResponse(BaseModel):
     content: str
     tool_calls: List[ToolCall]
     model: str
+    stop_reason: Literal["completed", "max_iterations"]
     tokens_used: Optional[int]
     cost: Optional[float]
     prompt_tokens: Optional[int]
     completion_tokens: Optional[int]
+    cached_tokens: Optional[int]
 ```
 
 ---

@@ -16,13 +16,13 @@ class AgentHooks:
         """Fired once when agent.run / agent.stream is called."""
 
     def on_run_end(self, content: str) -> None:
-        """Fired when a non-streaming run completes (not called for stream/astream)."""
+        """Fired when a run completes, streamed or not."""
 
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None:
         """Fired before each LiteLLM completion call."""
 
     def on_llm_end(self, response: Any) -> None:
-        """Fired after each non-streaming LiteLLM completion call."""
+        """Fired after each LiteLLM completion; for a stream, with the assembled response."""
 
     def on_llm_error(self, error: Exception) -> None:
         """Fired when a LiteLLM call raises."""

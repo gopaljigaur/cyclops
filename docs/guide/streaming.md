@@ -42,12 +42,7 @@ Use `astream()` whenever you are already in an async context, such as inside a F
 
 ## stream(): with tools
 
-When the agent has tools configured, `stream()` works in two phases:
-
-1. **Tool loop** (non-streaming): the agent sends the message, detects tool calls, executes them, and repeats until there are no more tool calls.
-2. **Final answer** (streaming): once all tool work is done, the final response is streamed token by token.
-
-From the caller's perspective the API is identical: you just iterate the generator:
+When the agent has tools configured, `stream()` streams every completion of the run. Text the model writes before a tool call arrives as it is generated; the tool calls are assembled from the stream, the tools run, and the next completion streams in turn. From the caller's perspective the API is identical: you just iterate the generator:
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -64,14 +59,13 @@ def current_time() -> str:
 config = AgentConfig(model="groq/llama-3.1-8b-instant")
 agent = Agent(config, tools=[current_time])
 
-# Tokens start arriving only after the tool call completes.
 for token in agent.stream("What time is it, and what day of the week is today?"):
     print(token, end="", flush=True)
 print()
 ```
 
 /// note
-There will be a brief pause before tokens begin for tool-enabled agents: this is expected. The tool execution must finish before the final streaming call is made.
+Tokens pause while tools run. In naive tool mode the model's text may itself be a tool call, so the final answer arrives as one chunk.
 ///
 
 ## astream(): async with tools

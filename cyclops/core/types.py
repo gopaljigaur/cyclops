@@ -60,15 +60,22 @@ class AgentResponse(BaseModel):
         default_factory=list, description="Tools called during execution"
     )
     model: str = Field(description="Model used for generation")
+    stop_reason: Literal["completed", "max_iterations"] = Field(
+        default="completed",
+        description="Why the run stopped: a final answer, or max_iterations reached",
+    )
     tokens_used: Optional[int] = Field(
-        default=None, description="Number of tokens used"
+        default=None, description="Number of tokens used across the run"
     )
     cost: Optional[float] = Field(
-        default=None, description="Estimated cost of the API call"
+        default=None, description="Estimated cost of every completion in the run"
     )
     prompt_tokens: Optional[int] = Field(
         default=None, description="Number of prompt tokens used"
     )
     completion_tokens: Optional[int] = Field(
         default=None, description="Number of completion tokens used"
+    )
+    cached_tokens: Optional[int] = Field(
+        default=None, description="Number of prompt tokens served from cache"
     )
