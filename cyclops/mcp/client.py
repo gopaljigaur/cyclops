@@ -13,10 +13,7 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import (
-    MCP_DEFAULT_SSE_READ_TIMEOUT,
-    create_mcp_http_client,
-)
+from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import CONNECTION_CLOSED, CallToolResult, Tool
 
 from cyclops.mcp.tools import MCPClientTool
@@ -70,10 +67,8 @@ class _Connection:
                 yield read, write
         elif self.transport == "http":
             assert self.url
-            # A call holds its POST open until the result, so keep the long read.
-            timeout = httpx.Timeout(
-                self.connect_timeout, read=MCP_DEFAULT_SSE_READ_TIMEOUT
-            )
+            # A call holds its POST open until the result; call_timeout bounds it.
+            timeout = httpx.Timeout(self.connect_timeout, read=None)
             http = create_mcp_http_client(headers=self.headers, timeout=timeout)
             async with (
                 http,
@@ -185,7 +180,9 @@ class _Connection:
     async def _call(
         self, session: ClientSession, tool: str, arguments: Dict[str, Any]
     ) -> CallToolResult:
-        timeout = timedelta(seconds=self.call_timeout) if self.call_timeout else None
+        timeout = (
+            None if self.call_timeout is None else timedelta(seconds=self.call_timeout)
+        )
         return await session.call_tool(tool, arguments, read_timeout_seconds=timeout)
 
 

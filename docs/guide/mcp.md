@@ -35,7 +35,7 @@ await mcp.attach("legacy", url="https://example.com/sse", transport="sse")
 
 ### Timeouts and reconnects
 
-`connect_timeout` (default 30 seconds) bounds connecting, listing the server's tools, and opening HTTP connections; `call_timeout` (default none) bounds each tool call. A call that times out returns an error result.
+`connect_timeout` (default 30 seconds) bounds connecting, listing the server's tools, and opening HTTP connections; `call_timeout` (default none) bounds each tool call, and is the only limit on how long a streamable HTTP call may take. A call that times out returns an error result.
 
 When a session drops, the next call reconnects. A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run. Concurrent calls share one reconnect.
 
