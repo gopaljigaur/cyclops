@@ -1,6 +1,6 @@
 """Core agent framework components"""
 
-from cyclops.core.agent import Agent
+from cyclops.core.agent import Agent, RunHandle
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import (
     Deny,
@@ -28,6 +28,7 @@ __all__ = [
     "ToolCallContext",
     "ToolMiddleware",
     "Message",
+    "RunHandle",
     "RunResult",
     "ToolCall",
     "Usage",

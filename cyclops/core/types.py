@@ -22,7 +22,8 @@ class AgentConfig(BaseModel):
     router: Optional[Any] = None
     max_steps: int = Field(
         default=10,
-        description="Most LLM completions in one run, guard rounds included; at least one without tools",
+        ge=1,
+        description="Most LLM completions in one run, guard rounds included",
     )
     max_total_tokens: Optional[int] = Field(
         default=None, description="Most tokens one run may use, checked between steps"

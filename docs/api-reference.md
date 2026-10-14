@@ -21,7 +21,7 @@ class Agent:
     ): ...
 ```
 
-**Methods:** `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `reset`
+**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `reset`
 
 **Properties:** `messages`
 
@@ -50,6 +50,20 @@ class AgentConfig(BaseModel):
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
+```
+
+---
+
+### RunHandle
+
+Returned by `Agent.start(input_message, *, stream=True, response_model=None)`. See [Agents](guide/agents.md#start-steer-and-cancel-a-run).
+
+```python
+class RunHandle:
+    def __await__(self): ...            # await handle -> RunResult
+    def __aiter__(self): ...            # async for event in handle (once)
+    def steer(self, message: str) -> None: ...
+    def cancel(self) -> None: ...
 ```
 
 ---
