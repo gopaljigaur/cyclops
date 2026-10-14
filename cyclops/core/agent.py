@@ -35,27 +35,26 @@ from cyclops.core.middleware import (
     ToolCallContext,
     ToolMiddleware,
 )
+from cyclops.core.completion import (
+    _acompletion,
+    _build_messages,
+    _completion_kwargs,
+    _streamed_completion,
+    _system_prompt,
+    _usage,
+)
 from cyclops.core.providers import (
-    _every_deployment,
-    _marker_caching_supported,
-    _native_schema,
     _tool_message_images_supported,
     _tools_unsupported,
 )
 from cyclops.core.run_state import _Run
 from cyclops.core.session import Session
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
-from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
+from cyclops.core.types import AgentConfig, RunResult, ToolCall
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
 
-_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 _CANCELLED_RESULT = "Tool call cancelled."
-# Cache the system prompt (with the tools before it) and the conversation so far.
-_CACHE_POINTS = [
-    {"location": "message", "role": "system"},
-    {"location": "message", "index": -1},
-]
 
 
 def _split_images(content: Any) -> Tuple[str, List[Dict[str, Any]]]:
@@ -81,26 +80,6 @@ def _unfinished_text(task: asyncio.Future) -> str:
     if error is not None:
         return _failed_text(error)
     return _split_images(task.result()[1].to_message_content())[0]
-
-
-def _usage(response) -> Optional[Usage]:
-    """Tokens and cost of one completion; None if it reports no usage."""
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return None
-    details = getattr(usage, "prompt_tokens_details", None)
-    try:
-        cost: Optional[float] = litellm.completion_cost(completion_response=response)
-    except Exception:
-        # LiteLLM has no pricing for this model.
-        cost = None
-    return Usage(
-        prompt_tokens=usage.prompt_tokens or 0,
-        completion_tokens=usage.completion_tokens or 0,
-        cached_tokens=getattr(details, "cached_tokens", None) or 0,
-        total_tokens=usage.total_tokens or 0,
-        cost=cost,
-    )
 
 
 class _HooksMiddleware(ToolMiddleware):
@@ -418,34 +397,8 @@ class Agent:
         naive = mode == "naive"
         # Naive mode never streams deltas: the text may be a tool call.
         streamed = stream and not naive
-        kwargs: Dict[str, Any] = {
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-            **self.config.completion_kwargs,
-        }
-        if self.config.prompt_caching and _marker_caching_supported(self.config):
-            kwargs["cache_control_injection_points"] = _CACHE_POINTS
-        # With tools only where LiteLLM sends the schema natively: elsewhere it
-        # may emulate it with a forced tool call, which blocks the agent's tools.
-        if response_model is not None and (
-            (
-                mode == "none"
-                and _every_deployment(self.config, litellm.supports_response_schema)
-            )
-            or (mode == "native" and _every_deployment(self.config, _native_schema))
-        ):
-            kwargs["response_format"] = response_model
-        system_prompt = self.config.system_prompt
-        if self.skills:
-            system_prompt = (
-                system_prompt or _DEFAULT_SYSTEM_PROMPT
-            ) + self.skills.prompt()
-        if mode == "native":
-            kwargs["tools"] = self._get_tools_schema()
-        if naive:
-            system_prompt = (
-                system_prompt or _DEFAULT_SYSTEM_PROMPT
-            ) + self._build_tools_prompt()
+        kwargs = _completion_kwargs(self.config, self.tools, mode, response_model)
+        system_prompt = _system_prompt(self.config, self.skills, self.tools, mode)
 
         # Limits count what is known, even once the reported totals are not.
         spent_tokens, spent_cost = 0, 0.0
@@ -467,26 +420,14 @@ class Agent:
             run.history += [
                 {"role": "user", "content": m} for m in run.steering[:steered]
             ]
-            messages = self._build_messages(run.history, system_prompt)
+            messages = _build_messages(run.history, system_prompt)
             response: Any
             if streamed:
-                chunks = []
-                async with aclosing(
-                    self._astream_completion(messages, kwargs)
-                ) as completion:
-                    async for chunk in completion:
-                        chunks.append(chunk)
-                        delta = chunk.choices[0].delta if chunk.choices else None
-                        # LiteLLM sets reasoning_content on a delta only when present.
-                        reasoning = getattr(delta, "reasoning_content", None)
-                        if reasoning:
-                            run.emit(ReasoningDelta(text=reasoning))
-                        if delta and delta.content:
-                            run.emit(TextDelta(text=delta.content))
-                        await run.taken()
-                response = litellm.stream_chunk_builder(chunks, messages=messages)
+                response = await _streamed_completion(
+                    self.config, messages, kwargs, run
+                )
             else:
-                response = await self._acompletion(messages=messages, **kwargs)
+                response = await _acompletion(self.config, messages=messages, **kwargs)
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
             del run.steering[:steered]
@@ -780,40 +721,6 @@ class Agent:
         )
 
     # ------------------------------------------------------------------
-    # Message building
-    # ------------------------------------------------------------------
-
-    def _build_messages(
-        self,
-        history: List[Dict[str, Any]],
-        system_prompt_override: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Build message list for LiteLLM, optionally prepending a system prompt."""
-        messages = list(history)
-        sys = system_prompt_override or self.config.system_prompt
-        if sys:
-            messages = [{"role": "system", "content": sys}] + messages
-        return messages
-
-    # ------------------------------------------------------------------
-    # Tool schema helpers
-    # ------------------------------------------------------------------
-
-    def _get_tools_schema(self) -> List[Dict[str, Any]]:
-        return [self._tool_to_openai_format(t) for t in self.tools]
-
-    def _tool_to_openai_format(self, tool) -> Dict[str, Any]:
-        """Convert a Tool to OpenAI function-calling format."""
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.definition.to_json_schema(),
-            },
-        }
-
-    # ------------------------------------------------------------------
     # Tool mode detection
     # ------------------------------------------------------------------
 
@@ -823,28 +730,6 @@ class Agent:
         if self.config.tool_mode in ("native", "naive"):
             return self.config.tool_mode
         return self._detected_tool_mode or "native"
-
-    # ------------------------------------------------------------------
-    # Naive tool prompt helpers
-    # ------------------------------------------------------------------
-
-    def _build_tools_prompt(self) -> str:
-        if not self.tools:
-            return ""
-
-        tools_desc = "\n\nYou have access to the following tools:\n\n"
-        for tool in self.tools:
-            tools_desc += f"- {tool.name}: {tool.description}\n"
-            if tool.definition.parameters:
-                tools_desc += "  Parameters:\n"
-                for param in tool.definition.parameters.values():
-                    tools_desc += f"    - {param.name} ({param.type}): {param.description or 'No description'}\n"
-
-        tools_desc += (
-            '\nTo use a tool, respond with JSON: {"tool": "tool_name", "args": {...}}\n'
-        )
-        tools_desc += "After using a tool, you'll receive the result and can provide a final answer.\n"
-        return tools_desc
 
     def _parse_naive_tool_call(self, content: str):
         try:
@@ -873,38 +758,3 @@ class Agent:
                         pass
                     break
         return None
-
-    # ------------------------------------------------------------------
-    # LiteLLM wrappers
-    # ------------------------------------------------------------------
-
-    async def _astream_completion(self, messages, kwargs) -> AsyncGenerator[Any, None]:
-        response = await self._acompletion(
-            messages=messages,
-            stream=True,
-            stream_options={"include_usage": True},
-            **kwargs,
-        )
-        try:
-            async for chunk in response:
-                yield chunk
-        except Exception as e:
-            if self.config.hooks:
-                self.config.hooks.on_llm_error(e)
-            raise
-        finally:
-            await response.aclose()
-
-    async def _acompletion(self, **kwargs):
-        if self.config.hooks:
-            self.config.hooks.on_llm_start(kwargs.get("messages", []))
-        try:
-            if self.config.router:
-                return await self.config.router.acompletion(
-                    model=self.config.model, **kwargs
-                )
-            return await litellm.acompletion(model=self.config.model, **kwargs)
-        except Exception as e:
-            if self.config.hooks:
-                self.config.hooks.on_llm_error(e)
-            raise
