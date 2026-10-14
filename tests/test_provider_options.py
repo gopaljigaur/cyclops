@@ -329,7 +329,7 @@ def test_prompt_caching_marks_system_prompt_and_latest_message(model):
 )
 def test_prompt_caching_sends_no_markers_where_they_do_not_cache(model):
     """Gemini would create a billed cache resource, OpenAI caches without markers
-    and these Bedrock models reject cache points."""
+    and LiteLLM lists these Bedrock models without prompt caching."""
     mock = AsyncMock(return_value=_response("hi"))
     with patch("litellm.acompletion", new=mock):
         Agent(AgentConfig(model=model, prompt_caching=True)).run("hello")

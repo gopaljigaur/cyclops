@@ -66,7 +66,7 @@ def _caches_at_markers(model: str, provider: str) -> bool:
         marker_provider = model.startswith("claude")
     else:
         marker_provider = provider in _CACHE_MARKER_PROVIDERS
-    # Bedrock adds cache points for every model, also those that reject them.
+    # LiteLLM adds Bedrock cache points for every model.
     return marker_provider and supports_prompt_caching(
         model=model, custom_llm_provider=provider
     )
