@@ -6,7 +6,7 @@ from abc import ABC
 from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 from docstring_parser import parse as parse_docstring
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from cyclops.toolkit.types import ToolAnnotations, ToolDefinition, ToolParameter
 
@@ -25,7 +25,8 @@ def _args_model(name: str, func: Callable) -> Tuple[type[BaseModel], Dict[str, s
     fields: Dict[str, Any] = {}
     renames: Dict[str, str] = {}
     extra: Literal["allow", "forbid"] = "forbid"
-    for i, param in enumerate(inspect.signature(func).parameters.values()):
+    params = inspect.signature(func).parameters
+    for i, param in enumerate(params.values()):
         if param.kind is param.VAR_KEYWORD:
             extra = "allow"
         if param.name == "self" or param.kind in (
@@ -41,6 +42,8 @@ def _args_model(name: str, func: Callable) -> Tuple[type[BaseModel], Dict[str, s
         # that shadow BaseModel attributes, so those go through an alias
         if param.name.startswith("_") or hasattr(BaseModel, param.name):
             field_name = f"param_{i}"
+            while field_name in params or field_name in fields:
+                field_name += "_"
             renames[field_name] = param.name
             field_args["alias"] = param.name
         # An explicit description=None would drop one set through Annotated
@@ -144,7 +147,22 @@ class Tool(BaseTool):
         # Validation turns nested objects into the declared models and aliases
         # into parameter names; extra arguments pass only with **kwargs
         validated = self._args_model.model_validate(kwargs)
-        kwargs = {self._renames.get(k, k): v for k, v in validated}
+        kwargs = {
+            self._renames.get(name, name): getattr(validated, name)
+            for name in self._args_model.model_fields
+        }
+        extra = validated.model_extra or {}
+        # An extra named like a declared parameter would replace its value
+        clashes = [k for k in extra if k in kwargs]
+        if clashes:
+            raise ValidationError.from_exception_data(
+                self.name,
+                [
+                    {"type": "extra_forbidden", "loc": (k,), "input": extra[k]}
+                    for k in clashes
+                ],
+            )
+        kwargs.update(extra)
         if self._is_async:
             return await self.func(**kwargs)
         # A blocking sync function must not stall the event loop

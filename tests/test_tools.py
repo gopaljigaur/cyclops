@@ -228,6 +228,36 @@ class TestParameterSchema:
         assert set(f.definition.parameters) == {"_private", "schema", "json"}
         assert asyncio.run(f.execute(_private=1, schema="s")) == "1sj"
 
+    def test_internal_field_names_avoid_real_parameters(self):
+        @tool
+        def f(_a: int, param_0: str, param_2: str, _b: int) -> str:
+            """F."""
+            return f"{_a}{param_0}{param_2}{_b}"
+
+        props = f.definition.to_json_schema()["properties"]
+        assert set(props) == {"_a", "param_0", "param_2", "_b"}
+        result = asyncio.run(f.execute(_a=1, param_0="x", param_2="y", _b=2))
+        assert result == "1xy2"
+
+    def test_extra_arguments_keep_their_names(self):
+        @tool
+        def f(_private: int, **rest) -> dict:
+            """F."""
+            return {"_private": _private, **rest}
+
+        result = asyncio.run(f.execute(_private=1, param_0="x"))
+        assert result == {"_private": 1, "param_0": "x"}
+
+    def test_extra_argument_cannot_replace_aliased_parameter(self):
+        @tool
+        def f(n: Annotated[int, Field(alias="value")], **rest) -> int:
+            """F."""
+            return n
+
+        assert asyncio.run(f.execute(value=1)) == 1
+        with pytest.raises(ValidationError):
+            asyncio.run(f.execute(value=1, n="bad"))
+
     def test_execute_rejects_invalid_arguments(self):
         @tool
         def f(n: int) -> int:
