@@ -28,6 +28,14 @@ Shows concurrent async usage: four independent questions are dispatched with `as
 
 ---
 
+## skills_example.py
+
+**Path:** `examples/skills_example.py`
+
+Discovers the `release-notes` skill in `examples/skills/` and asks for release notes. The system prompt lists only the skill's name and description; the model calls `load_skill` for the instructions and again for the `template.md` file next to them. Prints the answer and the tool calls the agent made.
+
+---
+
 ## memory_persistence.py
 
 **Path:** `examples/memory_persistence.py`
