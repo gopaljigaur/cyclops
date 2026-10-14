@@ -1,5 +1,6 @@
 """Tests for the Agent class"""
 
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -27,7 +28,7 @@ def _make_config(model: str = "gpt-3.5-turbo", **kwargs) -> AgentConfig:
     return AgentConfig(model=model, **kwargs)
 
 
-def _make_completion_response(content: str, tool_calls=None):
+def _make_completion_response(content: Optional[str], tool_calls=None):
     """Build a minimal mock litellm completion response."""
     msg = MagicMock(reasoning_content=None, thinking_blocks=None)
     msg.content = content
