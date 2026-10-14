@@ -25,8 +25,8 @@ class Agent:
 |---|---|---|
 | `run` | `run(input_message: str, response_model: Optional[Type] = None) -> Any` | Run synchronously. Returns `str` or a Pydantic model instance. |
 | `arun` | `arun(input_message: str, response_model: Optional[Type] = None) -> Any` | Run asynchronously. |
-| `run_with_response` | `run_with_response(input_message: str) -> AgentResponse` | Run synchronously and return full metadata. |
-| `arun_with_response` | `arun_with_response(input_message: str) -> AgentResponse` | Run asynchronously and return full metadata. |
+| `run_with_response` | `run_with_response(input_message: str) -> RunResult` | Run synchronously; return the result, stop reason, usage and cost. |
+| `arun_with_response` | `arun_with_response(input_message: str) -> RunResult` | Run asynchronously; return the result, stop reason, usage and cost. |
 | `stream` | `stream(input_message: str) -> Iterator[str]` | Sync token stream. True streaming for no-tools agents; tool loop then stream for tool agents. |
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
 | `reset` | `reset() -> None` | Clear conversation history. |
@@ -51,7 +51,9 @@ class AgentConfig(BaseModel):
     system_prompt: Optional[str] = None
     tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None  # LiteLLM Router
-    max_iterations: int = 10
+    max_steps: int = 10            # former name max_iterations is accepted
+    max_total_tokens: Optional[int] = None
+    max_cost: Optional[float] = None   # USD
     hooks: Optional[AgentHooks] = None
 ```
 
@@ -63,41 +65,45 @@ class AgentConfig(BaseModel):
 | `system_prompt` | `None` | Prepended to every conversation. |
 | `tool_mode` | `"auto"` | `"auto"` auto-detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based fallback. |
 | `router` | `None` | Optional LiteLLM Router for fallback and load balancing. |
-| `max_iterations` | `10` | Maximum tool-call rounds per run. |
+| `max_steps` | `10` | Most LLM completions per run. `max_iterations` is accepted as the former name. |
+| `max_total_tokens` | `None` | Most tokens per run, checked between steps. |
+| `max_cost` | `None` | Most USD per run, checked between steps. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
 
 ---
 
-### AgentResponse
+### RunResult
 
-Returned by `run_with_response()` and `arun_with_response()`.
+Returned by `run_with_response()` and `arun_with_response()`. See [Cost Tracking](/guides/cost-tracking/) for the fields.
 
 ```python
-class AgentResponse(BaseModel):
+class RunResult(BaseModel):
     content: str
     tool_calls: List[ToolCall]
     model: str
-    tokens_used: Optional[int]
-    cost: Optional[float]
-    prompt_tokens: Optional[int]
-    completion_tokens: Optional[int]
-```
+    stop_reason: Literal["completed", "max_steps", "budget", "cancelled", "error"]
+    steps: int
+    usage: Optional[Usage]
+    error: Optional[Exception]
+    # Read-only properties over usage:
+    tokens_used, cost, prompt_tokens, completion_tokens, cached_tokens
 
-| Field | Type | Description |
-|---|---|---|
-| `content` | `str` | The final text response. |
-| `tool_calls` | `List[ToolCall]` | Every tool call made during the run. |
-| `model` | `str` | Model identifier used. |
-| `tokens_used` | `int` or `None` | Total tokens consumed. |
-| `prompt_tokens` | `int` or `None` | Tokens in the prompt/context. |
-| `completion_tokens` | `int` or `None` | Tokens in the generated response. |
-| `cost` | `float` or `None` | Estimated USD cost. `None` for models not in LiteLLM's pricing table. |
+AgentResponse = RunResult  # former name
+
+
+class Usage(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost: Optional[float]  # None when LiteLLM can't price a completion
+```
 
 ---
 
 ### ToolCall
 
-Records a single tool invocation within an `AgentResponse`.
+Records a single tool invocation within a `RunResult`.
 
 ```python
 class ToolCall(BaseModel):

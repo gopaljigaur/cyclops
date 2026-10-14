@@ -2,7 +2,7 @@
 
 ## run_with_response() and arun_with_response()
 
-Instead of returning a plain string, these methods return an `AgentResponse` that includes the text reply, every tool call made, and token/cost totals summed over every LiteLLM completion in the run.
+Instead of returning a plain string, these methods return a `RunResult` that includes the text reply, why the run stopped, every tool call made, and token/cost totals summed over every LiteLLM completion in the run.
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -33,19 +33,26 @@ async def main():
 asyncio.run(main())
 ```
 
-## AgentResponse fields
+## RunResult fields
+
+`RunResult` was called `AgentResponse` before; that name still works.
 
 | Field | Type | Description |
 |---|---|---|
-| `content` | `str` | The final text response from the agent. |
+| `content` | `str` | The final answer. Empty unless the run completed. |
 | `tool_calls` | `List[ToolCall]` | Every tool call made during the run, in order. |
 | `model` | `str` | The model identifier used (from `AgentConfig.model`). |
-| `stop_reason` | `str` | `"completed"` for a final answer, `"max_iterations"` when the run hit `AgentConfig.max_iterations` (then `content` is empty). |
-| `tokens_used` | `int \| None` | Total tokens consumed (prompt + completion). `None` if unavailable. |
-| `prompt_tokens` | `int \| None` | Tokens in the prompt/context sent to the model. |
-| `completion_tokens` | `int \| None` | Tokens in the generated response. |
-| `cached_tokens` | `int \| None` | Prompt tokens the provider served from its cache. |
-| `cost` | `float \| None` | Estimated USD cost computed by LiteLLM. `None` if the model is not in LiteLLM's pricing table. |
+| `stop_reason` | `str` | `"completed"` for a final answer, `"max_steps"` or `"budget"` when the run reached a [limit](agents.md#step-and-budget-limits), `"error"` when it failed. |
+| `steps` | `int` | LLM completions made in the run. |
+| `usage` | `Usage \| None` | Tokens and cost summed over every completion in the run. `None` if any completion reported no usage. |
+| `error` | `Exception \| None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |
+| `tokens_used` | `int \| None` | Total tokens (prompt + completion), from `usage`. |
+| `prompt_tokens` | `int \| None` | Tokens in the prompt/context sent to the model, from `usage`. |
+| `completion_tokens` | `int \| None` | Tokens in the generated response, from `usage`. |
+| `cached_tokens` | `int \| None` | Prompt tokens the provider served from its cache, from `usage`. |
+| `cost` | `float \| None` | Estimated USD cost computed by LiteLLM, from `usage`. `None` if LiteLLM can't price a completion of the run. |
+
+`tokens_used`, `prompt_tokens`, `completion_tokens`, `cached_tokens` and `cost` are read-only properties over `usage`.
 
 Each `ToolCall` in `tool_calls` has:
 
@@ -56,6 +63,16 @@ Each `ToolCall` in `tool_calls` has:
 | `arguments` | `dict` | Arguments the model passed to the tool. |
 | `result` | `Any \| None` | The value returned by the tool. |
 
+## Failed runs
+
+`run_with_response()` and `arun_with_response()` don't raise when the run fails. They return a `RunResult` with `stop_reason="error"`, the exception in `error`, and the usage of the steps that finished, so a failed run's cost is still known. `run()` and `arun()` raise the exception.
+
+```python
+result = agent.run_with_response("Summarise this report.")
+if result.stop_reason == "error":
+    print(f"Failed after {result.steps} steps: {result.error}, cost ${result.cost}")
+```
+
 ## Logging costs over time
 
 A common production pattern is to accumulate cost and token data across many agent runs:
@@ -65,16 +82,16 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import List
 from cyclops import Agent, AgentConfig
-from cyclops.core.types import AgentResponse
+from cyclops import RunResult
 
 
 @dataclass
 class UsageTracker:
     total_cost: float = 0.0
     total_tokens: int = 0
-    runs: List[AgentResponse] = field(default_factory=list)
+    runs: List[RunResult] = field(default_factory=list)
 
-    def record(self, response: AgentResponse) -> None:
+    def record(self, response: RunResult) -> None:
         self.runs.append(response)
         self.total_cost += response.cost or 0.0
         self.total_tokens += response.tokens_used or 0

@@ -11,7 +11,7 @@ Scenario: A research agent that must:
   5. format_report()   : assemble results into a formatted summary
 
 The agent is given a high-level goal and must chain these tools itself.
-max_iterations is set so the loop does not run forever.
+max_steps is set so the loop does not run forever.
 """
 
 import asyncio
@@ -252,7 +252,7 @@ def demo_sync_tool_loop() -> None:
             "your last tool call before giving your final answer."
         ),
         temperature=0.2,
-        max_iterations=12,  # enough headroom for a multi-step chain
+        max_steps=12,  # enough headroom for a multi-step chain
     )
 
     all_tools = [
@@ -302,7 +302,7 @@ async def demo_async_tool_loop() -> None:
             "compute_stats on the citation data, and end with format_report."
         ),
         temperature=0.2,
-        max_iterations=10,
+        max_steps=10,
     )
 
     all_tools = [

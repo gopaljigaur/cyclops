@@ -131,7 +131,7 @@ def demo_stream_with_tools() -> None:
         model=MODEL,
         system_prompt="You are a helpful financial assistant.",
         temperature=0.3,
-        max_iterations=5,
+        max_steps=5,
     )
     agent = Agent(config, tools=[get_stock_price, calculate_portfolio_value])
 
