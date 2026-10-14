@@ -15,7 +15,7 @@ from litellm.types.utils import (
     StreamingChoices,
 )
 
-from cyclops.core.agent import Agent
+from cyclops.core.agent import Agent, _run_coroutine_sync
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.types import AgentConfig
 
@@ -1076,6 +1076,9 @@ def test_interrupted_sync_run_cancels_the_run():
     agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow", slow)])
     tc = _make_tool_call("tc_1", "slow", "{}")
     response = _make_completion_response(content=None, tool_calls=[tc])
+    # Start the shared loop first, so its thread's start-up isn't the wait
+    # that gets interrupted.
+    _run_coroutine_sync(asyncio.sleep, 0)
 
     with (
         patch("litellm.acompletion", new=AsyncMock(return_value=response)),
