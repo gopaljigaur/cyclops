@@ -34,10 +34,10 @@ def _run_coroutine_sync(coro) -> Any:
     """
     try:
         asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
     except RuntimeError:
         return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
@@ -254,14 +254,18 @@ class Agent:
 
     async def _run_native_tool_calls(self, msg, run: _Run) -> None:
         self._append_tool_call_message(msg)
+        tasks = [
+            asyncio.ensure_future(self._execute_tool_call(tc)) for tc in msg.tool_calls
+        ]
         try:
-            results = await asyncio.gather(
-                *[self._execute_tool_call(tc) for tc in msg.tool_calls]
-            )
+            results = await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             # Keep the transcript valid: every tool call needs a result.
-            for tc in msg.tool_calls:
-                self._append_tool_result(tc, _CANCELLED_RESULT)
+            for tc, task in zip(msg.tool_calls, tasks):
+                done = task.done() and not task.cancelled()
+                self._append_tool_result(
+                    tc, task.result()[1] if done else _CANCELLED_RESULT
+                )
             raise
         for tc, (args, result) in zip(msg.tool_calls, results):
             run.tool_calls.append(
@@ -276,13 +280,15 @@ class Agent:
     async def _execute_tool_call(self, tool_call) -> Tuple[Dict[str, Any], str]:
         """Parse a native tool call's arguments and run it. Returns (args, result)."""
         name = tool_call.function.name
-        raw = tool_call.function.arguments
-        if not isinstance(raw, str):
-            return raw, await self._call_tool(name, raw)
-        try:
-            args = json.loads(raw) if raw else {}
-        except json.JSONDecodeError as e:
-            return {}, f"Error: arguments for {name} are not valid JSON: {e}"
+        args = tool_call.function.arguments
+        if isinstance(args, str):
+            # Some providers send "" for a call without arguments.
+            try:
+                args = json.loads(args) if args else {}
+            except json.JSONDecodeError as e:
+                return {}, f"Error: arguments for {name} are not valid JSON: {e}"
+        if not isinstance(args, dict):
+            return {}, f"Error: arguments for {name} must be a JSON object"
         return args, await self._call_tool(name, args)
 
     async def _call_tool(self, name: str, args: Dict[str, Any]) -> str:
@@ -298,14 +304,14 @@ class Agent:
                 result = await tool.execute(**args)
             else:
                 result = await asyncio.to_thread(tool.execute, **args)
+            result_str = str(result)
+            if hooks:
+                hooks.on_tool_end(name, args, result_str)
+            return result_str
         except Exception as e:
             if hooks:
                 hooks.on_tool_error(name, args, e)
             return f"Error executing {name}: {str(e)}"
-        result_str = str(result)
-        if hooks:
-            hooks.on_tool_end(name, args, result_str)
-        return result_str
 
     # ------------------------------------------------------------------
     # History helpers

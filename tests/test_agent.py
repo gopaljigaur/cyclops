@@ -388,6 +388,22 @@ def test_run_inside_running_loop():
         assert asyncio.run(caller()) == "ok"
 
 
+def test_run_inside_running_loop_keeps_runtime_error():
+    """A RuntimeError from the run is raised as is when a loop is already running."""
+    import asyncio
+
+    agent = Agent(config=_make_config())
+
+    async def caller():
+        return agent.run("hi")
+
+    with patch(
+        "litellm.acompletion", new=AsyncMock(side_effect=RuntimeError("provider down"))
+    ):
+        with pytest.raises(RuntimeError, match="provider down"):
+            asyncio.run(caller())
+
+
 def _unsupported_tools_error():
     return litellm.UnsupportedParamsError(
         message="does not support parameters: ['tools']",
@@ -468,6 +484,46 @@ def test_invalid_tool_arguments_return_parse_error():
     assert "add are not valid JSON" in agent.messages[2]["content"]
 
 
+def test_non_object_tool_arguments_return_error():
+    """JSON arguments that are not an object get an error result, not a crash."""
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    tc = _make_tool_call("tc_1", "add", "[1, 2]")
+    responses = [
+        _make_completion_response(content=None, tool_calls=[tc]),
+        _make_completion_response(content="Sorry."),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        result = agent.run_with_response("add")
+
+    assert (
+        agent.messages[2]["content"] == "Error: arguments for add must be a JSON object"
+    )
+    assert result.tool_calls[0].arguments == {}
+
+
+def test_failing_end_hook_becomes_tool_error():
+    """An on_tool_end hook that raises yields a tool error and a valid transcript."""
+
+    class FailingHooks(AgentHooks):
+        def on_tool_end(self, tool_name, args, result):
+            raise ValueError("hook broke")
+
+    agent = Agent(
+        config=_make_config(hooks=FailingHooks()), tools=[_make_simple_tool()]
+    )
+    tc = _make_tool_call("tc_1", "add", '{"a": 1, "b": 2}')
+    responses = [
+        _make_completion_response(content=None, tool_calls=[tc]),
+        _make_completion_response(content="ok"),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        assert agent.run("add") == "ok"
+
+    assert agent.messages[2]["content"] == "Error executing add: hook broke"
+
+
 def test_max_iterations_sets_stop_reason():
     """Hitting max_iterations is a stop reason, not answer text."""
     agent = Agent(config=_make_config(max_iterations=2), tools=[_make_simple_tool()])
@@ -497,14 +553,20 @@ async def test_cancelled_run_closes_pending_tool_calls():
 
     started = asyncio.Event()
 
+    async def fast() -> str:
+        return "fast done"
+
     async def slow() -> str:
         started.set()
         await asyncio.sleep(10)
         return "done"
 
-    agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow tool", slow)])
+    agent = Agent(
+        config=_make_config(),
+        tools=[Tool("fast", "Fast tool", fast), Tool("slow", "Slow tool", slow)],
+    )
     calls = [
-        _make_tool_call("tc_1", "slow", "{}"),
+        _make_tool_call("tc_1", "fast", "{}"),
         _make_tool_call("tc_2", "slow", "{}"),
     ]
     response = _make_completion_response(content=None, tool_calls=calls)
@@ -517,8 +579,10 @@ async def test_cancelled_run_closes_pending_tool_calls():
             await task
 
     tool_messages = [m for m in agent.messages if m["role"] == "tool"]
-    assert [m["tool_call_id"] for m in tool_messages] == ["tc_1", "tc_2"]
-    assert all(m["content"] == "Tool call cancelled." for m in tool_messages)
+    assert [(m["tool_call_id"], m["content"]) for m in tool_messages] == [
+        ("tc_1", "fast done"),
+        ("tc_2", "Tool call cancelled."),
+    ]
 
 
 # ---------------------------------------------------------------------------
