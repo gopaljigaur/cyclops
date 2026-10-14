@@ -28,7 +28,7 @@ config = AgentConfig(
 | `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
-| `prompt_caching` | `bool` | `False` | Mark cache breakpoints for providers with prompt caching. See [Prompt caching](#prompt-caching). |
+| `prompt_caching` | `bool` | `False` | Mark cache breakpoints for Anthropic, Bedrock and Claude on Vertex AI. See [Prompt caching](#prompt-caching). |
 
 ## Constructing an Agent
 
@@ -172,7 +172,9 @@ for msg in agent.messages:
 
 ## Prompt caching
 
-`prompt_caching=True` asks LiteLLM to mark two cache breakpoints on every call: the system prompt, which caches the tool definitions before it too, and the latest message, which caches the conversation so far. Each tool round then reads the earlier prefix from the cache. LiteLLM drops the markers for providers that cache automatically (such as OpenAI), so the flag is safe to leave on when switching models.
+`prompt_caching=True` asks LiteLLM to mark two cache breakpoints on every call: the system prompt, which caches the tool definitions before it too, and the latest message, which caches the conversation so far. Each tool round then reads the earlier prefix from the cache.
+
+The markers are sent only to providers that cache at them: Anthropic, Bedrock, and Claude models on Vertex AI. Through a `router`, every deployment of the model has to be one of these. Other models get no markers, so the flag is safe to leave on when switching models: OpenAI caches long prefixes without markers, and Gemini would turn them into billed explicit cache resources.
 
 ```python
 config = AgentConfig(

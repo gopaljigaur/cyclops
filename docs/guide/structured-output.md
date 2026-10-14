@@ -35,7 +35,7 @@ The return type is the Pydantic model instance, not a string. Your IDE will see 
 
 When the agent has no tools and LiteLLM reports that the model supports response schemas (`litellm.supports_response_schema`), Cyclops sends the model's JSON schema as `response_format`, so the provider constrains the reply to it. Through a `router`, every deployment of the model has to support it.
 
-Agents with tools send no schema: some providers implement it as a forced tool call, which would keep the model from calling the agent's tools. Ask for JSON in the system prompt instead.
+Agents with tools send no schema, even to providers with native structured output. LiteLLM implements the schema for some models (such as Claude 3.5 Sonnet) as a forced tool call, which would keep the model from calling the agent's tools, and LiteLLM does not report which models do this. Tool agents only validate the reply, so ask for JSON in the system prompt.
 
 Either way the reply is passed to `response_model.model_validate_json(content)`. If the JSON is valid the instance is returned; if it is invalid a `pydantic.ValidationError` is raised.
 
