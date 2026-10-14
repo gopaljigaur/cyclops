@@ -151,7 +151,7 @@ class ErrorHooks(AgentHooks):
     def on_llm_error(self, error: Exception) -> None:
         logger.error("LLM call failed: %s", error)
 
-    def on_tool_error(self, tool_name: str, args: dict, error: Exception) -> None:
+    def on_tool_error(self, tool_name: str, args: dict, error: BaseException) -> None:
         logger.error("Tool %r failed with args %r: %s", tool_name, args, error)
 
 

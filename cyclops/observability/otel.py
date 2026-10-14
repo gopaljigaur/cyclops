@@ -1,42 +1,68 @@
 from __future__ import annotations
 
-import time
-from typing import Any
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace
-from opentelemetry.trace import Span
+from opentelemetry.context import Context
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
-from cyclops.core.hooks import AgentHooks
+from cyclops.core.hooks import AgentHooks, current_tool_call_id
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
+
+
+@dataclass(frozen=True)
+class _Frame:
+    """An open span. Frames form an immutable stack per context, so tasks never share one."""
+
+    span: Span
+    parent: _Frame | None
+    token: Token[Context] | None
+    run: bool
+
+
+# Module level: contexts keep strong references to their variables.
+_frame: ContextVar[_Frame | None] = ContextVar("cyclops_telemetry_frame", default=None)
 
 
 class TelemetryHooks(AgentHooks):
     """AgentHooks that emits OpenTelemetry spans for every agent event.
 
-    Use the factory methods for zero-config setup:
+    One instance can serve many concurrent runs: span state lives in a
+    ContextVar, so each thread or asyncio task sees only its own run.
+    Span names and ``gen_ai.*`` attributes follow the OpenTelemetry GenAI
+    semantic conventions in part: the hooks do not get the request model or
+    provider, so ``gen_ai.request.model`` and ``gen_ai.provider.name`` are not set.
 
         hooks=TelemetryHooks.console()                          # print spans to stdout
         hooks=TelemetryHooks.otlp("http://localhost:4317")      # send to Jaeger / Tempo / Datadog
+        hooks=TelemetryHooks(tracer_provider=provider)          # your own provider
 
-    Or configure an OTel TracerProvider externally and use TelemetryHooks() directly.
+    Without a provider, spans go to the global one. Flushing is left to the
+    application (``hooks.flush()`` for the factories).
 
-    Span hierarchy per agent.run():
-        agent.run
-        ├── llm.completion   (model, prompt_tokens, completion_tokens, latency_ms)
-        ├── tool.<name>      (tool.name, tool.args_count, tool.result.length)
+    Span hierarchy per agent.run(), named after the GenAI semantic conventions:
+        invoke_agent
+        ├── chat
+        ├── execute_tool <name>
         └── ...
     """
 
-    def __init__(self, tracer_name: str = "cyclops") -> None:
-        self._tracer = trace.get_tracer(tracer_name)
-        self._provider: Any = None
-        self._root_span: Span | None = None
-        self._llm_span: Span | None = None
-        self._llm_start_ns: int = 0
-        self._tool_span_stack: list[tuple[str, Span]] = []
+    def __init__(
+        self,
+        tracer_name: str = "cyclops",
+        tracer_provider: trace.TracerProvider | None = None,
+    ) -> None:
+        self._tracer = trace.get_tracer(tracer_name, tracer_provider=tracer_provider)
+        self._provider: SDKTracerProvider | None = None
 
     @classmethod
-    def console(cls, tracer_name: str = "cyclops") -> "TelemetryHooks":
-        """Return an TelemetryHooks instance wired to a console (stdout) exporter."""
+    def console(cls, tracer_name: str = "cyclops") -> TelemetryHooks:
+        """Return a TelemetryHooks instance with its own console (stdout) exporter."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
@@ -45,8 +71,7 @@ class TelemetryHooks(AgentHooks):
 
         provider = TracerProvider()
         provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-        trace.set_tracer_provider(provider)
-        instance = cls(tracer_name=tracer_name)
+        instance = cls(tracer_name=tracer_name, tracer_provider=provider)
         instance._provider = provider
         return instance
 
@@ -56,8 +81,8 @@ class TelemetryHooks(AgentHooks):
         endpoint: str = "http://localhost:4317",
         tracer_name: str = "cyclops",
         **exporter_kwargs: Any,
-    ) -> "TelemetryHooks":
-        """Return an TelemetryHooks instance wired to an OTLP gRPC exporter.
+    ) -> TelemetryHooks:
+        """Return a TelemetryHooks instance with its own OTLP gRPC exporter.
 
         Requires: uv add opentelemetry-exporter-otlp-proto-grpc
         """
@@ -71,107 +96,152 @@ class TelemetryHooks(AgentHooks):
         provider.add_span_processor(
             BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, **exporter_kwargs))
         )
-        trace.set_tracer_provider(provider)
-        instance = cls(tracer_name=tracer_name)
+        instance = cls(tracer_name=tracer_name, tracer_provider=provider)
         instance._provider = provider
         return instance
 
     def flush(self) -> None:
-        """Force-flush pending spans. Call after agent.run() when using factory methods."""
+        """Force-flush the provider built by console() or otlp()."""
         if self._provider is not None:
             self._provider.force_flush()
 
-    def _root_ctx(self) -> Any:
-        if self._root_span is not None:
-            return trace.set_span_in_context(self._root_span)
-        return None
+    # ── Span stack ────────────────────────────────────────────────────────────
+
+    def _push(
+        self,
+        name: str,
+        kind: SpanKind,
+        attributes: dict[str, Any],
+        run: bool = False,
+        attach: bool = False,
+    ) -> None:
+        parent = _frame.get()
+        # A run's parent is the current OTel span: the caller's, or a tool span for a nested run.
+        ctx = trace.set_span_in_context(parent.span) if parent and not run else None
+        span = self._tracer.start_span(
+            name, context=ctx, kind=kind, attributes=attributes
+        )
+        # Only tool spans become current. A chat span may be a stream, whose
+        # generator runs in the consumer's context and may never be closed.
+        token = otel_context.attach(trace.set_span_in_context(span)) if attach else None
+        _frame.set(_Frame(span, parent, token, run))
+
+    def _pop(self) -> _Frame | None:
+        frame = _frame.get()
+        if frame is None:
+            return None
+        if frame.token is not None:
+            otel_context.detach(frame.token)
+        _frame.set(frame.parent)
+        return frame
+
+    @staticmethod
+    def _fail(frame: _Frame | None, error: BaseException) -> None:
+        if frame is None:
+            return
+        if isinstance(error, GeneratorExit):
+            # The consumer stopped reading a stream; that is not a failure.
+            frame.span.end()
+            return
+        frame.span.set_attribute("error.type", type(error).__qualname__)
+        frame.span.record_exception(error)
+        frame.span.set_status(Status(StatusCode.ERROR, str(error)))
+        frame.span.end()
 
     # ── Run lifecycle ─────────────────────────────────────────────────────────
 
     def on_run_start(self, input_message: str) -> None:
-        self._root_span = self._tracer.start_span("agent.run")
-        self._root_span.set_attribute("agent.input.length", len(input_message))
+        self._push(
+            "invoke_agent",
+            SpanKind.INTERNAL,
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "cyclops.input.length": len(input_message),
+            },
+            run=True,
+        )
 
     def on_run_end(self, content: str) -> None:
-        if self._root_span is not None:
-            self._root_span.set_attribute("agent.output.length", len(content))
-            self._root_span.end()
-            self._root_span = None
-        if self._provider is not None:
-            self._provider.force_flush()
+        frame = self._pop()
+        if frame is not None:
+            frame.span.set_attribute("cyclops.output.length", len(content))
+            frame.span.end()
+
+    def on_run_error(self, error: BaseException) -> None:
+        # Also ends an LLM or tool span the error cut short.
+        while (frame := self._pop()) is not None:
+            self._fail(frame, error)
+            if frame.run:
+                break
 
     # ── LLM lifecycle ─────────────────────────────────────────────────────────
 
     def on_llm_start(self, messages: list[dict[str, Any]]) -> None:
-        self._llm_start_ns = time.time_ns()
-        self._llm_span = self._tracer.start_span(
-            "llm.completion", context=self._root_ctx()
+        self._push(
+            "chat",
+            SpanKind.CLIENT,
+            {
+                "gen_ai.operation.name": "chat",
+                "cyclops.llm.message_count": len(messages),
+            },
         )
-        self._llm_span.set_attribute("llm.message_count", len(messages))
 
     def on_llm_end(self, response: Any) -> None:
-        if self._llm_span is not None:
-            elapsed_ms = (time.time_ns() - self._llm_start_ns) // 1_000_000
-            self._llm_span.set_attribute("llm.latency_ms", elapsed_ms)
-            try:
-                usage = response.usage
-                self._llm_span.set_attribute("llm.prompt_tokens", usage.prompt_tokens)
-                self._llm_span.set_attribute(
-                    "llm.completion_tokens", usage.completion_tokens
-                )
-                self._llm_span.set_attribute("llm.total_tokens", usage.total_tokens)
-            except Exception:
-                pass
-            try:
-                self._llm_span.set_attribute("llm.model", response.model)
-            except Exception:
-                pass
-            self._llm_span.end()
-            self._llm_span = None
+        frame = self._pop()
+        if frame is None:
+            return
+        span = frame.span
+        model = getattr(response, "model", None)
+        if isinstance(model, str):
+            span.set_attribute("gen_ai.response.model", model)
+        response_id = getattr(response, "id", None)
+        if isinstance(response_id, str):
+            span.set_attribute("gen_ai.response.id", response_id)
+        reasons = [
+            choice.finish_reason
+            for choice in getattr(response, "choices", None) or []
+            if isinstance(getattr(choice, "finish_reason", None), str)
+        ]
+        if reasons:
+            span.set_attribute("gen_ai.response.finish_reasons", reasons)
+        usage = getattr(response, "usage", None)
+        for attr, field in (
+            ("gen_ai.usage.input_tokens", "prompt_tokens"),
+            ("gen_ai.usage.output_tokens", "completion_tokens"),
+        ):
+            value = getattr(usage, field, None)
+            if isinstance(value, int):
+                span.set_attribute(attr, value)
+        span.end()
 
     def on_llm_error(self, error: Exception) -> None:
-        if self._llm_span is not None:
-            self._llm_span.set_attribute("error", True)
-            self._llm_span.set_attribute("error.message", str(error))
-            self._llm_span.set_attribute("error.type", type(error).__name__)
-            self._llm_span.end()
-            self._llm_span = None
-        if self._root_span is not None:
-            self._root_span.set_attribute("error", True)
-            self._root_span.set_attribute("error.message", str(error))
-            self._root_span.set_attribute("error.type", type(error).__name__)
-            self._root_span.end()
-            self._root_span = None
-        if self._provider is not None:
-            self._provider.force_flush()
+        # The run may recover (naive tool fallback), so only the chat span ends.
+        self._fail(self._pop(), error)
 
     # ── Tool lifecycle ────────────────────────────────────────────────────────
 
     def on_tool_start(self, tool_name: str, args: dict[str, Any]) -> str | None:
-        span = self._tracer.start_span(f"tool.{tool_name}", context=self._root_ctx())
-        span.set_attribute("tool.name", tool_name)
-        span.set_attribute("tool.args_count", len(args))
-        self._tool_span_stack.append((tool_name, span))
+        # Each native tool call runs in its own task, so it pairs with its own end.
+        attributes = {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": tool_name,
+            "cyclops.tool.args_count": len(args),
+        }
+        call_id = current_tool_call_id()
+        if call_id is not None:
+            attributes["gen_ai.tool.call.id"] = call_id
+        self._push(
+            f"execute_tool {tool_name}", SpanKind.INTERNAL, attributes, attach=True
+        )
         return None
 
     def on_tool_end(self, tool_name: str, args: dict[str, Any], result: str) -> None:
-        span = self._pop_tool_span(tool_name)
-        if span is not None:
-            span.set_attribute("tool.result.length", len(result))
-            span.end()
+        frame = self._pop()
+        if frame is not None:
+            frame.span.set_attribute("cyclops.tool.result.length", len(result))
+            frame.span.end()
 
     def on_tool_error(
-        self, tool_name: str, args: dict[str, Any], error: Exception
+        self, tool_name: str, args: dict[str, Any], error: BaseException
     ) -> None:
-        span = self._pop_tool_span(tool_name)
-        if span is not None:
-            span.set_attribute("error", True)
-            span.set_attribute("error.message", str(error))
-            span.set_attribute("error.type", type(error).__name__)
-            span.end()
-
-    def _pop_tool_span(self, tool_name: str) -> Span | None:
-        for i in range(len(self._tool_span_stack) - 1, -1, -1):
-            if self._tool_span_stack[i][0] == tool_name:
-                return self._tool_span_stack.pop(i)[1]
-        return None
+        self._fail(self._pop(), error)

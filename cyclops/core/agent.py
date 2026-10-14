@@ -23,6 +23,7 @@ from typing import (
 
 import litellm
 
+from cyclops.core.hooks import _tool_call_id
 from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
@@ -265,24 +266,32 @@ class Agent:
         """Run one turn, yielding text deltas when streaming, and fill in `run`."""
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
-        start = len(self._history)
-        mode = self._get_tool_mode()
         try:
-            async with aclosing(self._steps(input_message, run, stream, mode)) as steps:
-                async for chunk in steps:
-                    yield chunk
-        except litellm.UnsupportedParamsError:
-            if mode != "native" or self.config.tool_mode != "auto":
-                raise
-            if not self._tools_unsupported():
-                raise
-            self._detected_tool_mode = "naive"
-            del self._history[start:]
-            async with aclosing(
-                self._steps(input_message, run, stream, "naive")
-            ) as steps:
-                async for chunk in steps:
-                    yield chunk
+            start = len(self._history)
+            mode = self._get_tool_mode()
+            try:
+                async with aclosing(
+                    self._steps(input_message, run, stream, mode)
+                ) as steps:
+                    async for chunk in steps:
+                        yield chunk
+            except litellm.UnsupportedParamsError:
+                if mode != "native" or self.config.tool_mode != "auto":
+                    raise
+                if not self._tools_unsupported():
+                    raise
+                self._detected_tool_mode = "naive"
+                del self._history[start:]
+                async with aclosing(
+                    self._steps(input_message, run, stream, "naive")
+                ) as steps:
+                    async for chunk in steps:
+                        yield chunk
+        except BaseException as e:
+            # Failures, cancellation and a stream closed early all end the run here.
+            if self.config.hooks:
+                self.config.hooks.on_run_error(e)
+            raise
         if self.config.hooks:
             self.config.hooks.on_run_end(run.content)
 
@@ -418,9 +427,20 @@ class Agent:
             return {}, ToolResult.error_result(
                 f"arguments for {name} must be a JSON object"
             )
-        return args, await self._call_tool(name, args)
+        return args, await self._call_tool(name, args, tool_call.id)
 
-    async def _call_tool(self, name: str, args: Dict[str, Any]) -> ToolResult:
+    async def _call_tool(
+        self, name: str, args: Dict[str, Any], call_id: Optional[str] = None
+    ) -> ToolResult:
+        """Run a tool by name with current_tool_call_id() set for its hooks."""
+        # Reset after, so a run nested in an outer tool leaves the outer id intact.
+        token = _tool_call_id.set(call_id)
+        try:
+            return await self._run_tool(name, args)
+        finally:
+            _tool_call_id.reset(token)
+
+    async def _run_tool(self, name: str, args: Dict[str, Any]) -> ToolResult:
         """Run a tool by name, applying hook gates. Sync tools run in a worker thread."""
         tool = self._tools_by_name.get(name)
         if not tool:
@@ -440,6 +460,10 @@ class Agent:
                     name, args, _split_images(result.to_message_content())[0]
                 )
             return result
+        except asyncio.CancelledError as e:
+            if hooks:
+                hooks.on_tool_error(name, args, e)
+            raise
         except Exception as e:
             if hooks:
                 hooks.on_tool_error(name, args, e)

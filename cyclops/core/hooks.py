@@ -1,6 +1,20 @@
 """Agent lifecycle hooks — standard event callbacks for the agent run loop."""
 
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
+
+_tool_call_id: ContextVar[Optional[str]] = ContextVar(
+    "cyclops_tool_call_id", default=None
+)
+
+
+def current_tool_call_id() -> Optional[str]:
+    """The id of the native tool call the tool hooks are firing for, else None.
+
+    Each native tool call runs in its own task, so this is exact in parallel calls.
+    Naive mode calls have no id.
+    """
+    return _tool_call_id.get()
 
 
 class AgentHooks:
@@ -17,6 +31,9 @@ class AgentHooks:
 
     def on_run_end(self, content: str) -> None:
         """Fired when a run completes, streamed or not."""
+
+    def on_run_error(self, error: BaseException) -> None:
+        """Fired instead of on_run_end when a run raises, is cancelled, or its stream is closed early."""
 
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None:
         """Fired before each LiteLLM completion call."""
@@ -38,9 +55,9 @@ class AgentHooks:
         """Fired after successful tool execution."""
 
     def on_tool_error(
-        self, tool_name: str, args: Dict[str, Any], error: Exception
+        self, tool_name: str, args: Dict[str, Any], error: BaseException
     ) -> None:
-        """Fired when a tool raises an exception."""
+        """Fired when a tool raises an exception or is cancelled."""
 
 
-__all__ = ["AgentHooks"]
+__all__ = ["AgentHooks", "current_tool_call_id"]

@@ -4,10 +4,10 @@ Demonstrates wiring TelemetryHooks to an agent and emitting spans to the console
 Use TelemetryHooks.otlp("http://localhost:4317") to send to Jaeger, Honeycomb,
 Grafana Tempo, Datadog, or any OTLP-compatible backend.
 
-Span hierarchy per agent.run():
-    agent.run
-    ├── llm.completion   (attributes: model, tokens, latency_ms)
-    ├── tool.<name>      (attributes: name, args_count, result.length)
+Span hierarchy per agent.run(), following the OpenTelemetry GenAI conventions:
+    invoke_agent
+    ├── chat                   (gen_ai.response.model, gen_ai.usage.*)
+    ├── execute_tool <name>    (gen_ai.tool.name)
     └── ...
 """
 
@@ -48,7 +48,8 @@ def calculate(expression: str) -> str:
 
 
 def main() -> None:
-    # TelemetryHooks.console() sets up a TracerProvider + ConsoleSpanExporter in one call.
+    # TelemetryHooks.console() builds its own TracerProvider with a ConsoleSpanExporter.
+    # Pass TelemetryHooks(tracer_provider=...) to use the provider your app configures.
     # Swap for TelemetryHooks.otlp("http://localhost:4317") to send to Jaeger/Tempo/etc.
     hooks = TelemetryHooks.console()
 
@@ -59,6 +60,7 @@ def main() -> None:
 
     print("Running agent...\n")
     agent.run("What is the weather in Tokyo, and what is 42 multiplied by 17?")
+    hooks.flush()
     print("\nDone. Spans printed above.")
 
 
