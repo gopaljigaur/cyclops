@@ -3,26 +3,31 @@
 import asyncio
 import inspect
 from abc import ABC
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 from docstring_parser import parse as parse_docstring
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from cyclops.toolkit.types import ToolAnnotations, ToolDefinition, ToolParameter
 
 
-def _args_model(name: str, func: Callable) -> type[BaseModel]:
+def _args_model(name: str, func: Callable) -> Tuple[type[BaseModel], Dict[str, str]]:
     """Build a pydantic model of the function's parameters.
 
+    Returns the model and a map from renamed fields back to parameter names.
     Descriptions come from the Google or NumPy style docstring, or from
-    ``Annotated[..., Field(description=...)]``.
+    ``Annotated[..., Field(description=...)]``; the docstring wins.
     """
     docs = {
         p.arg_name: p.description
         for p in parse_docstring(inspect.getdoc(func) or "").params
     }
     fields: Dict[str, Any] = {}
-    for param in inspect.signature(func, eval_str=True).parameters.values():
+    renames: Dict[str, str] = {}
+    extra: Literal["allow", "forbid"] = "forbid"
+    for i, param in enumerate(inspect.signature(func).parameters.values()):
+        if param.kind is param.VAR_KEYWORD:
+            extra = "allow"
         if param.name == "self" or param.kind in (
             param.VAR_POSITIONAL,
             param.VAR_KEYWORD,
@@ -30,11 +35,28 @@ def _args_model(name: str, func: Callable) -> type[BaseModel]:
             continue
         annotation = Any if param.annotation is param.empty else param.annotation
         default = ... if param.default is param.empty else param.default
+        field_name = param.name
+        field_args: Dict[str, Any] = {}
+        # Pydantic drops names with a leading underscore and warns on ones
+        # that shadow BaseModel attributes, so those go through an alias
+        if param.name.startswith("_") or hasattr(BaseModel, param.name):
+            field_name = f"param_{i}"
+            renames[field_name] = param.name
+            field_args["alias"] = param.name
         # An explicit description=None would drop one set through Annotated
         if param.name in docs:
-            default = Field(default, description=docs[param.name])
-        fields[param.name] = (annotation, default)
-    return create_model(name, **fields)
+            field_args["description"] = docs[param.name]
+        if field_args:
+            default = Field(default, **field_args)
+        fields[field_name] = (annotation, default)
+    # String annotations resolve in the function's module, like they would there
+    model = create_model(
+        name,
+        __config__=ConfigDict(extra=extra),
+        __module__=func.__module__,
+        **fields,
+    )
+    return model, renames
 
 
 def _json_type(prop: Dict[str, Any], defs: Dict[str, Any]) -> str:
@@ -84,7 +106,7 @@ class BaseTool(ABC):
         return self._definition_for(self.execute)
 
     def _definition_for(self, func: Callable) -> ToolDefinition:
-        self._args_model = _args_model(self.name, func)
+        self._args_model, self._renames = _args_model(self.name, func)
         schema = self._args_model.model_json_schema()
         return ToolDefinition(
             name=self.name,
@@ -119,8 +141,10 @@ class Tool(BaseTool):
 
     async def execute(self, **kwargs) -> Any:
         """Validate the arguments against the schema and call the function"""
-        # Validation turns nested objects into the declared models
-        kwargs.update(dict(self._args_model.model_validate(kwargs)))
+        # Validation turns nested objects into the declared models and aliases
+        # into parameter names; extra arguments pass only with **kwargs
+        validated = self._args_model.model_validate(kwargs)
+        kwargs = {self._renames.get(k, k): v for k, v in validated}
         if self._is_async:
             return await self.func(**kwargs)
         # A blocking sync function must not stall the event loop

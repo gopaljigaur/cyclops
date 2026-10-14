@@ -19,6 +19,7 @@ from cyclops.toolkit.types import (
     ToolDefinition,
     ToolResult,
 )
+from tests import forward_ref_tools
 
 # ---------------------------------------------------------------------------
 # Parameter schemas
@@ -153,6 +154,79 @@ class TestParameterSchema:
             return point.x + point.y
 
         assert asyncio.run(f.execute(point={"x": 1, "y": 2})) == 3
+
+    def test_postponed_annotations_from_another_module(self):
+        # list["Point"] resolves in the defining module; the return type,
+        # imported only for type checking, is never evaluated
+        t = Tool("total", "Sum", forward_ref_tools.total)
+        schema = t.definition.to_json_schema()
+        assert schema["properties"]["points"]["items"] == {"$ref": "#/$defs/Point"}
+        assert asyncio.run(t.execute(points=[{"x": 1, "y": 2}])) == 3
+
+    def test_execute_accepts_alias(self):
+        @tool
+        def f(query: Annotated[str, Field(alias="q")]) -> str:
+            """F."""
+            return query
+
+        assert "q" in f.definition.to_json_schema()["properties"]
+        assert asyncio.run(f.execute(q="hi")) == "hi"
+
+    def test_execute_rejects_unknown_arguments(self):
+        @tool
+        def f(n: int) -> int:
+            """F."""
+            return n
+
+        with pytest.raises(ValidationError):
+            asyncio.run(f.execute(n=1, extra=2))
+
+    def test_execute_passes_extra_arguments_to_var_keyword(self):
+        @tool
+        def f(n: int, **rest) -> dict:
+            """F."""
+            return {"n": n, **rest}
+
+        assert asyncio.run(f.execute(n=1, extra=2)) == {"n": 1, "extra": 2}
+
+    def test_docstring_description_wins_over_annotated(self):
+        @tool
+        def f(query: Annotated[str, Field(description="From Annotated.")]) -> str:
+            """F.
+
+            Args:
+                query: From the docstring.
+            """
+            return query
+
+        props = f.definition.to_json_schema()["properties"]
+        assert props["query"]["description"] == "From the docstring."
+
+    def test_list_of_models(self):
+        @tool
+        def f(points: List[Point]) -> int:
+            """F."""
+            return sum(p.x for p in points)
+
+        prop = f.definition.to_json_schema()["properties"]["points"]
+        assert prop["items"] == {"$ref": "#/$defs/Point"}
+        assert asyncio.run(f.execute(points=[{"x": 1, "y": 0}, {"x": 2, "y": 0}])) == 3
+
+    def test_any_parameter_name_works(self):
+        @tool
+        def f(_private: int, schema: str, json: str = "j") -> str:
+            """F.
+
+            Args:
+                _private: A number.
+            """
+            return f"{_private}{schema}{json}"
+
+        props = f.definition.to_json_schema()["properties"]
+        assert set(props) == {"_private", "schema", "json"}
+        assert props["_private"]["description"] == "A number."
+        assert set(f.definition.parameters) == {"_private", "schema", "json"}
+        assert asyncio.run(f.execute(_private=1, schema="s")) == "1sj"
 
     def test_execute_rejects_invalid_arguments(self):
         @tool
