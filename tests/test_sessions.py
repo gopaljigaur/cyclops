@@ -242,7 +242,11 @@ async def test_cancelled_run_counts_in_the_session_usage():
 
 def test_naive_fallback_keeps_one_attempt_in_the_session():
     agent = Agent(config=_make_config("ollama/llama2"), tools=[_make_simple_tool()])
-    session = Session()
+    earlier = [
+        {"role": "user", "content": "Hi."},
+        {"role": "assistant", "content": "Hello."},
+    ]
+    session = Session(messages=list(earlier))
     responses = [
         _unsupported_params_error(),
         _make_completion_response('{"tool": "add", "args": {"a": 1, "b": 2}}'),
@@ -253,9 +257,35 @@ def test_naive_fallback_keeps_one_attempt_in_the_session():
         assert agent.run("1 + 2?", session=session) == "It is 3."
 
     assert [m["content"] for m in session.messages] == [
+        "Hi.",
+        "Hello.",
         "1 + 2?",
         "[Used tool: add]",
         "Tool result: 3",
         "It is 3.",
     ]
     assert agent.messages == []
+
+
+def test_guards_see_the_session_transcript():
+    seen = []
+
+    async def guard(context):
+        seen.append([m["content"] for m in context.messages])
+        return None
+
+    agent = Agent(config=_make_config(guards=[guard]))
+    session = Session(
+        messages=[
+            {"role": "user", "content": "Hi."},
+            {"role": "assistant", "content": "Hello."},
+        ]
+    )
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("Fine.")),
+    ):
+        agent.run("How are you?", session=session)
+
+    assert seen == [["Hi.", "Hello.", "How are you?", "Fine."]]
