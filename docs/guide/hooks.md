@@ -40,7 +40,7 @@ agent.run("What is the weather in London?")
 | `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
 | `on_tool_start(tool_name, args)` | Before each tool execution | `"deny"` to block, anything else to allow |
-| `on_tool_end(tool_name, args, result)` | After a tool executes successfully; `result` is the text sent to the model | `None` |
+| `on_tool_end(tool_name, args, result)` | After a tool executes successfully; `result` is the tool's result as text | `None` |
 | `on_tool_error(tool_name, args, error)` | When a tool raises an exception or is cancelled | `None` |
 
 All methods are no-ops by default. Override only the ones you need.
@@ -67,6 +67,66 @@ class AllowListHooks(AgentHooks):
 
 config = AgentConfig(model="gpt-4o-mini", hooks=AllowListHooks())
 ```
+
+## Tool middleware
+
+For more control over tool calls, pass a list of `ToolMiddleware` to `AgentConfig.middleware`. Both methods are async and optional:
+
+- `before_tool(call)` returns `None` to allow the call, `Deny(reason)` to block it, or a dict to replace the arguments. The model sees a denied call as an error result with your reason.
+- `after_tool(call, result, error)` sees the `ToolResult` and, if the tool raised, the exception. Return a `ToolResult` to replace what the model sees, or `None` to keep it.
+
+`call` is a `ToolCallContext` with `tool_name`, `arguments`, `call_id` (`None` in naive tool mode), `run_id`, `annotations` (the tool's `ToolAnnotations`) and `agent_path`.
+
+```python
+from cyclops import Agent, AgentConfig, Deny, ToolMiddleware, ToolResult
+
+
+class ReadOnly(ToolMiddleware):
+    async def before_tool(self, call):
+        if not call.annotations.read_only:
+            return Deny(f"{call.tool_name} may change data; ask the user first.")
+        return None
+
+
+class LimitRows(ToolMiddleware):
+    async def before_tool(self, call):
+        if call.tool_name == "search_rows":
+            return {**call.arguments, "limit": min(call.arguments.get("limit", 50), 50)}
+        return None
+
+
+class Redact(ToolMiddleware):
+    async def after_tool(self, call, result, error):
+        if call.tool_name == "get_user":
+            return ToolResult.success_result("[redacted]")
+        return None
+
+
+config = AgentConfig(model="gpt-4o-mini", middleware=[ReadOnly(), LimitRows(), Redact()])
+```
+
+Middleware run in list order before the call and in reverse order after it. A denied call skips the tool and the remaining middleware; `after_tool` still runs for the middleware that allowed it. `AgentHooks` tool callbacks run as the innermost middleware, so `on_tool_start` sees the final arguments and returning `"deny"` keeps working. For `TelemetryHooks` this means a call denied by middleware gets no tool span, and middleware work is not nested under the tool span.
+
+If a tool call is cancelled, `after_tool` runs with the `CancelledError` and its return value is ignored. If middleware raises, the run fails with that exception and the other calls of the same step are cancelled.
+
+## End-of-run guards
+
+A guard runs when the model ends its turn without calling a tool. It is an async function that takes a `GuardContext` (`content`, `messages`, `run_id`, `agent_path`) and returns feedback or `None`. Feedback is added as a user message and the model runs again. Guards run in order and the first one with feedback wins. `max_guard_rounds` (default `3`) caps how many times per run guards may send the model back. If a guard still has feedback after that, the run ends with `stop_reason="guard"` and empty `content`. Each guard round is a step, so it counts against `max_steps` and the token and cost budgets; if a limit stops the run first, the feedback is not added to the conversation.
+
+```python
+from cyclops import Agent, AgentConfig
+
+
+async def cites_sources(context):
+    if "[1]" not in context.content:
+        return "Cite at least one source as [1]."
+    return None
+
+
+agent = Agent(AgentConfig(model="gpt-4o-mini", guards=[cites_sources], max_guard_rounds=2))
+```
+
+Guards also run in streamed runs: the rejected answer has already been streamed, then a `GuardRejected` [event](streaming.md) marks it, and the next answer streams after it. A rejected answer is never the run's `content` or the value `on_run_end` gets.
 
 ## Observability example
 

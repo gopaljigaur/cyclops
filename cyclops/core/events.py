@@ -46,6 +46,12 @@ class ToolCallFinished(Event):
     is_error: bool
 
 
+class GuardRejected(Event):
+    """A guard sent the model back after its answer; that answer is not the result."""
+
+    feedback: str
+
+
 class StepFinished(Event):
     """One LLM completion and the tool calls it asked for are done."""
 
@@ -65,6 +71,7 @@ __all__ = [
     "ReasoningDelta",
     "ToolCallStarted",
     "ToolCallFinished",
+    "GuardRejected",
     "StepFinished",
     "RunFinished",
 ]

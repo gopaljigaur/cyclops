@@ -48,7 +48,8 @@ asyncio.run(main())
 | `content` | `str` | The final answer. Empty unless the run completed. |
 | `tool_calls` | `List[ToolCall]` | Every tool call made during the run, in order. |
 | `model` | `str` | The model identifier used (from `AgentConfig.model`). |
-| `stop_reason` | `str` | `"completed"` for a final answer, `"max_steps"` or `"budget"` when the run reached a [limit](/guides/agents/#step-and-budget-limits), `"error"` when it failed. |
+| `run_id` | `str` | Unique id of the run, also given to tool middleware and guards. |
+| `stop_reason` | `str` | `"completed"` for a final answer, `"max_steps"` or `"budget"` when the run reached a [limit](/guides/agents/#step-and-budget-limits), `"guard"` when a [guard](/guides/hooks/#end-of-run-guards) still rejected the answer after `max_guard_rounds`, `"error"` when it failed. |
 | `steps` | `int` | LLM completions made in the run. |
 | `usage` | `Usage` or `None` | Tokens and cost summed over every completion in the run. `None` if any completion reported no usage. |
 | `error` | `Exception` or `None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |

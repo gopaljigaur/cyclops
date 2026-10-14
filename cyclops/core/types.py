@@ -1,9 +1,11 @@
 """Core type definitions"""
 
+import uuid
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.middleware import Guard, ToolMiddleware
 
 
 class AgentConfig(BaseModel):
@@ -20,7 +22,7 @@ class AgentConfig(BaseModel):
     router: Optional[Any] = None
     max_steps: int = Field(
         default=10,
-        description="Most LLM completions in one run; a run without tools makes one",
+        description="Most LLM completions in one run, guard rounds included; at least one without tools",
     )
     max_total_tokens: Optional[int] = Field(
         default=None, description="Most tokens one run may use, checked between steps"
@@ -29,6 +31,11 @@ class AgentConfig(BaseModel):
         default=None, description="Most USD one run may cost, checked between steps"
     )
     hooks: Optional[AgentHooks] = None
+    middleware: List[ToolMiddleware] = Field(default_factory=list)
+    guards: List[Guard] = Field(default_factory=list)
+    max_guard_rounds: int = Field(
+        default=3, description="Most times per run guards may send the model back"
+    )
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
     # api_base, extra_headers, num_retries, timeout, reasoning_effort, thinking.
     completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
@@ -94,7 +101,7 @@ class Usage(BaseModel):
         )
 
 
-StopReason = Literal["completed", "max_steps", "budget", "cancelled", "error"]
+StopReason = Literal["completed", "max_steps", "budget", "guard", "cancelled", "error"]
 
 
 class RunResult(BaseModel):
@@ -110,6 +117,9 @@ class RunResult(BaseModel):
         default_factory=list, description="Tools called during the run"
     )
     model: str = Field(description="Model used for generation")
+    run_id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex, description="Unique id of the run"
+    )
     stop_reason: StopReason = Field(
         default="completed", description="Why the run stopped"
     )

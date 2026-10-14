@@ -26,6 +26,7 @@ from litellm.utils import supports_prompt_caching
 
 from cyclops.core.events import (
     Event,
+    GuardRejected,
     ReasoningDelta,
     RunFinished,
     StepFinished,
@@ -33,7 +34,13 @@ from cyclops.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
-from cyclops.core.hooks import RUN_STOPPED, _tool_call_id
+from cyclops.core.hooks import RUN_STOPPED, AgentHooks, _tool_call_id
+from cyclops.core.middleware import (
+    Deny,
+    GuardContext,
+    ToolCallContext,
+    ToolMiddleware,
+)
 from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
@@ -63,6 +70,23 @@ def _split_images(content: Any) -> Tuple[str, List[Dict[str, Any]]]:
         return content, []
     text = "\n".join(p["text"] for p in content if p["type"] == "text")
     return text, [p for p in content if p["type"] == "image_url"]
+
+
+def _failed_text(error: BaseException) -> str:
+    """What the model sees for a call that was cancelled or whose middleware raised."""
+    if isinstance(error, asyncio.CancelledError):
+        return _CANCELLED_RESULT
+    return _split_images(ToolResult.error_result(str(error)).to_message_content())[0]
+
+
+def _unfinished_text(task: asyncio.Future) -> str:
+    """The tool message text for a call of a step that did not finish."""
+    if task.cancelled():
+        return _CANCELLED_RESULT
+    error = task.exception()
+    if error is not None:
+        return _failed_text(error)
+    return _split_images(task.result()[1].to_message_content())[0]
 
 
 def _takes_tool_message_images(model: str, provider: str) -> bool:
@@ -201,6 +225,30 @@ def _usage(response) -> Optional[Usage]:
         total_tokens=usage.total_tokens or 0,
         cost=cost,
     )
+
+
+class _HooksMiddleware(ToolMiddleware):
+    """Runs the AgentHooks tool callbacks as the innermost middleware."""
+
+    def __init__(self, hooks: AgentHooks) -> None:
+        self.hooks = hooks
+
+    async def before_tool(self, call):
+        if self.hooks.on_tool_start(call.tool_name, call.arguments) == "deny":
+            return Deny(f"Tool '{call.tool_name}' was not approved")
+        return None
+
+    async def after_tool(self, call, result, error):
+        if error is not None:
+            self.hooks.on_tool_error(call.tool_name, call.arguments, error)
+            return None
+        try:
+            text = _split_images(result.to_message_content())[0]
+            self.hooks.on_tool_end(call.tool_name, call.arguments, text)
+        except Exception as e:
+            self.hooks.on_tool_error(call.tool_name, call.arguments, e)
+            return ToolResult.error_result(f"{call.tool_name} failed: {e}")
+        return None
 
 
 class _Run:
@@ -420,11 +468,21 @@ class Agent:
 
         # Limits count what is known, even once the reported totals are not.
         spent_tokens, spent_cost = 0, 0.0
-        for step in range(self.config.max_steps if mode != "none" else 1):
+        guard_rounds = 0
+        # Guard feedback waiting to be sent once another step is allowed.
+        feedback: Optional[str] = None
+        limit = self.config.max_steps
+        if mode == "none":
+            # A run without tools always answers.
+            limit = max(limit, 1)
+        for step in range(limit):
             await run.taken()
             if step and self._over_budget(spent_tokens, spent_cost):
                 result.stop_reason = "budget"
                 return
+            if feedback is not None:
+                self._history.append({"role": "user", "content": feedback})
+                feedback = None
             messages = self._build_messages(system_prompt)
             response: Any
             if streamed:
@@ -474,8 +532,16 @@ class Agent:
             else:
                 assistant["content"] = content
                 self._history.append(assistant)
-                result.content = content
-                done = True
+                feedback = await self._guard_feedback(content, run)
+                if feedback is None:
+                    result.content = content
+                    done = True
+                elif guard_rounds == self.config.max_guard_rounds:
+                    result.stop_reason = "guard"
+                    done = True
+                else:
+                    guard_rounds += 1
+                    run.emit(GuardRejected(feedback=feedback))
             run.emit(StepFinished(step=result.steps, usage=step_usage))
             if done:
                 return
@@ -492,7 +558,7 @@ class Agent:
 
     async def _run_naive_tool_call(self, call: Dict[str, Any], run: _Run) -> None:
         name = call["tool"]
-        result = await self._call_tool(run, None, name, call.get("args", {}))
+        _, result = await self._call_tool(run, None, name, call.get("args", {}))
         text, images = _split_images(result.to_message_content())
         self._history.append({"role": "assistant", "content": f"[Used tool: {name}]"})
         message: Any = f"Tool result: {text}"
@@ -511,26 +577,15 @@ class Agent:
         try:
             # Shielded so the tools are cancelled once, here, and can clean up.
             results = await asyncio.shield(asyncio.gather(*tasks))
-        except asyncio.CancelledError as e:
-            # Stop the other calls too, with the same reason, then answer every
-            # call to keep the transcript valid.
+        except BaseException as e:
+            # Cancelled, or middleware raised: stop the other calls too, with
+            # the same reason, then answer every call to keep the transcript valid.
+            reason = e.args if isinstance(e, asyncio.CancelledError) else ()
             for task in tasks:
-                task.cancel(*e.args)
+                task.cancel(*reason)
             await asyncio.wait(tasks)
             for tc, task in zip(msg.tool_calls, tasks):
-                if task.cancelled():
-                    text = _CANCELLED_RESULT
-                    run.emit(
-                        ToolCallFinished(
-                            call_id=tc.id,
-                            name=tc.function.name,
-                            result=text,
-                            is_error=True,
-                        )
-                    )
-                else:
-                    text = _split_images(task.result()[1].to_message_content())[0]
-                self._append_tool_result(tc, text)
+                self._append_tool_result(tc, _unfinished_text(task))
             raise
         moved_images: List[Dict[str, Any]] = []
         for tc, (args, result) in zip(msg.tool_calls, results):
@@ -566,7 +621,7 @@ class Agent:
             args, error = {}, f"arguments for {name} are not valid JSON: {e}"
         if not isinstance(args, dict):
             args, error = {}, f"arguments for {name} must be a JSON object"
-        return args, await self._call_tool(run, tool_call.id, name, args, error)
+        return await self._call_tool(run, tool_call.id, name, args, error)
 
     async def _call_tool(
         self,
@@ -575,21 +630,30 @@ class Agent:
         name: str,
         args: Dict[str, Any],
         error: Optional[str] = None,
-    ) -> ToolResult:
+    ) -> Tuple[Dict[str, Any], ToolResult]:
         """Run a tool, or report error instead, between its two events.
 
-        current_tool_call_id() is call_id while the tool's hooks run.
+        Returns the arguments it ran with and its result. current_tool_call_id()
+        is call_id while the tool's middleware run.
         """
         run.emit(ToolCallStarted(call_id=call_id, name=name, arguments=args))
-        if error:
-            result = ToolResult.error_result(error)
-        else:
-            # Reset after, so a run nested in an outer tool leaves the outer id intact.
-            token = _tool_call_id.set(call_id)
-            try:
-                result = await self._run_tool(name, args)
-            finally:
-                _tool_call_id.reset(token)
+        # Reset after, so a run nested in an outer tool leaves the outer id intact.
+        token = _tool_call_id.set(call_id)
+        try:
+            if error:
+                result = ToolResult.error_result(error)
+            else:
+                args, result = await self._run_tool(run, call_id, name, args)
+        except BaseException as e:
+            # Middleware raised or the call was cancelled: it still finishes.
+            run.emit(
+                ToolCallFinished(
+                    call_id=call_id, name=name, result=_failed_text(e), is_error=True
+                )
+            )
+            raise
+        finally:
+            _tool_call_id.reset(token)
         run.emit(
             ToolCallFinished(
                 call_id=call_id,
@@ -598,36 +662,82 @@ class Agent:
                 is_error=result.is_error,
             )
         )
-        return result
+        return args, result
 
-    async def _run_tool(self, name: str, args: Dict[str, Any]) -> ToolResult:
-        """Run a tool by name, applying hook gates. Sync tools run in a worker thread."""
+    async def _run_tool(
+        self,
+        run: _Run,
+        call_id: Optional[str],
+        name: str,
+        args: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], ToolResult]:
+        """Run a tool through the middleware. Sync tools run in a worker thread."""
         tool = self._tools_by_name.get(name)
         if not tool:
-            return ToolResult.error_result(f"Tool '{name}' not found")
-        hooks = self.config.hooks
-        if hooks is not None and hooks.on_tool_start(name, args) == "deny":
-            return ToolResult.error_result(f"Tool '{name}' was not approved")
+            return args, ToolResult.error_result(f"Tool '{name}' not found")
+        call = ToolCallContext(
+            tool_name=name,
+            arguments=args,
+            call_id=call_id,
+            run_id=run.result.run_id,
+            annotations=tool.annotations,
+        )
+        middleware = list(self.config.middleware)
+        if self.config.hooks:
+            middleware.append(_HooksMiddleware(self.config.hooks))
+        allowed: List[ToolMiddleware] = []
+        error: Optional[Exception] = None
         try:
-            if inspect.iscoroutinefunction(tool.execute):
-                result = await tool.execute(**args)
+            for m in middleware:
+                decision = await m.before_tool(call)
+                if isinstance(decision, Deny):
+                    result = ToolResult.error_result(decision.reason)
+                    break
+                if decision is not None:
+                    call.arguments = decision
+                allowed.append(m)
             else:
-                result = await asyncio.to_thread(tool.execute, **args)
-            if not isinstance(result, ToolResult):
-                result = ToolResult.success_result(result)
-            if hooks:
-                hooks.on_tool_end(
-                    name, args, _split_images(result.to_message_content())[0]
-                )
-            return result
+                try:
+                    if inspect.iscoroutinefunction(tool.execute):
+                        value = await tool.execute(**call.arguments)
+                    else:
+                        value = await asyncio.to_thread(tool.execute, **call.arguments)
+                    result = (
+                        value
+                        if isinstance(value, ToolResult)
+                        else ToolResult.success_result(value)
+                    )
+                except Exception as e:
+                    error = e
+                    result = ToolResult.error_result(f"{name} failed: {e}")
         except asyncio.CancelledError as e:
-            if hooks:
-                hooks.on_tool_error(name, args, e)
+            cancelled = ToolResult.error_result(_CANCELLED_RESULT)
+            await self._after_tool(allowed, call, cancelled, e)
             raise
-        except Exception as e:
-            if hooks:
-                hooks.on_tool_error(name, args, e)
-            return ToolResult.error_result(f"{name} failed: {e}")
+        return call.arguments, await self._after_tool(allowed, call, result, error)
+
+    @staticmethod
+    async def _after_tool(
+        middleware: List[ToolMiddleware],
+        call: ToolCallContext,
+        result: ToolResult,
+        error: Optional[BaseException],
+    ) -> ToolResult:
+        """Run after_tool in reverse order; each may replace the result."""
+        for m in reversed(middleware):
+            result = await m.after_tool(call, result, error) or result
+        return result
+
+    async def _guard_feedback(self, content: str, run: _Run) -> Optional[str]:
+        """Feedback from the first guard that has some, else None."""
+        context = GuardContext(
+            content=content, messages=self.messages, run_id=run.result.run_id
+        )
+        for guard in self.config.guards:
+            feedback = await guard(context)
+            if feedback is not None:
+                return feedback
+        return None
 
     # ------------------------------------------------------------------
     # History helpers

@@ -47,6 +47,9 @@ class AgentConfig(BaseModel):
     hooks: Optional[AgentHooks] = None
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool = False
+    middleware: List[ToolMiddleware] = []
+    guards: List[Guard] = []
+    max_guard_rounds: int = 3
 ```
 
 ---
@@ -60,7 +63,8 @@ class RunResult(BaseModel):
     content: str
     tool_calls: List[ToolCall]
     model: str
-    stop_reason: Literal["completed", "max_steps", "budget", "cancelled", "error"]
+    run_id: str
+    stop_reason: Literal["completed", "max_steps", "budget", "guard", "cancelled", "error"]
     steps: int
     usage: Optional[Usage]
     error: Optional[Exception]
@@ -87,6 +91,7 @@ class TextDelta(Event):        text: str
 class ReasoningDelta(Event):   text: str
 class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
+class GuardRejected(Event):    feedback: str
 class StepFinished(Event):     step: int; usage: Optional[Usage]
 class RunFinished(Event):      result: RunResult
 ```
@@ -125,6 +130,33 @@ class AgentHooks:
 ```
 
 See [Hooks guide](guide/hooks.md) for full documentation.
+
+---
+
+### ToolMiddleware
+
+Async middleware around every tool call, set with `AgentConfig.middleware`.
+
+```python
+class ToolMiddleware:
+    async def before_tool(self, call: ToolCallContext) -> Union[None, Deny, Dict[str, Any]]: ...
+    async def after_tool(self, call: ToolCallContext, result: ToolResult, error: Optional[BaseException]) -> Optional[ToolResult]: ...
+
+@dataclass
+class ToolCallContext:
+    tool_name: str
+    arguments: Dict[str, Any]
+    call_id: Optional[str]
+    run_id: str
+    annotations: ToolAnnotations
+    agent_path: Tuple[str, ...]
+
+@dataclass
+class Deny:
+    reason: str
+```
+
+A guard is `Callable[[GuardContext], Awaitable[Optional[str]]]`; `GuardContext` has `content`, `messages`, `run_id` and `agent_path`. See [Hooks guide](guide/hooks.md#tool-middleware).
 
 ---
 

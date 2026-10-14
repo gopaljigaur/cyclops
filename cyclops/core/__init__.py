@@ -2,6 +2,13 @@
 
 from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.middleware import (
+    Deny,
+    Guard,
+    GuardContext,
+    ToolCallContext,
+    ToolMiddleware,
+)
 from cyclops.core.types import (
     AgentConfig,
     Message,
@@ -15,6 +22,11 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentHooks",
+    "Deny",
+    "Guard",
+    "GuardContext",
+    "ToolCallContext",
+    "ToolMiddleware",
     "Message",
     "RunResult",
     "ToolCall",
