@@ -23,7 +23,7 @@ from typing import (
 )
 
 import litellm
-from litellm.utils import supports_prompt_caching
+from litellm.utils import supports_native_structured_output, supports_prompt_caching
 
 from cyclops.core.events import (
     Event,
@@ -576,12 +576,13 @@ class Agent:
         }
         if self.config.prompt_caching and self._caches_at_markers():
             kwargs["cache_control_injection_points"] = _CACHE_POINTS
-        # Only without tools: some providers emulate the schema with a forced
-        # tool call, which would stop the agent's own tools from being called.
-        if (
-            response_model is not None
-            and mode == "none"
-            and self._supports_response_schema()
+        # With tools only where LiteLLM sends the schema natively: elsewhere it
+        # may emulate it with a forced tool call, which blocks the agent's tools.
+        if response_model is not None and (
+            mode == "none"
+            and self._every_deployment(litellm.supports_response_schema)
+            or mode == "native"
+            and self._every_deployment(supports_native_structured_output)
         ):
             kwargs["response_format"] = response_model
         system_prompt = self.config.system_prompt
@@ -971,12 +972,10 @@ class Agent:
             ]
         return [{"model": self.config.model}]
 
-    def _supports_response_schema(self) -> bool:
-        """True if LiteLLM lists `response_format` schemas for every deployment."""
+    def _every_deployment(self, supports: Callable[..., bool]) -> bool:
+        """True if a LiteLLM `supports_*` check holds for every deployment."""
         return all(
-            litellm.supports_response_schema(
-                model=p["model"], custom_llm_provider=p.get("custom_llm_provider")
-            )
+            supports(model=p["model"], custom_llm_provider=p.get("custom_llm_provider"))
             for p in self._deployments()
         )
 
