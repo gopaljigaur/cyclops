@@ -511,11 +511,11 @@ class Agent:
         try:
             # Shielded so the tools are cancelled once, here, and can clean up.
             results = await asyncio.shield(asyncio.gather(*tasks))
-        except asyncio.CancelledError:
-            # Stop the other calls too, then answer every call to keep the
-            # transcript valid.
+        except asyncio.CancelledError as e:
+            # Stop the other calls too, with the same reason, then answer every
+            # call to keep the transcript valid.
             for task in tasks:
-                task.cancel()
+                task.cancel(*e.args)
             await asyncio.wait(tasks)
             for tc, task in zip(msg.tool_calls, tasks):
                 if task.cancelled():

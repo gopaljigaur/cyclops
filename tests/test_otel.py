@@ -14,7 +14,13 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+from litellm.types.utils import (
+    ChatCompletionDeltaToolCall,
+    Delta,
+    Function,
+    ModelResponseStream,
+    StreamingChoices,
+)
 from opentelemetry.trace import StatusCode
 
 from cyclops.core.agent import Agent
@@ -369,6 +375,46 @@ async def test_astream_closed_early_ends_the_run_without_error(hooks, exporter):
 
     spans = exporter.get_finished_spans()
     assert [s.name for s in spans] == ["chat", "invoke_agent"]
+    for span in spans:
+        assert span.status.status_code == StatusCode.UNSET
+        assert "error.type" not in span.attributes
+    _assert_context_clean()
+
+    # Closed while a tool runs: the tool stops for the same reason.
+    exporter.clear()
+    started = asyncio.Event()
+
+    async def slow() -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "late"
+
+    agent = Agent(
+        AgentConfig(model="gpt-4o-mini", hooks=hooks),
+        tools=[Tool(name="slow", description="Sleeps", func=slow)],
+    )
+    call = ChatCompletionDeltaToolCall(
+        index=0,
+        id="call-1",
+        type="function",
+        function=Function(name="slow", arguments="{}"),
+    )
+    chunk = ModelResponseStream(
+        model="gpt-4o-mini",
+        choices=[StreamingChoices(delta=Delta(tool_calls=[call]))],
+    )
+
+    async def tool_stream():
+        yield chunk
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=tool_stream())):
+        async with aclosing(agent.astream_events("go")) as events:
+            async for _ in events:
+                break
+            await started.wait()
+
+    spans = exporter.get_finished_spans()
+    assert [s.name for s in spans] == ["chat", "execute_tool slow", "invoke_agent"]
     for span in spans:
         assert span.status.status_code == StatusCode.UNSET
         assert "error.type" not in span.attributes
