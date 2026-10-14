@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool as MCPTool, TextContent
+from mcp.types import CallToolResult, Tool as MCPTool, TextContent
 
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import BaseTool
@@ -55,14 +55,16 @@ class MCPServer:
         @self.server.call_tool()
         async def handle_call_tool(
             name: str, arguments: Dict[str, Any]
-        ) -> List[TextContent]:
+        ) -> CallToolResult:
             try:
                 result = await self.tool_registry.execute_tool(
                     tool_name=name, **arguments
                 )
-                return [TextContent(type="text", text=str(result))]
             except Exception as e:
-                return [TextContent(type="text", text=f"Error: {str(e)}")]
+                return CallToolResult(
+                    content=[TextContent(type="text", text=str(e))], isError=True
+                )
+            return CallToolResult(content=[TextContent(type="text", text=str(result))])
 
     def add_tool(self, tool: BaseTool) -> None:
         """Add a tool to the server"""
