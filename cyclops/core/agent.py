@@ -35,6 +35,11 @@ _CANCELLED_RESULT = "Tool call cancelled."
 # accept only text in a tool message.
 _TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
 _DONE = object()
+# Cache the system prompt (with the tools before it) and the conversation so far.
+_CACHE_POINTS = [
+    {"location": "message", "role": "system"},
+    {"location": "message", "index": -1},
+]
 
 
 def _split_images(content: Any) -> Tuple[str, List[Dict[str, Any]]]:
@@ -229,10 +234,12 @@ class Agent:
         self, input_message: str, response_model: Optional[Type] = None
     ) -> Any:
         """Run the agent asynchronously. Returns str or Pydantic model instance."""
-        response = await self.arun_with_response(input_message)
+        run = _Run()
+        async for _ in self._loop(input_message, run, False, response_model):
+            pass
         if response_model is not None:
-            return response_model.model_validate_json(response.content)
-        return response.content
+            return response_model.model_validate_json(run.content)
+        return run.content
 
     def run_with_response(self, input_message: str) -> AgentResponse:
         """Run and return a full AgentResponse with cost/token metadata."""
@@ -261,7 +268,11 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def _loop(
-        self, input_message: str, run: _Run, stream: bool
+        self,
+        input_message: str,
+        run: _Run,
+        stream: bool,
+        response_model: Optional[Type] = None,
     ) -> AsyncGenerator[str, None]:
         """Run one turn, yielding text deltas when streaming, and fill in `run`."""
         if self.config.hooks:
@@ -271,7 +282,7 @@ class Agent:
             mode = self._get_tool_mode()
             try:
                 async with aclosing(
-                    self._steps(input_message, run, stream, mode)
+                    self._steps(input_message, run, stream, mode, response_model)
                 ) as steps:
                     async for chunk in steps:
                         yield chunk
@@ -283,7 +294,7 @@ class Agent:
                 self._detected_tool_mode = "naive"
                 del self._history[start:]
                 async with aclosing(
-                    self._steps(input_message, run, stream, "naive")
+                    self._steps(input_message, run, stream, "naive", response_model)
                 ) as steps:
                     async for chunk in steps:
                         yield chunk
@@ -296,14 +307,30 @@ class Agent:
             self.config.hooks.on_run_end(run.content)
 
     async def _steps(
-        self, input_message: str, run: _Run, stream: bool, mode: str
+        self,
+        input_message: str,
+        run: _Run,
+        stream: bool,
+        mode: str,
+        response_model: Optional[Type],
     ) -> AsyncGenerator[str, None]:
         self._history.append({"role": "user", "content": input_message})
         naive = mode == "naive"
         kwargs: Dict[str, Any] = {
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
+            **self.config.completion_kwargs,
         }
+        if self.config.prompt_caching:
+            kwargs["cache_control_injection_points"] = _CACHE_POINTS
+        # Only without tools: some providers emulate the schema with a forced
+        # tool call, which would stop the agent's own tools from being called.
+        if (
+            response_model is not None
+            and mode == "none"
+            and self._supports_response_schema()
+        ):
+            kwargs["response_format"] = response_model
         system_prompt = self.config.system_prompt
         if self.skills:
             system_prompt = (
@@ -360,7 +387,7 @@ class Agent:
                 self._history.append({"role": "user", "content": message})
                 continue
 
-            self._history.append({"role": "assistant", "content": content})
+            self._history.append(self._assistant_message(msg, content))
             run.content = content
             if stream and naive:
                 yield content
@@ -474,23 +501,29 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _append_tool_call_message(self, msg) -> None:
-        self._history.append(
+        message = self._assistant_message(msg, msg.content)
+        message["tool_calls"] = [
             {
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
             }
-        )
+            for tc in msg.tool_calls
+        ]
+        self._history.append(message)
+
+    @staticmethod
+    def _assistant_message(msg, content: Optional[str]) -> Dict[str, Any]:
+        """An assistant turn, keeping any reasoning the provider needs sent back."""
+        message: Dict[str, Any] = {"role": "assistant", "content": content}
+        for key in ("reasoning_content", "thinking_blocks"):
+            value = getattr(msg, key, None)
+            if value:
+                message[key] = value
+        return message
 
     def _append_tool_result(self, tc, content: Any) -> None:
         self._history.append(
@@ -546,6 +579,16 @@ class Agent:
                 for d in self.config.router.get_model_list(self.config.model) or []
             ]
         return [{"model": self.config.model}]
+
+    def _supports_response_schema(self) -> bool:
+        """True if LiteLLM lists `response_format` schemas for every deployment."""
+        params = self._deployments()
+        return bool(params) and all(
+            litellm.supports_response_schema(
+                model=p["model"], custom_llm_provider=p.get("custom_llm_provider")
+            )
+            for p in params
+        )
 
     def _tools_unsupported(self) -> bool:
         """True if LiteLLM lists no `tools` support for every deployment of the model."""
