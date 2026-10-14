@@ -43,7 +43,7 @@ def hooks(provider):
 
 
 def _response(content=None, tool_calls=None):
-    msg = MagicMock()
+    msg = MagicMock(reasoning_content=None, thinking_blocks=None)
     msg.content = content
     msg.tool_calls = tool_calls or []
     choice = MagicMock()
@@ -355,8 +355,14 @@ def test_sync_stream_closes_its_spans(hooks, exporter):
 
 
 async def test_astream_closed_early_ends_the_run_without_error(hooks, exporter):
+    async def stalled():
+        yield _text_chunk("a")
+        # The run is suspended mid-stream when the consumer closes it.
+        await asyncio.sleep(10)
+        yield _text_chunk("b")
+
     agent = Agent(AgentConfig(model="gpt-4o-mini", hooks=hooks))
-    with patch("litellm.acompletion", new=AsyncMock(return_value=_chunks("a", "b"))):
+    with patch("litellm.acompletion", new=AsyncMock(return_value=stalled())):
         async with aclosing(agent.astream("hi")) as stream:
             async for _ in stream:
                 break

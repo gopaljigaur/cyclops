@@ -21,7 +21,7 @@ def _write_skill(root, name, description="Does a thing.", body="Step one.", extr
 
 
 def _response(content=None, tool_calls=None):
-    msg = MagicMock()
+    msg = MagicMock(reasoning_content=None, thinking_blocks=None)
     msg.content = content
     msg.tool_calls = tool_calls or []
     response = MagicMock()

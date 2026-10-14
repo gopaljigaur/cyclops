@@ -7,6 +7,10 @@ _tool_call_id: ContextVar[Optional[str]] = ContextVar(
     "cyclops_tool_call_id", default=None
 )
 
+# The message of the CancelledError a run raises when its caller stops it, e.g.
+# by closing its event stream early; on_run_error receives that error.
+RUN_STOPPED = "run stopped by its caller"
+
 
 def current_tool_call_id() -> Optional[str]:
     """The id of the native tool call the tool hooks are firing for, else None.
@@ -33,7 +37,11 @@ class AgentHooks:
         """Fired when a run completes, streamed or not."""
 
     def on_run_error(self, error: BaseException) -> None:
-        """Fired instead of on_run_end when a run raises, is cancelled, or its stream is closed early."""
+        """Fired instead of on_run_end when a run raises or is cancelled.
+
+        A run its caller stopped, such as a stream closed early, gets a
+        CancelledError whose args are (RUN_STOPPED,).
+        """
 
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None:
         """Fired before each LiteLLM completion call."""
@@ -60,4 +68,4 @@ class AgentHooks:
         """Fired when a tool raises an exception or is cancelled."""
 
 
-__all__ = ["AgentHooks", "current_tool_call_id"]
+__all__ = ["AgentHooks", "RUN_STOPPED", "current_tool_call_id"]

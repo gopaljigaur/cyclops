@@ -29,6 +29,8 @@ class Agent:
 | `arun_with_response` | `arun_with_response(input_message: str) -> RunResult` | Run asynchronously; return the result, stop reason, usage and cost. |
 | `stream` | `stream(input_message: str) -> Iterator[str]` | Sync token stream. True streaming for no-tools agents; tool loop then stream for tool agents. |
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
+| `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
+| `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
 | `reset` | `reset() -> None` | Clear conversation history. |
 
 **Properties**
@@ -99,6 +101,21 @@ class Usage(BaseModel):
 
 ---
 
+### Events
+
+`cyclops.core.events`: what `stream_events()` and `astream_events()` yield. Every event has `agent_path: Tuple[str, ...]`, empty for the agent that was run. See [Streaming](/guides/streaming/#run-events).
+
+```python
+class TextDelta(Event):        text: str
+class ReasoningDelta(Event):   text: str
+class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
+class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
+class StepFinished(Event):     step: int; usage: Optional[Usage]
+class RunFinished(Event):      result: RunResult
+```
+
+---
+
 ### ToolCall
 
 Records a single tool invocation within a `RunResult`.
@@ -141,7 +158,7 @@ class AgentHooks:
 |---|---|---|
 | `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
 | `on_run_end` | When a run finishes, streamed or not | `None` |
-| `on_run_error` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early | `None` |
+| `on_run_error` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. | `None` |
 | `on_llm_start` | Before each LiteLLM completion call | `None` |
 | `on_llm_end` | After each completion; for a stream, with the assembled response | `None` |
 | `on_llm_error` | When a LiteLLM call raises an exception | `None` |

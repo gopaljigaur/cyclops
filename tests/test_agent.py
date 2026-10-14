@@ -1489,3 +1489,245 @@ def test_tool_image_route_checks_every_router_deployment(deployments, kept):
     else:
         assert roles == ["user", "assistant", "tool", "user", "assistant"]
         assert agent.messages[2]["content"] == "a chart"
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+
+def _event_summary(events):
+    from cyclops.core.events import (
+        ReasoningDelta,
+        RunFinished,
+        StepFinished,
+        TextDelta,
+        ToolCallFinished,
+        ToolCallStarted,
+    )
+
+    summary = []
+    for e in events:
+        assert e.agent_path == ()
+        if isinstance(e, TextDelta):
+            summary.append(("text", e.text))
+        elif isinstance(e, ReasoningDelta):
+            summary.append(("reasoning", e.text))
+        elif isinstance(e, ToolCallStarted):
+            summary.append(("tool_start", e.call_id, e.name, e.arguments))
+        elif isinstance(e, ToolCallFinished):
+            summary.append(("tool_end", e.call_id, e.result, e.is_error))
+        elif isinstance(e, StepFinished):
+            summary.append(("step", e.step))
+        elif isinstance(e, RunFinished):
+            summary.append(("run", e.result.stop_reason, e.result.content))
+    return summary
+
+
+@pytest.mark.asyncio
+async def test_astream_events_reports_text_tools_steps_and_result():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    first = [
+        ModelResponseStream(
+            model="gpt-3.5-turbo",
+            choices=[StreamingChoices(delta=Delta(reasoning_content="Sum it."))],
+        ),
+        _text_chunk("Adding. "),
+        _tool_call_chunk(0, '{"a": 2, "b": 3}', id="tc_1", name="add"),
+    ]
+    second = [_text_chunk("The answer "), _text_chunk("is 5.")]
+    mock = AsyncMock(side_effect=[_stream(first), _stream(second)])
+
+    with patch("litellm.acompletion", new=mock):
+        events = [e async for e in agent.astream_events("2 + 3?")]
+
+    assert _event_summary(events) == [
+        ("reasoning", "Sum it."),
+        ("text", "Adding. "),
+        ("tool_start", "tc_1", "add", {"a": 2, "b": 3}),
+        ("tool_end", "tc_1", "5", False),
+        ("step", 1),
+        ("text", "The answer "),
+        ("text", "is 5."),
+        ("step", 2),
+        ("run", "completed", "The answer is 5."),
+    ]
+    assert events[-1].result.steps == 2
+
+
+def test_stream_events_carries_usage_of_every_step():
+    """A streamed run reports its totals through RunFinished and StepFinished."""
+    from cyclops.core.events import RunFinished, StepFinished
+
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    tc = _make_tool_call("tc_1", "add", '{"a": 1, "b": 1}')
+    built = [
+        _make_completion_response(content=None, tool_calls=[tc]),
+        _make_completion_response(content="2"),
+    ]
+    mock = AsyncMock(side_effect=[_stream([]), _stream([_text_chunk("2")])])
+
+    with (
+        patch("litellm.acompletion", new=mock),
+        patch("litellm.stream_chunk_builder", side_effect=built),
+        patch("litellm.completion_cost", return_value=0.001),
+    ):
+        events = list(agent.stream_events("1 + 1?"))
+
+    steps = [e for e in events if isinstance(e, StepFinished)]
+    assert [s.usage.total_tokens for s in steps] == [30, 30]
+    result = events[-1]
+    assert isinstance(result, RunFinished)
+    assert result.result.tokens_used == 60
+    assert result.result.cost == pytest.approx(0.002)
+
+
+@pytest.mark.asyncio
+async def test_failed_run_ends_events_with_error_and_astream_raises():
+    agent = Agent(config=_make_config())
+    error = litellm.APIConnectionError(
+        message="down", llm_provider="openai", model="gpt-3.5-turbo"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=error)):
+        events = [e async for e in agent.astream_events("hi")]
+        with pytest.raises(litellm.APIConnectionError):
+            async for _ in agent.astream("hi"):
+                pass
+
+    assert _event_summary(events) == [("run", "error", "")]
+    assert events[-1].result.error is error
+
+
+@pytest.mark.asyncio
+async def test_invalid_arguments_and_naive_calls_have_tool_events():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    responses = [
+        _stream([_tool_call_chunk(0, "{not json", id="tc_1", name="add")]),
+        _stream([_text_chunk("sorry")]),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        events = [e async for e in agent.astream_events("go")]
+    start, end = _event_summary(events)[:2]
+    assert start == ("tool_start", "tc_1", "add", {})
+    assert end[0] == "tool_end" and end[3] is True
+
+    naive = Agent(config=_make_config(tool_mode="naive"), tools=[_make_simple_tool()])
+    responses = [
+        _make_completion_response('{"tool": "add", "args": {"a": 1, "b": 2}}'),
+        _make_completion_response("3"),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        events = [e async for e in naive.astream_events("1 + 2?")]
+    assert _event_summary(events) == [
+        ("tool_start", None, "add", {"a": 1, "b": 2}),
+        ("tool_end", None, "3", False),
+        ("step", 1),
+        ("text", "3"),
+        ("step", 2),
+        ("run", "completed", "3"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_closing_events_early_cancels_the_run():
+    import asyncio
+
+    from cyclops.core.events import ToolCallStarted
+    from cyclops.toolkit.tool import Tool
+
+    async def slow() -> str:
+        await asyncio.sleep(10)
+        return "done"
+
+    agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow tool", slow)])
+    chunks = [_tool_call_chunk(0, "{}", id="tc_1", name="slow")]
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
+        events = agent.astream_events("go")
+        async for event in events:
+            if isinstance(event, ToolCallStarted):
+                break
+        await events.aclose()
+
+    assert agent.messages[-1] == {
+        "role": "tool",
+        "tool_call_id": "tc_1",
+        "content": "Tool call cancelled.",
+        "name": "slow",
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_ending_without_run_finished_raises_from_the_stream():
+    """A tool raising CancelledError ends the stream with it instead of hanging."""
+    import asyncio
+
+    from cyclops.core.events import ToolCallFinished, ToolCallStarted
+    from cyclops.toolkit.tool import Tool
+
+    async def bad() -> str:
+        raise asyncio.CancelledError()
+
+    async def slow() -> str:
+        await asyncio.sleep(10)
+        return "done"
+
+    agent = Agent(
+        config=_make_config(),
+        tools=[Tool("bad", "Bad tool", bad), Tool("slow", "Slow tool", slow)],
+    )
+    chunks = [
+        _tool_call_chunk(0, "{}", id="tc_1", name="bad"),
+        _tool_call_chunk(1, "{}", id="tc_2", name="slow"),
+    ]
+    events = []
+
+    async def consume():
+        async for event in agent.astream_events("go"):
+            events.append(event)
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(consume(), 5)
+
+    started = {e.call_id for e in events if isinstance(e, ToolCallStarted)}
+    finished = {
+        e.call_id: (e.result, e.is_error)
+        for e in events
+        if isinstance(e, ToolCallFinished)
+    }
+    assert started == {"tc_1", "tc_2"}
+    assert finished == {
+        "tc_1": ("Tool call cancelled.", True),
+        "tc_2": ("Tool call cancelled.", True),
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_waits_for_the_stream_consumer():
+    """A consumer that stops reading without closing holds the run where it is."""
+    import asyncio
+
+    from cyclops.toolkit.tool import Tool
+
+    calls = []
+
+    async def record() -> str:
+        calls.append(1)
+        return "done"
+
+    agent = Agent(config=_make_config(), tools=[Tool("record", "Records", record)])
+    chunks = [
+        _text_chunk("Calling."),
+        _tool_call_chunk(0, "{}", id="tc_1", name="record"),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
+        events = agent.astream_events("go")
+        await events.__anext__()
+        await asyncio.sleep(0.05)
+        assert calls == []
+        await events.aclose()
+
+    assert calls == []
