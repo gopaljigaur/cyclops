@@ -1,4 +1,4 @@
-"""Tests for cyclops toolkit: @tool decorator, BaseTool, registry."""
+"""Tests for cyclops toolkit: @tool decorator, BaseTool, results and registry."""
 
 import asyncio
 import inspect
@@ -13,7 +13,12 @@ from cyclops.toolkit.tool import (
     Tool,
     _annotation_to_json_type,
 )
-from cyclops.toolkit.types import ToolDefinition
+from cyclops.toolkit.types import (
+    ImageContent,
+    TextContent,
+    ToolDefinition,
+    ToolResult,
+)
 
 # ---------------------------------------------------------------------------
 # _annotation_to_json_type
@@ -297,6 +302,56 @@ class TestFunctionTool:
         assert params["b"].type == "boolean"
         assert params["lst"].type == "array"
         assert params["dct"].type == "object"
+
+
+# ---------------------------------------------------------------------------
+# ToolResult
+# ---------------------------------------------------------------------------
+
+
+class TestToolResult:
+    def test_success_result(self):
+        r = ToolResult.success_result({"a": 1})
+        assert r.success is True
+        assert r.is_error is False
+        assert r.to_message_content() == '{"a": 1}'
+
+    def test_string_result_is_not_quoted(self):
+        assert ToolResult.success_result("done").to_message_content() == "done"
+
+    def test_error_result(self):
+        r = ToolResult.error_result("boom")
+        assert r.is_error is True
+        assert r.to_message_content() == "Error: boom"
+
+    def test_text_content(self):
+        r = ToolResult(content=[TextContent(text="a"), TextContent(text="b")])
+        assert r.to_message_content() == "a\nb"
+
+    def test_content_takes_precedence_over_structured_data(self):
+        r = ToolResult(content=[TextContent(text="2 rows")], result=[1, 2])
+        assert r.to_message_content() == "2 rows"
+
+    def test_image_content_renders_parts(self):
+        r = ToolResult(
+            content=[
+                TextContent(text="chart"),
+                ImageContent(data="aGk=", mime_type="image/png"),
+            ]
+        )
+        assert r.to_message_content() == [
+            {"type": "text", "text": "chart"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
+        ]
+
+    def test_content_blocks_from_dicts(self):
+        r = ToolResult.model_validate(
+            {"content": [{"type": "image", "data": "x", "mime_type": "image/jpeg"}]}
+        )
+        assert isinstance(r.content[0], ImageContent)
+
+    def test_empty_result(self):
+        assert ToolResult().to_message_content() == ""
 
 
 # ---------------------------------------------------------------------------
