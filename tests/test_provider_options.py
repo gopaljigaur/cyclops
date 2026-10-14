@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import litellm
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
 from litellm.types.utils import (
     ChatCompletionMessageToolCall,
     Choices,
@@ -391,7 +392,7 @@ def test_response_model_only_validates_when_unsupported():
     assert "response_format" not in mock.call_args.kwargs
 
 
-def _anthropic_bodies(model, response_model):
+def _anthropic_bodies(model, **completion_kwargs):
     """Run an Anthropic agent with a tool and return the request bodies LiteLLM sends."""
     replies = [
         {
@@ -424,18 +425,16 @@ def _anthropic_bodies(model, response_model):
         }
         return httpx.Response(200, json=reply, request=httpx.Request("POST", url))
 
-    config = AgentConfig(
-        model=f"anthropic/{model}", completion_kwargs={"api_key": "sk-test"}
-    )
+    config = AgentConfig(model=model, completion_kwargs=completion_kwargs)
     with patch.object(AsyncHTTPHandler, "post", post):
-        result = Agent(config, tools=[add]).run("1 + 2?", response_model=response_model)
+        result = Agent(config, tools=[add]).run("1 + 2?", response_model=Answer)
 
     assert result == Answer(value=3)
     return bodies
 
 
 def test_response_model_sends_a_native_schema_alongside_tools():
-    bodies = _anthropic_bodies("claude-sonnet-4-5", Answer)
+    bodies = _anthropic_bodies("anthropic/claude-sonnet-4-5", api_key="sk-test")
 
     for body in bodies:
         assert [t["name"] for t in body["tools"]] == ["add"]
@@ -454,7 +453,23 @@ def test_response_model_sends_a_native_schema_alongside_tools():
 
 def test_response_model_sends_no_emulated_schema_alongside_tools():
     # LiteLLM would turn the schema into a forced tool call for this model.
-    bodies = _anthropic_bodies("claude-sonnet-4-20250514", Answer)
+    bodies = _anthropic_bodies("anthropic/claude-sonnet-4-20250514", api_key="sk-test")
+
+    for body in bodies:
+        assert [t["name"] for t in body["tools"]] == ["add"]
+        assert "tool_choice" not in body
+        assert "output_format" not in body
+
+
+def test_response_model_sends_no_schema_through_vertex_ai_where_it_is_emulated():
+    # The Anthropic entry lists this model as native, the Vertex AI one does not.
+    token = ("token", "project")
+    with patch.object(VertexBase, "_ensure_access_token", return_value=token):
+        bodies = _anthropic_bodies(
+            "vertex_ai/claude-sonnet-4-5",
+            vertex_project="project",
+            vertex_location="us-east5",
+        )
 
     for body in bodies:
         assert [t["name"] for t in body["tools"]] == ["add"]

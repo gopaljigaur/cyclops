@@ -23,7 +23,7 @@ from typing import (
 )
 
 import litellm
-from litellm.utils import supports_native_structured_output, supports_prompt_caching
+from litellm.utils import supports_prompt_caching
 
 from cyclops.core.events import (
     Event,
@@ -337,6 +337,19 @@ class RunHandle:
             self._task.cancel(RUN_STOPPED)
 
 
+def _native_schema(model: str, custom_llm_provider: Optional[str] = None) -> bool:
+    """True if LiteLLM's own entry for this provider lists native structured output.
+
+    Not `supports_native_structured_output`: it falls back to another provider's
+    entry, while the Vertex AI builder reads only its own.
+    """
+    try:
+        info = litellm.get_model_info(model, custom_llm_provider)
+    except Exception:  # not mapped
+        return False
+    return info.get("supports_native_structured_output") is True
+
+
 class Agent:
     """LLM agent implementation"""
 
@@ -579,10 +592,11 @@ class Agent:
         # With tools only where LiteLLM sends the schema natively: elsewhere it
         # may emulate it with a forced tool call, which blocks the agent's tools.
         if response_model is not None and (
-            mode == "none"
-            and self._every_deployment(litellm.supports_response_schema)
-            or mode == "native"
-            and self._every_deployment(supports_native_structured_output)
+            (
+                mode == "none"
+                and self._every_deployment(litellm.supports_response_schema)
+            )
+            or (mode == "native" and self._every_deployment(_native_schema))
         ):
             kwargs["response_format"] = response_model
         system_prompt = self.config.system_prompt
