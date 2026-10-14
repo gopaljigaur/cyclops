@@ -137,9 +137,11 @@ async def _after_tool(
 class _ToolExecutor:
     """Runs a run's tool calls and records them in its transcript and result."""
 
-    def __init__(self, config: AgentConfig, tools: Dict[str, Any], run: _Run) -> None:
+    def __init__(
+        self, config: AgentConfig, tools_by_name: Dict[str, Any], run: _Run
+    ) -> None:
         self.config = config
-        self.tools = tools
+        self.tools_by_name = tools_by_name
         self.run = run
 
     async def run_naive_tool_call(self, call: Dict[str, Any]) -> None:
@@ -251,7 +253,7 @@ class _ToolExecutor:
         self, call_id: Optional[str], name: str, args: Dict[str, Any]
     ) -> Tuple[Dict[str, Any], ToolResult]:
         """Run a tool through the middleware. Sync tools run in a worker thread."""
-        tool = self.tools.get(name)
+        tool = self.tools_by_name.get(name)
         if not tool:
             return args, ToolResult.error_result(f"Tool '{name}' not found")
         call = ToolCallContext(
