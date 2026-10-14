@@ -41,7 +41,7 @@ class AgentConfig(BaseModel):
     system_prompt: Optional[str] = None
     tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None   # LiteLLM Router
-    max_steps: int = 10            # former name max_iterations is accepted
+    max_steps: int = 10
     max_total_tokens: Optional[int] = None
     max_cost: Optional[float] = None   # USD
     hooks: Optional[AgentHooks] = None
@@ -66,8 +66,6 @@ class RunResult(BaseModel):
     error: Optional[Exception]
     # Read-only properties over usage:
     tokens_used, cost, prompt_tokens, completion_tokens, cached_tokens
-
-AgentResponse = RunResult  # former name
 
 
 class Usage(BaseModel):

@@ -209,5 +209,3 @@ config = AgentConfig(
     max_cost=0.05,  # USD
 )
 ```
-
-`max_steps` was called `max_iterations` before; the old name is still accepted.

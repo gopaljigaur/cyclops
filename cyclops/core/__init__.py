@@ -4,7 +4,6 @@ from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.types import (
     AgentConfig,
-    AgentResponse,
     Message,
     RunResult,
     ToolCall,
@@ -17,7 +16,6 @@ __all__ = [
     "AgentConfig",
     "AgentHooks",
     "Message",
-    "AgentResponse",
     "RunResult",
     "ToolCall",
     "Usage",

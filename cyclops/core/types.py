@@ -1,7 +1,7 @@
 """Core type definitions"""
 
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 from cyclops.core.hooks import AgentHooks
 
@@ -9,7 +9,8 @@ from cyclops.core.hooks import AgentHooks
 class AgentConfig(BaseModel):
     """Configuration for an agent"""
 
-    model_config = {"arbitrary_types_allowed": True}
+    # forbid: a misspelled or removed setting (max_iterations) fails loudly.
+    model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     model: str
     temperature: float = 0.1
@@ -19,8 +20,6 @@ class AgentConfig(BaseModel):
     router: Optional[Any] = None
     max_steps: int = Field(
         default=10,
-        # The field's former name is still accepted.
-        validation_alias=AliasChoices("max_steps", "max_iterations"),
         description="Most LLM completions in one run; a run without tools makes one",
     )
     max_total_tokens: Optional[int] = Field(
@@ -142,7 +141,3 @@ class RunResult(BaseModel):
     @property
     def cached_tokens(self) -> Optional[int]:
         return self.usage.cached_tokens if self.usage else None
-
-
-# The former name of RunResult.
-AgentResponse = RunResult

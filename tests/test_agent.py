@@ -314,7 +314,7 @@ async def test_arun_with_tools_loop():
 
 
 def test_run_with_response_method():
-    """run_with_response() returns an AgentResponse with metadata."""
+    """run_with_response() returns a RunResult with metadata."""
     agent = Agent(config=_make_config())
     response = _make_completion_response("Hello!")
 
@@ -567,8 +567,11 @@ def test_max_steps_sets_stop_reason():
     assert agent.messages[-1]["role"] == "tool"
 
 
-def test_max_iterations_is_accepted_as_max_steps():
-    assert _make_config(max_iterations=3).max_steps == 3
+def test_unknown_config_fields_are_rejected():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _make_config(max_iterations=3)
 
 
 def test_token_budget_ends_the_run_between_steps():
@@ -703,10 +706,10 @@ def test_token_budget_ends_a_naive_run():
 def test_former_token_fields_are_rejected():
     from pydantic import ValidationError
 
-    from cyclops import AgentResponse
+    from cyclops import RunResult
 
     with pytest.raises(ValidationError):
-        AgentResponse(content="x", model="m", tokens_used=99, cost=1.5)
+        RunResult(content="x", model="m", tokens_used=99, cost=1.5)
 
 
 def test_failed_run_returns_error_result_with_usage_so_far():
@@ -755,12 +758,6 @@ async def test_arun_raises_the_run_error():
             await agent.arun("hi")
         with pytest.raises(litellm.APIConnectionError):
             await asyncio.to_thread(agent.run, "hi")
-
-
-def test_agent_response_is_run_result():
-    from cyclops import AgentResponse, RunResult
-
-    assert AgentResponse is RunResult
 
 
 @pytest.mark.asyncio

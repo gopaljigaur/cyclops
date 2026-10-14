@@ -51,7 +51,7 @@ class AgentConfig(BaseModel):
     system_prompt: Optional[str] = None
     tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None  # LiteLLM Router
-    max_steps: int = 10            # former name max_iterations is accepted
+    max_steps: int = 10
     max_total_tokens: Optional[int] = None
     max_cost: Optional[float] = None   # USD
     hooks: Optional[AgentHooks] = None
@@ -65,7 +65,7 @@ class AgentConfig(BaseModel):
 | `system_prompt` | `None` | Prepended to every conversation. |
 | `tool_mode` | `"auto"` | `"auto"` auto-detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based fallback. |
 | `router` | `None` | Optional LiteLLM Router for fallback and load balancing. |
-| `max_steps` | `10` | Most LLM completions per run. `max_iterations` is accepted as the former name. |
+| `max_steps` | `10` | Most LLM completions per run. |
 | `max_total_tokens` | `None` | Most tokens per run, checked between steps. |
 | `max_cost` | `None` | Most USD per run, checked between steps. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
@@ -87,8 +87,6 @@ class RunResult(BaseModel):
     error: Optional[Exception]
     # Read-only properties over usage:
     tokens_used, cost, prompt_tokens, completion_tokens, cached_tokens
-
-AgentResponse = RunResult  # former name
 
 
 class Usage(BaseModel):
