@@ -77,42 +77,81 @@ async def fetch_url(url: str) -> str:
         return r.text[:500]
 ```
 
-## Type annotations → JSON schema
+## Parameter schemas
 
-Cyclops converts Python type annotations to JSON schema types automatically. The mapping is:
+Cyclops builds the JSON schema of a tool's parameters with pydantic from the function signature, so any type pydantic understands works: `list[str]` gets `items`, `Literal` and `Enum` become `enum`, `Optional[T]` allows `null`, pydantic models become nested objects, and default values are kept. Parameters without a default are required.
 
-| Python type | JSON schema type |
-|---|---|
-| `str` | `"string"` |
-| `int` | `"integer"` |
-| `float` | `"number"` |
-| `bool` | `"boolean"` |
-| `list` | `"array"` |
-| `dict` | `"object"` |
-| unannotated | `"string"` (default) |
-
-`Optional[T]` is treated as `T` (the parameter becomes optional in the JSON schema if it has a default value).
+Parameter descriptions come from a Google or NumPy style docstring, or from `Annotated[..., Field(description=...)]`. The docstring text before the parameter section becomes the tool description.
 
 ```python
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+
+class Filter(BaseModel):
+    field: str
+    value: str
+
+
 @tool
-def calculate(operation: str, a: float, b: float) -> str:
-    """Perform a basic math operation: add, subtract, multiply, divide."""
-    ops = {"add": a + b, "subtract": a - b, "multiply": a * b, "divide": a / b}
-    return str(ops.get(operation, "unknown operation"))
+def search(
+    query: str,
+    filters: list[Filter],
+    sort: Literal["relevance", "date"] = "relevance",
+    limit: Annotated[int, Field(description="Maximum number of hits.", ge=1)] = 5,
+) -> str:
+    """Search the index.
+
+    Args:
+        query: Text to search for.
+        filters: Conditions every hit must match.
+        sort: Result order.
+    """
+    return f"Results for '{query}'"
 ```
 
-This produces a JSON schema with `operation` as `"string"` and `a`, `b` as `"number"`, all required.
+When a function tool is called, its arguments are validated against the same schema, so `filters` arrives as a list of `Filter` instances. A `BaseTool` subclass gets its schema from the signature of `execute()` and receives the arguments as passed.
 
-Parameters with default values are marked optional in the schema:
+## Tool results
+
+A tool may return a string, any JSON-serializable value, or a `ToolResult`. A `ToolResult` carries content blocks (`TextContent`, `ImageContent`), structured data in `result`, and an error flag.
 
 ```python
+from cyclops.toolkit import ImageContent, TextContent, ToolResult
+
+
 @tool
-def search(query: str, max_results: int = 5) -> str:
-    """Search for information."""
-    return f"Results for '{query}' (max {max_results})"
+def render_chart(series: list[float]) -> ToolResult:
+    """Render a chart of the series."""
+    if not series:
+        return ToolResult.error_result("series is empty")
+    return ToolResult(
+        content=[
+            TextContent(text=f"Chart of {len(series)} points"),
+            ImageContent(data=png_base64(series), mime_type="image/png"),
+        ],
+        result={"points": len(series)},
+    )
 ```
 
-Here `query` is required and `max_results` is optional with a default of `5`.
+`ToolResult.to_message_content()` renders a result as the content of an OpenAI-style tool message: a string for text, or a list of content parts when there are images. `result` is rendered as JSON only when there are no content blocks.
+
+## Annotations
+
+Tools can carry behaviour hints that mirror MCP tool annotations. They are not enforced; hooks and other code can read them from `tool.annotations`.
+
+```python
+from cyclops.toolkit import ToolAnnotations
+
+
+@tool(annotations=ToolAnnotations(read_only=True, open_world=True))
+def fetch_page(url: str) -> str:
+    """Fetch a web page."""
+    ...
+```
+
+`BaseTool` subclasses pass `annotations=` to `super().__init__()`. The fields are `read_only`, `destructive`, `idempotent` and `open_world`; each defaults to `None` (unknown).
 
 ## ToolRegistry
 
@@ -132,11 +171,18 @@ def ping(host: str) -> str:
     return f"pong from {host} in 12ms"
 
 
-# Or register an existing tool manually:
-registry.register(ping)
+# Or register a tool manually. Names must be unique; registering
+# a second tool with the same name raises ValueError.
+@tool
+def pong(host: str) -> str:
+    """Reply to a ping."""
+    return f"pong to {host}"
+
+
+registry.register(pong)
 
 # Retrieve and inspect:
-print(registry.list_tools())          # ['ping']
+print(registry.list_tools())          # ['ping', 'pong']
 print(registry.get_tool("ping"))      # <Tool ping>
 print(registry.get_definitions())     # {'ping': ToolDefinition(...)}
 
