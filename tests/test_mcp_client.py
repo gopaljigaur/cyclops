@@ -147,6 +147,18 @@ class TestAttachDetach:
         assert client.servers == []
         assert _live_sessions() == []
 
+    async def test_cancelled_detach_leaves_nothing_running(self):
+        client = MCPClient()
+        await client.attach("d", COMMAND)
+        detach = asyncio.create_task(client.detach("d"))
+        await asyncio.sleep(0.01)
+        detach.cancel()
+        await asyncio.gather(detach, return_exceptions=True)
+        assert client.servers == ["d"]
+        assert _live_sessions() == []
+        await client.aclose()
+        assert client.servers == []
+
     async def test_tool_name_clash_across_servers_raises(self):
         async with MCPClient() as client:
             await client.attach("a", COMMAND, prefix=False)
@@ -304,6 +316,11 @@ class TestMCPSchemaToParams:
     def test_union_type_uses_first_non_null(self):
         schema = {"properties": {"x": {"type": ["null", "integer"]}}}
         assert _mcp_schema_to_params(schema)["x"].type == "integer"
+
+
+def test_to_tool_result_structured_only():
+    result = to_tool_result(CallToolResult(content=[], structuredContent={"a": 1}))
+    assert result == ToolResult.success_result('{"a": 1}')
 
 
 async def test_server_returns_is_error_for_failures():

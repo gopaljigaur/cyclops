@@ -124,10 +124,13 @@ class _Connection:
         task, self._task, self.session = self._task, None, None
         if task is None:
             return
-        _, pending = await asyncio.wait({task}, timeout=5)
-        if pending:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        try:
+            await asyncio.wait({task}, timeout=5)
+        finally:
+            # Also runs if close is cancelled, so the owner task never outlives it.
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def detach(self) -> None:
         async with self._lock:
@@ -278,10 +281,12 @@ class MCPClient:
             await self._detach(name)
 
     async def _detach(self, name: str) -> None:
-        conn = self._connections.pop(name, None)
-        self._tools.pop(name, None)
+        conn = self._connections.get(name)
         if conn is not None:
+            # Unregister only once closed, so an interrupted detach can be retried.
             await conn.detach()
+        self._connections.pop(name, None)
+        self._tools.pop(name, None)
 
     async def aclose(self) -> None:
         """Disconnect every server."""

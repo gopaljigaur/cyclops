@@ -53,7 +53,7 @@ The server's input schema is sent to the model as is, including nested objects a
 
 ### Results
 
-`execute()` returns a `ToolResult`. A result with `isError` set becomes an error result. Text content becomes a string; when the result has images, it becomes a list of content parts (`{"type": "text", ...}` and `{"type": "image_url", ...}` with a data URL).
+`execute()` returns a `ToolResult`. A result with `isError` set becomes an error result. Text content becomes a string; when the result has images, it becomes a list of content parts (`{"type": "text", ...}` and `{"type": "image_url", ...}` with a data URL). A result with only `structuredContent` becomes its JSON text.
 
 ### Server sets per agent or per run
 

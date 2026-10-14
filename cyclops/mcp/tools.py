@@ -1,5 +1,6 @@
 """MCPClientTool: a remote MCP tool as a cyclops BaseTool."""
 
+import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from mcp.types import (
@@ -68,6 +69,8 @@ def to_tool_result(result: CallToolResult) -> ToolResult:
             parts.append({"type": "text", "text": content.resource.text})
         else:
             parts.append({"type": "text", "text": content.model_dump_json()})
+    if not parts and result.structuredContent is not None:
+        parts.append({"type": "text", "text": json.dumps(result.structuredContent)})
     text = "\n".join(p["text"] for p in parts if p["type"] == "text")
     if result.isError:
         return ToolResult.error_result(text)
