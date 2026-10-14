@@ -35,7 +35,7 @@ The return type is the Pydantic model instance, not a string. Your IDE will see 
 
 When the agent has no tools and LiteLLM reports that the model supports response schemas (`litellm.supports_response_schema`), Cyclops sends the model's JSON schema as `response_format`, so the provider constrains the reply to it. Through a `router`, every deployment of the model has to support it.
 
-Agents with tools send no schema, even to providers with native structured output. LiteLLM implements the schema for some models (such as Claude 3.5 Sonnet) as a forced tool call, which would keep the model from calling the agent's tools, and LiteLLM does not report which models do this. Tool agents only validate the reply, so ask for JSON in the system prompt.
+Agents with tools send the schema only when LiteLLM's model map lists native structured output (`supports_native_structured_output`) in the entry for that provider and model, again for every deployment. A model without an entry gets no schema. LiteLLM implements the schema for other models (such as `claude-sonnet-4-20250514`, or `vertex_ai/claude-sonnet-4-5`) as a forced tool call, which would keep the model from calling the agent's tools. Anthropic models from the 4.5 generation on are listed directly and through Bedrock. Providers that always take the schema natively, such as OpenAI and Gemini, are not listed, and neither are most Azure AI Anthropic models, so tool agents on those models still get no schema and only validate the reply; ask for JSON in the system prompt there.
 
 Either way the reply is passed to `response_model.model_validate_json(content)`. If the JSON is valid the instance is returned; if it is invalid a `pydantic.ValidationError` is raised.
 

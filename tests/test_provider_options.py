@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import litellm
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
 from litellm.types.utils import (
     ChatCompletionMessageToolCall,
     Choices,
@@ -391,7 +392,92 @@ def test_response_model_only_validates_when_unsupported():
     assert "response_format" not in mock.call_args.kwargs
 
 
-def test_response_model_sends_no_schema_alongside_tools():
+def _anthropic_bodies(model, **completion_kwargs):
+    """Run an Anthropic agent with a tool and return the request bodies LiteLLM sends."""
+    replies = [
+        {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "add",
+                    "input": {"a": 1, "b": 2},
+                }
+            ],
+            "stop_reason": "tool_use",
+        },
+        {
+            "content": [{"type": "text", "text": '{"value": 3}'}],
+            "stop_reason": "end_turn",
+        },
+    ]
+    bodies = []
+
+    async def post(self, url, data=None, json=None, **kwargs):
+        bodies.append(loads(data) if data else json)
+        reply = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            **replies[len(bodies) - 1],
+        }
+        return httpx.Response(200, json=reply, request=httpx.Request("POST", url))
+
+    config = AgentConfig(model=model, completion_kwargs=completion_kwargs)
+    with patch.object(AsyncHTTPHandler, "post", post):
+        result = Agent(config, tools=[add]).run("1 + 2?", response_model=Answer)
+
+    assert result == Answer(value=3)
+    return bodies
+
+
+def test_response_model_sends_a_native_schema_alongside_tools():
+    bodies = _anthropic_bodies("anthropic/claude-sonnet-4-5", api_key="sk-test")
+
+    for body in bodies:
+        assert [t["name"] for t in body["tools"]] == ["add"]
+        assert "tool_choice" not in body
+        assert body["output_format"] == {
+            "type": "json_schema",
+            "schema": {
+                "type": "object",
+                "properties": {"value": {"type": "integer", "title": "Value"}},
+                "required": ["value"],
+                "title": "Answer",
+                "additionalProperties": False,
+            },
+        }
+
+
+def test_response_model_sends_no_emulated_schema_alongside_tools():
+    # LiteLLM would turn the schema into a forced tool call for this model.
+    bodies = _anthropic_bodies("anthropic/claude-sonnet-4-20250514", api_key="sk-test")
+
+    for body in bodies:
+        assert [t["name"] for t in body["tools"]] == ["add"]
+        assert "tool_choice" not in body
+        assert "output_format" not in body
+
+
+def test_response_model_sends_no_schema_through_vertex_ai_where_it_is_emulated():
+    # The Anthropic entry lists this model as native, the Vertex AI one does not.
+    token = ("token", "project")
+    with patch.object(VertexBase, "_ensure_access_token", return_value=token):
+        bodies = _anthropic_bodies(
+            "vertex_ai/claude-sonnet-4-5",
+            vertex_project="project",
+            vertex_location="us-east5",
+        )
+
+    for body in bodies:
+        assert [t["name"] for t in body["tools"]] == ["add"]
+        assert "tool_choice" not in body
+        assert "output_format" not in body
+
+
+def test_response_model_sends_no_schema_alongside_tools_unless_listed_native():
     mock = AsyncMock(
         side_effect=[_response(tool_calls=[_add_call()]), _response('{"value": 3}')]
     )
@@ -418,3 +504,27 @@ def test_response_model_schema_needs_every_router_deployment():
     )
 
     assert "response_format" not in router.acompletion.call_args.kwargs
+
+
+def test_response_model_native_schema_needs_every_router_deployment():
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": "anthropic/claude-sonnet-4-5"},
+            },
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": "anthropic/claude-sonnet-4-20250514"},
+            },
+        ]
+    )
+    router.acompletion = AsyncMock(
+        side_effect=[_response(tool_calls=[_add_call()]), _response('{"value": 3}')]
+    )
+    Agent(AgentConfig(model="smart", router=router), tools=[add]).run(
+        "1 + 2?", response_model=Answer
+    )
+
+    for call in router.acompletion.call_args_list:
+        assert "response_format" not in call.kwargs
