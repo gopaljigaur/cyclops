@@ -733,8 +733,15 @@ class Agent:
             for tc in msg.tool_calls
         ]
         try:
-            # Shielded so the tools are cancelled once, here, and can clean up.
-            results = await asyncio.shield(asyncio.gather(*tasks))
+            # asyncio.wait leaves the tools running when the run is cancelled,
+            # so they are cancelled once, below, and can clean up.
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    task.result()
         except BaseException as e:
             # Cancelled, or middleware raised: stop the other calls too, with
             # the same reason, then answer every call to keep the transcript valid.
@@ -746,7 +753,8 @@ class Agent:
                 self._append_tool_result(run.history, tc, _unfinished_text(task))
             raise
         moved_images: List[Dict[str, Any]] = []
-        for tc, (args, result) in zip(msg.tool_calls, results):
+        for tc, task in zip(msg.tool_calls, tasks):
+            args, result = task.result()
             content: Any = result.to_message_content()
             text, images = _split_images(content)
             run.result.tool_calls.append(
