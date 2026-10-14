@@ -53,7 +53,13 @@ def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
     async def wrapper():
         return await fn(*args)
 
-    return asyncio.run_coroutine_threadsafe(wrapper(), _loop).result()
+    future = asyncio.run_coroutine_threadsafe(wrapper(), _loop)
+    try:
+        return future.result()
+    except BaseException:
+        # Interrupted (e.g. Ctrl-C): stop the run instead of leaving it going.
+        future.cancel()
+        raise
 
 
 def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
@@ -212,7 +218,8 @@ class Agent:
                 system_prompt or _DEFAULT_SYSTEM_PROMPT
             ) + self._build_tools_prompt()
 
-        for _ in range(self.config.max_iterations):
+        # max_iterations limits tool rounds; a run without tools makes one call.
+        for _ in range(self.config.max_iterations if mode != "none" else 1):
             messages = self._build_messages(system_prompt)
             response: Any
             # Naive mode never streams deltas: the text may be a tool call.
@@ -269,11 +276,14 @@ class Agent:
         try:
             results = await asyncio.gather(*tasks)
         except asyncio.CancelledError:
-            # Keep the transcript valid: every tool call needs a result.
+            # Stop the other calls too, then answer every call to keep the
+            # transcript valid.
+            for task in tasks:
+                task.cancel()
+            await asyncio.wait(tasks)
             for tc, task in zip(msg.tool_calls, tasks):
-                done = task.done() and not task.cancelled()
                 self._append_tool_result(
-                    tc, task.result()[1] if done else _CANCELLED_RESULT
+                    tc, _CANCELLED_RESULT if task.cancelled() else task.result()[1]
                 )
             raise
         for tc, (args, result) in zip(msg.tool_calls, results):

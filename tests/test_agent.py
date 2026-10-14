@@ -803,3 +803,95 @@ def test_sync_run_from_an_async_tool_raises():
         assert agent.run("go") == "ok"
 
     assert "Use the async Agent methods" in agent.messages[2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_tool_raising_cancelled_stops_sibling_calls():
+    """A tool that raises CancelledError also stops the calls still running."""
+    import asyncio
+
+    from cyclops.toolkit.tool import Tool
+
+    sibling_cancelled = asyncio.Event()
+
+    async def cancels() -> str:
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError
+
+    async def slow() -> str:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+        return "done"
+
+    agent = Agent(
+        config=_make_config(),
+        tools=[Tool("cancels", "Cancels", cancels), Tool("slow", "Slow", slow)],
+    )
+    calls = [
+        _make_tool_call("tc_1", "cancels", "{}"),
+        _make_tool_call("tc_2", "slow", "{}"),
+    ]
+    response = _make_completion_response(content=None, tool_calls=calls)
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        with pytest.raises(asyncio.CancelledError):
+            await agent.arun("go")
+
+    assert sibling_cancelled.is_set()
+    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
+    assert [m["content"] for m in tool_messages] == ["Tool call cancelled."] * 2
+
+
+def test_interrupted_sync_run_cancels_the_run():
+    """An interrupt while run() waits cancels the run on the shared loop."""
+    import asyncio
+    import concurrent.futures
+    import threading
+
+    from cyclops.toolkit.tool import Tool
+
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    async def slow() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "done"
+
+    def interrupted(self, timeout=None):
+        started.wait(5)
+        raise KeyboardInterrupt
+
+    agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow", slow)])
+    tc = _make_tool_call("tc_1", "slow", "{}")
+    response = _make_completion_response(content=None, tool_calls=[tc])
+
+    with (
+        patch("litellm.acompletion", new=AsyncMock(return_value=response)),
+        patch.object(concurrent.futures.Future, "result", interrupted),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            agent.run("go")
+
+    assert cancelled.wait(5)
+
+
+def test_run_without_tools_ignores_max_iterations():
+    """max_iterations limits tool rounds; a run without tools still answers."""
+    agent = Agent(config=_make_config(max_iterations=0))
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("hi")),
+    ):
+        result = agent.run_with_response("hello")
+
+    assert result.content == "hi"
+    assert result.stop_reason == "completed"
