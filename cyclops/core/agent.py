@@ -598,12 +598,11 @@ class Agent:
 
     def _supports_response_schema(self) -> bool:
         """True if LiteLLM lists `response_format` schemas for every deployment."""
-        params = self._deployments()
-        return bool(params) and all(
+        return all(
             litellm.supports_response_schema(
                 model=p["model"], custom_llm_provider=p.get("custom_llm_provider")
             )
-            for p in params
+            for p in self._deployments()
         )
 
     def _tools_unsupported(self) -> bool:
@@ -631,14 +630,13 @@ class Agent:
 
     def _caches_at_markers(self) -> bool:
         """True if every deployment of the model caches at cache_control markers."""
-        params = self._deployments()
-        return bool(params) and all(
+        return all(
             _caches_at_markers(
                 *litellm.get_llm_provider(
                     p["model"], custom_llm_provider=p.get("custom_llm_provider")
                 )[:2]
             )
-            for p in params
+            for p in self._deployments()
         )
 
     def _get_tool_mode(self) -> str:
