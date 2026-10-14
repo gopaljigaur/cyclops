@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import json
+import queue
 import threading
 from contextlib import aclosing
 from typing import (
@@ -25,6 +26,7 @@ from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 _CANCELLED_RESULT = "Tool call cancelled."
+_DONE = object()
 
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
@@ -63,15 +65,47 @@ def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
 
 
 def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
-    """Drive an async generator from sync code on the shared loop."""
+    """Drive an async generator from sync code in one task on the shared loop.
+
+    One task keeps the generator's context across chunks. The task fetches a
+    chunk only when the caller asks for one, like `async for` would.
+    """
+    chunks: queue.Queue = queue.Queue()
+    finished = threading.Event()
+
+    async def pump(demand: asyncio.Semaphore) -> None:
+        async with aclosing(agen):
+            while True:
+                await demand.acquire()
+                try:
+                    chunks.put(await agen.__anext__())
+                except StopAsyncIteration:
+                    return
+
+    def on_done(_: asyncio.Task) -> None:
+        chunks.put(_DONE)
+        finished.set()
+
+    async def start() -> Tuple[asyncio.Task, asyncio.Semaphore]:
+        demand = asyncio.Semaphore(0)
+        task = asyncio.ensure_future(pump(demand))
+        task.add_done_callback(on_done)
+        return task, demand
+
+    task, demand = _run_coroutine_sync(start)
+    loop = task.get_loop()
     try:
         while True:
-            try:
-                yield _run_coroutine_sync(agen.__anext__)
-            except StopAsyncIteration:
-                return
+            loop.call_soon_threadsafe(demand.release)
+            chunk = chunks.get()
+            if chunk is _DONE:
+                break
+            yield chunk
+        task.result()
     finally:
-        _run_coroutine_sync(agen.aclose)
+        # Closing early or an interrupt cancels the task; wait for it to unwind.
+        loop.call_soon_threadsafe(task.cancel)
+        finished.wait()
 
 
 class _Run:

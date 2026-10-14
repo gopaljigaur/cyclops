@@ -895,3 +895,63 @@ def test_run_without_tools_ignores_max_iterations():
 
     assert result.content == "hi"
     assert result.stop_reason == "completed"
+
+
+def test_sync_stream_keeps_hook_context():
+    """Hooks of a sync stream run in one context, so a ContextVar token resets."""
+    import contextvars
+
+    var: contextvars.ContextVar = contextvars.ContextVar("run")
+
+    class ContextHooks(AgentHooks):
+        def on_run_start(self, input_message):
+            self.token = var.set(input_message)
+
+        def on_run_end(self, content):
+            var.reset(self.token)
+
+    agent = Agent(config=_make_config(hooks=ContextHooks()))
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_stream([_text_chunk("a"), _text_chunk("b")])),
+    ):
+        assert list(agent.stream("hi")) == ["a", "b"]
+
+
+def test_interrupted_sync_stream_waits_for_cleanup():
+    """An interrupt during a sync stream unwinds the run before returning."""
+    import asyncio
+    import queue
+    import threading
+
+    from cyclops.toolkit.tool import Tool
+
+    started = threading.Event()
+    cleaned = threading.Event()
+
+    async def slow() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.05)
+            cleaned.set()
+            raise
+        return "done"
+
+    def interrupted(self, *args, **kwargs):
+        started.wait(5)
+        raise KeyboardInterrupt
+
+    agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow", slow)])
+    first = [_tool_call_chunk(0, "{}", id="tc_1", name="slow")]
+
+    with (
+        patch("litellm.acompletion", new=AsyncMock(return_value=_stream(first))),
+        patch.object(queue.Queue, "get", interrupted),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            next(agent.stream("go"))
+
+    assert cleaned.is_set()
+    assert agent.messages[-1]["content"] == "Tool call cancelled."
