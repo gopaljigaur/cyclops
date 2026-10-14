@@ -9,6 +9,13 @@ from mcp.types import CallToolResult, Tool as MCPTool, TextContent
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import BaseTool
 from cyclops.toolkit.plugins import PluginManager
+from cyclops.toolkit.types import ToolResult
+
+
+def _text_result(text: str, is_error: bool = False) -> CallToolResult:
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)], isError=is_error
+    )
 
 
 class MCPServer:
@@ -61,10 +68,12 @@ class MCPServer:
                     tool_name=name, **arguments
                 )
             except Exception as e:
-                return CallToolResult(
-                    content=[TextContent(type="text", text=str(e))], isError=True
-                )
-            return CallToolResult(content=[TextContent(type="text", text=str(result))])
+                return _text_result(str(e), is_error=True)
+            if isinstance(result, ToolResult):
+                if not result.success:
+                    return _text_result(result.error or "", is_error=True)
+                result = result.result
+            return _text_result(str(result))
 
     def add_tool(self, tool: BaseTool) -> None:
         """Add a tool to the server"""

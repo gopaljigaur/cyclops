@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from mcp import McpError
 from mcp.types import (
     CallToolResult,
     EmbeddedResource,
@@ -27,6 +26,9 @@ def _mcp_schema_to_params(input_schema: Dict[str, Any]) -> Dict[str, ToolParamet
     _valid = {"string", "integer", "number", "boolean", "array", "object"}
     for name, prop in props.items():
         json_type = prop.get("type", "string")
+        if isinstance(json_type, list):
+            # A union such as ["string", "null"]: describe the first non-null type.
+            json_type = next((t for t in json_type if t != "null"), "string")
         if json_type not in _valid:
             json_type = "string"
         params[name] = ToolParameter(
@@ -100,8 +102,8 @@ class MCPClientTool(BaseTool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         try:
             result = await self.client.call_tool(self.server, self.tool.name, kwargs)
-        except McpError as e:
-            return ToolResult.error_result(e.error.message)
+        except Exception as e:
+            return ToolResult.error_result(str(e) or type(e).__name__)
         return to_tool_result(result)
 
 
