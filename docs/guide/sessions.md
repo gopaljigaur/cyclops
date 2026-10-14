@@ -11,12 +11,14 @@ session = Session()
 agent.run("My name is Alice.", session=session)
 print(agent.run("What is my name?", session=session))
 
-print(session.id, len(session.messages), session.usage.cost)
+print(session.id, len(session.messages), session.usage)
 ```
 
 Every entry point takes `session=`: `run`, `arun`, `run_with_response`, `arun_with_response`, `stream`, `astream`, `stream_events`, `astream_events` and `start`. Without a session, an agent keeps its own history in `agent.messages` as before.
 
 `session.usage` sums the usage of every run, including runs that fail or that `handle.cancel()` stops. Like a run's own `usage`, it becomes `None` once a run reports no usage.
+
+A run that fails or is cancelled leaves what it got to in the transcript: the user message, any completed steps, and an answer for every tool call it made (a cancelled call gets a cancelled result, a call whose middleware raised gets an error), so the session can go on. A completion in progress when the run stopped leaves nothing.
 
 Don't run the same session twice at once: both runs would append to one transcript.
 

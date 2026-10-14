@@ -1,7 +1,9 @@
 """Sessions: a conversation's transcript and usage, and stores to keep them in."""
 
 import asyncio
+import os
 import re
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Protocol, Union
@@ -91,10 +93,13 @@ class FileSessionStore:
     @staticmethod
     def _write(path: Path, data: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Replaced in one step, so a crash mid-write leaves the old session.
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(data, encoding="utf-8")
-        tmp.replace(path)
+        # A temporary file of its own per save, replaced in one step, so
+        # concurrent saves don't collide and a crash leaves the old session.
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False
+        ) as tmp:
+            tmp.write(data)
+        os.replace(tmp.name, path)
 
 
 __all__ = ["Session", "SessionStore", "InMemorySessionStore", "FileSessionStore"]

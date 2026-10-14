@@ -15,6 +15,7 @@ from cyclops import (
 )
 from tests.test_agent import (
     _make_completion_response,
+    _unsupported_params_error,
     _make_config,
     _make_simple_tool,
     _make_tool_call,
@@ -132,10 +133,12 @@ async def test_in_memory_store_saves_copies():
     session = Session(messages=[{"role": "user", "content": "hi"}])
 
     await store.save(session)
+    saved = session.model_copy(deep=True)
+    session.messages.append({"role": "assistant", "content": "hello"})
     loaded = await store.load(session.id)
-    assert loaded == session
-    loaded.messages.append({"role": "assistant", "content": "hello"})
-    assert await store.load(session.id) == session
+    assert loaded == saved
+    loaded.messages.clear()
+    assert await store.load(session.id) == saved
 
     await store.delete(session.id)
     assert await store.load(session.id) is None
@@ -172,3 +175,87 @@ def test_agent_no_longer_takes_memory():
 
     with pytest.raises(TypeError):
         Agent(config=_make_config(), memory=InMemoryStorage())  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_file_store_takes_concurrent_saves(tmp_path):
+    store = FileSessionStore(tmp_path)
+    sessions = [
+        Session(id="chat", messages=[{"role": "user", "content": str(i)}])
+        for i in range(20)
+    ]
+
+    await asyncio.gather(*(store.save(s) for s in sessions))
+
+    assert await store.load("chat") in sessions
+    assert [p.name for p in tmp_path.iterdir()] == ["chat.json"]
+
+
+def test_raising_middleware_leaves_every_call_answered_in_the_session():
+    from cyclops.core.middleware import ToolMiddleware
+
+    class Broken(ToolMiddleware):
+        async def before_tool(self, call):
+            raise RuntimeError("policy store down")
+
+    agent = Agent(
+        config=_make_config(middleware=[Broken()]), tools=[_make_simple_tool()]
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        result = agent.run_with_response("2 + 3?", session=session)
+
+    assert result.stop_reason == "error"
+    calls = [tc["id"] for m in session.messages for tc in m.get("tool_calls", [])]
+    answered = [m["tool_call_id"] for m in session.messages if m["role"] == "tool"]
+    assert calls == answered == ["tc_1"]
+    assert session.usage.total_tokens == 30
+
+
+@pytest.mark.asyncio
+async def test_cancelled_run_counts_in_the_session_usage():
+    from cyclops.toolkit.tool import Tool
+
+    started = asyncio.Event()
+
+    async def slow() -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "done"
+
+    agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow tool", slow)])
+    session = Session()
+    tc = _make_tool_call("tc_1", "slow", "{}")
+    response = _make_completion_response(content=None, tool_calls=[tc])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        handle = agent.start("go", stream=False, session=session)
+        await started.wait()
+        handle.cancel()
+        result = await handle
+
+    assert result.stop_reason == "cancelled"
+    assert session.usage.total_tokens == 30
+    assert session.messages[-1]["content"] == "Tool call cancelled."
+
+
+def test_naive_fallback_keeps_one_attempt_in_the_session():
+    agent = Agent(config=_make_config("ollama/llama2"), tools=[_make_simple_tool()])
+    session = Session()
+    responses = [
+        _unsupported_params_error(),
+        _make_completion_response('{"tool": "add", "args": {"a": 1, "b": 2}}'),
+        _make_completion_response("It is 3."),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        assert agent.run("1 + 2?", session=session) == "It is 3."
+
+    assert [m["content"] for m in session.messages] == [
+        "1 + 2?",
+        "[Used tool: add]",
+        "Tool result: 3",
+        "It is 3.",
+    ]
+    assert agent.messages == []
