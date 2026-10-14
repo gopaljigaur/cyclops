@@ -101,7 +101,8 @@ StopReason = Literal["completed", "max_steps", "budget", "cancelled", "error"]
 class RunResult(BaseModel):
     """What one agent run produced and why it stopped."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    # forbid: the former token and cost fields are now properties over usage.
+    model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     content: str = Field(
         default="", description="The final answer; empty unless the run completed"

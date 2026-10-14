@@ -359,8 +359,10 @@ class Agent:
                 system_prompt or _DEFAULT_SYSTEM_PROMPT
             ) + self._build_tools_prompt()
 
+        # Limits count what is known, even once the reported totals are not.
+        spent_tokens, spent_cost = 0, 0.0
         for step in range(self.config.max_steps if mode != "none" else 1):
-            if step and self._over_budget(run):
+            if step and self._over_budget(spent_tokens, spent_cost):
                 run.stop_reason = "budget"
                 return
             messages = self._build_messages(system_prompt)
@@ -385,6 +387,9 @@ class Agent:
                 self.config.hooks.on_llm_end(response)
             run.steps += 1
             step_usage = _usage(response)
+            if step_usage is not None:
+                spent_tokens += step_usage.total_tokens
+                spent_cost += step_usage.cost or 0.0
             if run.usage is None or step_usage is None:
                 run.usage = None
             else:
@@ -418,21 +423,13 @@ class Agent:
 
         run.stop_reason = "max_steps"
 
-    def _over_budget(self, run: RunResult) -> bool:
-        """True once the run reached max_total_tokens or max_cost.
-
-        Unknown usage or cost does not count against a limit.
-        """
-        usage = run.usage
-        if usage is None:
-            return False
+    def _over_budget(self, tokens: int, cost: float) -> bool:
+        """True once tokens or cost reached max_total_tokens or max_cost."""
         max_tokens = self.config.max_total_tokens
-        if max_tokens is not None and usage.total_tokens >= max_tokens:
+        if max_tokens is not None and tokens >= max_tokens:
             return True
         max_cost = self.config.max_cost
-        return (
-            max_cost is not None and usage.cost is not None and usage.cost >= max_cost
-        )
+        return max_cost is not None and cost >= max_cost
 
     async def _run_native_tool_calls(self, msg, run: RunResult) -> None:
         self._append_tool_call_message(msg)
