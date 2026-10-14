@@ -55,9 +55,9 @@ class AgentHooks:
         """Fired after successful tool execution."""
 
     def on_tool_error(
-        self, tool_name: str, args: Dict[str, Any], error: Exception
+        self, tool_name: str, args: Dict[str, Any], error: BaseException
     ) -> None:
-        """Fired when a tool raises an exception."""
+        """Fired when a tool raises an exception or is cancelled."""
 
 
 __all__ = ["AgentHooks", "current_tool_call_id"]

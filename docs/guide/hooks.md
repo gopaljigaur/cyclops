@@ -41,7 +41,7 @@ agent.run("What is the weather in London?")
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
 | `on_tool_start(tool_name, args)` | Before each tool execution | `"deny"` to block, anything else to allow |
 | `on_tool_end(tool_name, args, result)` | After a tool executes successfully; `result` is the text sent to the model | `None` |
-| `on_tool_error(tool_name, args, error)` | When a tool raises an exception | `None` |
+| `on_tool_error(tool_name, args, error)` | When a tool raises an exception or is cancelled | `None` |
 
 All methods are no-ops by default. Override only the ones you need.
 
@@ -114,7 +114,7 @@ class ErrorHooks(AgentHooks):
     def on_llm_error(self, error: Exception) -> None:
         logger.error("LLM call failed: %s", error)
 
-    def on_tool_error(self, tool_name: str, args: dict, error: Exception) -> None:
+    def on_tool_error(self, tool_name: str, args: dict, error: BaseException) -> None:
         logger.error("Tool %r failed with args %r: %s", tool_name, args, error)
 ```
 

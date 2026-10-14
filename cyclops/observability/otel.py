@@ -242,6 +242,6 @@ class TelemetryHooks(AgentHooks):
             frame.span.end()
 
     def on_tool_error(
-        self, tool_name: str, args: dict[str, Any], error: Exception
+        self, tool_name: str, args: dict[str, Any], error: BaseException
     ) -> None:
         self._fail(self._pop(), error)

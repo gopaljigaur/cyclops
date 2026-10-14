@@ -460,6 +460,10 @@ class Agent:
                     name, args, _split_images(result.to_message_content())[0]
                 )
             return result
+        except asyncio.CancelledError as e:
+            if hooks:
+                hooks.on_tool_error(name, args, e)
+            raise
         except Exception as e:
             if hooks:
                 hooks.on_tool_error(name, args, e)

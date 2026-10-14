@@ -18,6 +18,7 @@ from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
 from opentelemetry.trace import StatusCode
 
 from cyclops.core.agent import Agent
+from cyclops.core.hooks import current_tool_call_id
 from cyclops.core.types import AgentConfig
 from cyclops.observability import TelemetryHooks
 from cyclops.observability.otel import _frame
@@ -230,8 +231,12 @@ async def test_naive_fallback_inside_a_tool_keeps_the_trace(hooks, exporter):
     # The inner model rejects native tools; its run recovers in naive mode.
     inner = Agent(AgentConfig(model="ollama/llama2", hooks=hooks), tools=[_echo_tool()])
 
+    ids_after_inner_run = []
+
     async def ask(question: str) -> str:
-        return await inner.arun(question)
+        answer = await inner.arun(question)
+        ids_after_inner_run.append(current_tool_call_id())
+        return answer
 
     outer = Agent(
         AgentConfig(model="gpt-4o-mini", hooks=hooks),
@@ -262,7 +267,38 @@ async def test_naive_fallback_inside_a_tool_keeps_the_trace(hooks, exporter):
     assert inner_children == ["chat", "chat", "execute_tool echo", "chat"]
     rejected = _children(spans, inner_root)[0]
     assert rejected.attributes["error.type"] == "UnsupportedParamsError"
+    # The inner naive call has no id of its own and does not inherit the outer one.
+    (echo,) = [s for s in spans if s.name == "execute_tool echo"]
+    assert "gen_ai.tool.call.id" not in echo.attributes
+    assert ask_span.attributes["gen_ai.tool.call.id"] == "call-1"
+    assert ids_after_inner_run == ["call-1"]
     _assert_context_clean()
+
+
+async def test_cancelled_tool_ends_its_span(hooks, exporter):
+    started = asyncio.Event()
+
+    async def slow() -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "late"
+
+    agent = Agent(
+        AgentConfig(model="gpt-4o-mini", hooks=hooks),
+        tools=[Tool(name="slow", description="Sleeps", func=slow)],
+    )
+    first = _response(tool_calls=[_tool_call("call-1", "slow", "{}")])
+    with patch("litellm.acompletion", new=AsyncMock(return_value=first)):
+        task = asyncio.ensure_future(agent.arun("go"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ("execute_tool slow", "invoke_agent"):
+        assert spans[name].status.status_code == StatusCode.ERROR
+        assert spans[name].attributes["error.type"] == "CancelledError"
 
 
 async def test_tool_error_fails_its_span_and_restores_context(hooks, exporter):

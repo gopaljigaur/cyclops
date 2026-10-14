@@ -130,7 +130,7 @@ class AgentHooks:
     def on_llm_error(self, error: Exception) -> None: ...
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]: ...
     def on_tool_end(self, tool_name: str, args: Dict[str, Any], result: str) -> None: ...
-    def on_tool_error(self, tool_name: str, args: Dict[str, Any], error: Exception) -> None: ...
+    def on_tool_error(self, tool_name: str, args: Dict[str, Any], error: BaseException) -> None: ...
 ```
 
 | Method | When it fires | Return value |
@@ -143,7 +143,7 @@ class AgentHooks:
 | `on_llm_error` | When a LiteLLM call raises an exception | `None` |
 | `on_tool_start` | Before each tool execution | `"deny"` to block, anything else to allow |
 | `on_tool_end` | After a tool executes successfully | `None` |
-| `on_tool_error` | When a tool raises an exception | `None` |
+| `on_tool_error` | When a tool raises an exception or is cancelled | `None` |
 
 See [Hooks guide](/guides/hooks/) for full documentation.
 
