@@ -24,10 +24,22 @@ from typing import (
 import litellm
 
 from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
+from cyclops.toolkit.types import ToolResult
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 _CANCELLED_RESULT = "Tool call cancelled."
+# LiteLLM turns image parts of a tool message into the provider's own image
+# blocks for these providers; others accept only text in a tool message.
+_TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini", "vertex_ai"}
 _DONE = object()
+
+
+def _split_images(content: Any) -> Tuple[str, List[Dict[str, Any]]]:
+    """Split rendered tool message content into its text and its image parts."""
+    if isinstance(content, str):
+        return content, []
+    text = "\n".join(p["text"] for p in content if p["type"] == "text")
+    return text, [p for p in content if p["type"] == "image_url"]
 
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
@@ -315,12 +327,14 @@ class Agent:
             if tool_call:
                 name = tool_call["tool"]
                 result = await self._call_tool(name, tool_call.get("args", {}))
+                text, images = _split_images(result.to_message_content())
                 self._history.append(
                     {"role": "assistant", "content": f"[Used tool: {name}]"}
                 )
-                self._history.append(
-                    {"role": "user", "content": f"Tool result: {result}"}
-                )
+                message: Any = f"Tool result: {text}"
+                if images:
+                    message = [{"type": "text", "text": message}, *images]
+                self._history.append({"role": "user", "content": message})
                 continue
 
             self._history.append({"role": "assistant", "content": content})
@@ -347,20 +361,35 @@ class Agent:
             await asyncio.wait(tasks)
             for tc, task in zip(msg.tool_calls, tasks):
                 self._append_tool_result(
-                    tc, _CANCELLED_RESULT if task.cancelled() else task.result()[1]
+                    tc,
+                    (
+                        _CANCELLED_RESULT
+                        if task.cancelled()
+                        else _split_images(task.result()[1].to_message_content())[0]
+                    ),
                 )
             raise
+        moved_images: List[Dict[str, Any]] = []
         for tc, (args, result) in zip(msg.tool_calls, results):
+            content: Any = result.to_message_content()
+            text, images = _split_images(content)
             run.tool_calls.append(
-                ToolCall(id=tc.id, name=tc.function.name, arguments=args, result=result)
+                ToolCall(id=tc.id, name=tc.function.name, arguments=args, result=text)
             )
-            self._append_tool_result(tc, result)
+            if images and not self._tool_message_images_supported():
+                label = f"Images returned by {tc.function.name}:"
+                moved_images += [{"type": "text", "text": label}, *images]
+                content = text
+            self._append_tool_result(tc, content)
+        # Must follow all tool messages of the round
+        if moved_images:
+            self._history.append({"role": "user", "content": moved_images})
 
     # ------------------------------------------------------------------
     # Tool execution helpers
     # ------------------------------------------------------------------
 
-    async def _execute_tool_call(self, tool_call) -> Tuple[Dict[str, Any], str]:
+    async def _execute_tool_call(self, tool_call) -> Tuple[Dict[str, Any], ToolResult]:
         """Parse a native tool call's arguments and run it. Returns (args, result)."""
         name = tool_call.function.name
         raw = tool_call.function.arguments
@@ -368,32 +397,39 @@ class Agent:
             # Some providers send "" for a call without arguments.
             args = json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
-            return {}, f"Error: arguments for {name} are not valid JSON: {e}"
+            return {}, ToolResult.error_result(
+                f"arguments for {name} are not valid JSON: {e}"
+            )
         if not isinstance(args, dict):
-            return {}, f"Error: arguments for {name} must be a JSON object"
+            return {}, ToolResult.error_result(
+                f"arguments for {name} must be a JSON object"
+            )
         return args, await self._call_tool(name, args)
 
-    async def _call_tool(self, name: str, args: Dict[str, Any]) -> str:
+    async def _call_tool(self, name: str, args: Dict[str, Any]) -> ToolResult:
         """Run a tool by name, applying hook gates. Sync tools run in a worker thread."""
         tool = self._tools_by_name.get(name)
         if not tool:
-            return f"Error: Tool '{name}' not found"
+            return ToolResult.error_result(f"Tool '{name}' not found")
         hooks = self.config.hooks
         if hooks is not None and hooks.on_tool_start(name, args) == "deny":
-            return f"[Tool '{name}' was not approved]"
+            return ToolResult.error_result(f"Tool '{name}' was not approved")
         try:
             if inspect.iscoroutinefunction(tool.execute):
                 result = await tool.execute(**args)
             else:
                 result = await asyncio.to_thread(tool.execute, **args)
-            result_str = str(result)
+            if not isinstance(result, ToolResult):
+                result = ToolResult.success_result(result)
             if hooks:
-                hooks.on_tool_end(name, args, result_str)
-            return result_str
+                hooks.on_tool_end(
+                    name, args, _split_images(result.to_message_content())[0]
+                )
+            return result
         except Exception as e:
             if hooks:
                 hooks.on_tool_error(name, args, e)
-            return f"Error executing {name}: {str(e)}"
+            return ToolResult.error_result(f"{name} failed: {e}")
 
     # ------------------------------------------------------------------
     # History helpers
@@ -418,12 +454,12 @@ class Agent:
             }
         )
 
-    def _append_tool_result(self, tc, result: str) -> None:
+    def _append_tool_result(self, tc, content: Any) -> None:
         self._history.append(
             {
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": result,
+                "content": content,
                 "name": tc.function.name,
             }
         )
@@ -464,15 +500,18 @@ class Agent:
     # Tool mode detection
     # ------------------------------------------------------------------
 
-    def _tools_unsupported(self) -> bool:
-        """True if LiteLLM lists no `tools` support for every deployment of the model."""
+    def _deployments(self) -> List[Dict[str, Any]]:
+        """LiteLLM params of every deployment the model resolves to."""
         if self.config.router:
-            params = [
+            return [
                 d["litellm_params"]
                 for d in self.config.router.get_model_list(self.config.model) or []
             ]
-        else:
-            params = [{"model": self.config.model}]
+        return [{"model": self.config.model}]
+
+    def _tools_unsupported(self) -> bool:
+        """True if LiteLLM lists no `tools` support for every deployment of the model."""
+        params = self._deployments()
         for p in params:
             supported = litellm.get_supported_openai_params(
                 model=p["model"], custom_llm_provider=p.get("custom_llm_provider")
@@ -480,6 +519,15 @@ class Agent:
             if supported is None or "tools" in supported:
                 return False
         return bool(params)
+
+    def _tool_message_images_supported(self) -> bool:
+        """True if every deployment of the model takes images in a tool message."""
+        params = self._deployments()
+        return bool(params) and all(
+            (p.get("custom_llm_provider") or litellm.get_llm_provider(p["model"])[1])
+            in _TOOL_MESSAGE_IMAGE_PROVIDERS
+            for p in params
+        )
 
     def _get_tool_mode(self) -> str:
         if not self.tools:

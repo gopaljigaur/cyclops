@@ -135,7 +135,13 @@ def render_chart(series: list[float]) -> ToolResult:
     )
 ```
 
-`ToolResult.to_message_content()` renders a result as the content of a tool message in OpenAI chat format: a string for text, or a list of `text` and `image_url` parts when there are images. OpenAI itself accepts only text parts in a tool message. A failed result starts with `Error:`, and `result` is rendered as JSON only when there are no content blocks.
+The agent sends every result to the model through `ToolResult.to_message_content()`, wrapping a plain return value with `ToolResult.success_result()`:
+
+- Text renders as a string. `result` is rendered as JSON only when there are no content blocks, so a plain string stays as it is and a dict or list becomes JSON.
+- A failed result starts with `Error:`, so the model sees that the call failed. A tool that raises, a denied call and invalid arguments are reported the same way.
+- Images are sent in the tool message for providers whose tool messages take images through LiteLLM (Anthropic, Bedrock, Gemini, Vertex AI). Other providers, OpenAI among them, accept only text there: the tool message gets the text, and the images follow in a user message after the round's tool messages. In naive tool mode the images go in the user message that carries the tool result.
+
+Hooks (`on_tool_end`) and `AgentResponse.tool_calls` receive the text of the result.
 
 ## Annotations
 
@@ -193,7 +199,7 @@ result = asyncio.run(registry.execute_tool("ping", host="example.com"))
 
 ## Using tools with Agent
 
-Pass any iterable of tools (decorated functions or `BaseTool` instances) to the `Agent` constructor.
+Pass any iterable of tools (decorated functions or `BaseTool` instances) to the `Agent` constructor. Tool names must be unique; the constructor raises `ValueError` on a duplicate.
 
 ```python
 from cyclops import Agent, AgentConfig
