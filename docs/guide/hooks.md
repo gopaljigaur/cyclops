@@ -35,6 +35,7 @@ agent.run("What is the weather in London?")
 |---|---|---|
 | `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
 | `on_run_end(content)` | When a run finishes, streamed or not | `None` |
+| `on_run_error(error)` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early | `None` |
 | `on_llm_start(messages)` | Before each LiteLLM completion call | `None` |
 | `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
@@ -43,6 +44,8 @@ agent.run("What is the weather in London?")
 | `on_tool_error(tool_name, args, error)` | When a tool raises an exception | `None` |
 
 All methods are no-ops by default. Override only the ones you need.
+
+In the tool hooks, `cyclops.core.hooks.current_tool_call_id()` returns the id of the native tool call being run (`None` in naive mode). Each native call runs in its own asyncio task, so the id is exact when calls run in parallel.
 
 ## Tool approval with on_tool_start
 

@@ -124,6 +124,7 @@ Lifecycle callback base class. Subclass and override any methods you need.
 class AgentHooks:
     def on_run_start(self, input_message: str) -> None: ...
     def on_run_end(self, content: str) -> None: ...
+    def on_run_error(self, error: BaseException) -> None: ...
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
     def on_llm_end(self, response: Any) -> None: ...
     def on_llm_error(self, error: Exception) -> None: ...
@@ -135,9 +136,10 @@ class AgentHooks:
 | Method | When it fires | Return value |
 |---|---|---|
 | `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
-| `on_run_end` | After `run()` or `arun()` returns | `None` |
+| `on_run_end` | When a run finishes, streamed or not | `None` |
+| `on_run_error` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early | `None` |
 | `on_llm_start` | Before each LiteLLM completion call | `None` |
-| `on_llm_end` | After each non-streaming completion call | `None` |
+| `on_llm_end` | After each completion; for a stream, with the assembled response | `None` |
 | `on_llm_error` | When a LiteLLM call raises an exception | `None` |
 | `on_tool_start` | Before each tool execution | `"deny"` to block, anything else to allow |
 | `on_tool_end` | After a tool executes successfully | `None` |
