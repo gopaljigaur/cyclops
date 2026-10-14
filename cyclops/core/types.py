@@ -19,6 +19,12 @@ class AgentConfig(BaseModel):
     router: Optional[Any] = None
     max_iterations: int = 10
     hooks: Optional[AgentHooks] = None
+    # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
+    # api_base, extra_headers, num_retries, timeout, reasoning_effort, thinking.
+    completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    # Mark the system prompt and the latest message as cache breakpoints, for
+    # providers that cache at cache_control markers.
+    prompt_caching: bool = False
 
 
 class Message(BaseModel):
@@ -29,6 +35,8 @@ class Message(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    thinking_blocks: Optional[List[Dict[str, Any]]] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Message":

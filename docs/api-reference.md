@@ -43,6 +43,8 @@ class AgentConfig(BaseModel):
     router: Optional[Any] = None   # LiteLLM Router
     max_iterations: int = 10
     hooks: Optional[AgentHooks] = None
+    completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
+    prompt_caching: bool = False
 ```
 
 ---
@@ -112,6 +114,8 @@ class Message(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    thinking_blocks: Optional[List[Dict[str, Any]]] = None
 ```
 
 ---

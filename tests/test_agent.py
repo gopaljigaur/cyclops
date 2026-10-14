@@ -29,7 +29,7 @@ def _make_config(model: str = "gpt-3.5-turbo", **kwargs) -> AgentConfig:
 
 def _make_completion_response(content: str, tool_calls=None):
     """Build a minimal mock litellm completion response."""
-    msg = MagicMock()
+    msg = MagicMock(reasoning_content=None, thinking_blocks=None)
     msg.content = content
     msg.tool_calls = tool_calls or []
 

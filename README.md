@@ -72,6 +72,7 @@ print(agent.run("What is Apple's stock price?"))
 | **MCP** | Connect to any MCP server as a tool source, or expose your tools as an MCP server |
 | **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically |
 | **Any LLM** | OpenAI, Anthropic, Groq, Gemini, Ollama, Together AI, Bedrock, and 100+ more via LiteLLM |
+| **Provider options** | `completion_kwargs` passes any LiteLLM argument (keys, headers, retries, thinking); reasoning stays in history; opt-in `prompt_caching` |
 | **Fallback routing** | Pass a LiteLLM Router for automatic failover and load balancing |
 | **Naive mode** | Prompt-based tool calling for models without native function calling support |
 

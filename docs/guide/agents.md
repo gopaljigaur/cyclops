@@ -27,6 +27,8 @@ config = AgentConfig(
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
 | `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
+| `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
+| `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |
 
 ## Constructing an Agent
 
@@ -133,6 +135,59 @@ agent.reset()
 # History is now empty; the agent has forgotten the code word.
 response = agent.run("What was the code word?")
 ```
+
+## Provider options
+
+`completion_kwargs` is passed to every LiteLLM completion call the agent makes, so any argument LiteLLM accepts works per agent: credentials, endpoints, headers, retries, timeouts and reasoning settings. Keys here win over `temperature` and `max_tokens`.
+
+```python
+import os
+
+config = AgentConfig(
+    model="anthropic/claude-sonnet-4-5",
+    temperature=1,  # Anthropic requires 1 with extended thinking
+    completion_kwargs={
+        "api_key": os.environ["MY_ANTHROPIC_KEY"],
+        "extra_headers": {"X-Request-Source": "docs"},
+        "num_retries": 3,
+        "timeout": 60,
+        "max_tokens": 8192,
+        "thinking": {"type": "enabled", "budget_tokens": 4096},
+    },
+)
+```
+
+For OpenAI style reasoning models use `"reasoning_effort": "low"` and so on. See the [LiteLLM input docs](https://docs.litellm.ai/docs/completion/input) for every argument.
+
+## Reasoning in history
+
+When a model returns reasoning, the assistant messages in `agent.messages` keep it as `reasoning_content` and, for Anthropic extended thinking, `thinking_blocks` with their signatures. They are sent back on the next call, which Anthropic requires when thinking is combined with tool use: the signed thinking block has to precede the tool call it led to.
+
+```python
+agent.run("What is 17 * 23? Use the calculator.")
+for msg in agent.messages:
+    if "thinking_blocks" in msg:
+        print(msg["thinking_blocks"][0]["thinking"])
+```
+
+## Prompt caching
+
+`prompt_caching=True` asks LiteLLM to mark two cache breakpoints on every call: the system prompt, which caches the tool definitions before it too, and the latest message, which caches the conversation so far. Each tool round then reads the earlier prefix from the cache.
+
+The markers are sent only to providers that cache at them (Anthropic, Bedrock, and Anthropic models on Vertex AI), and only for models that LiteLLM lists with prompt caching (`supports_prompt_caching`). Through a `router`, every deployment of the model has to qualify. Every other model gets no markers: OpenAI caches long prefixes without them, Gemini would turn them into billed explicit cache resources, and Bedrock models that LiteLLM lists without prompt caching (such as Llama) get none. A model missing from LiteLLM's model map gets no markers either.
+
+```python
+config = AgentConfig(
+    model="anthropic/claude-sonnet-4-5",
+    system_prompt=LONG_INSTRUCTIONS,
+    prompt_caching=True,
+)
+agent = Agent(config)
+response = agent.run_with_response("Summarise the report.")
+print(response.cached_tokens)
+```
+
+Providers only cache a prefix above a minimum length (1024 tokens for most Anthropic models). To place breakpoints yourself, leave `prompt_caching` off and pass LiteLLM's `cache_control_injection_points` in `completion_kwargs`.
 
 ## max_iterations
 
