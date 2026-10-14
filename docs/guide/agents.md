@@ -28,7 +28,7 @@ config = AgentConfig(
 | `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
-| `prompt_caching` | `bool` | `False` | Mark cache breakpoints for Anthropic, Bedrock and Claude on Vertex AI. See [Prompt caching](#prompt-caching). |
+| `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |
 
 ## Constructing an Agent
 
@@ -174,7 +174,7 @@ for msg in agent.messages:
 
 `prompt_caching=True` asks LiteLLM to mark two cache breakpoints on every call: the system prompt, which caches the tool definitions before it too, and the latest message, which caches the conversation so far. Each tool round then reads the earlier prefix from the cache.
 
-The markers are sent only to providers that cache at them: Anthropic, Bedrock, and Claude models on Vertex AI. Through a `router`, every deployment of the model has to be one of these. Other models get no markers, so the flag is safe to leave on when switching models: OpenAI caches long prefixes without markers, and Gemini would turn them into billed explicit cache resources.
+The markers are sent only to providers that cache at them (Anthropic, Bedrock, and Anthropic models on Vertex AI), and only for models that LiteLLM lists with prompt caching (`supports_prompt_caching`). Through a `router`, every deployment of the model has to qualify. Every other model gets no markers: OpenAI caches long prefixes without them, Gemini would turn them into billed explicit cache resources, and Bedrock models without prompt caching (such as Llama) reject them. A model missing from LiteLLM's model map gets no markers either.
 
 ```python
 config = AgentConfig(
