@@ -1,7 +1,9 @@
 """Tests for cyclops toolkit: @tool decorator, BaseTool, schemas, results and registry."""
 
 import asyncio
+import json
 import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, List, Literal, Optional
 
@@ -589,6 +591,28 @@ class TestToolResult:
         assert r.success is True
         assert r.is_error is False
         assert r.to_message_content() == '{"a": 1}'
+
+    def test_models_and_dataclasses_render_as_json(self):
+        @dataclass
+        class Row:
+            point: Point
+            tags: List[str]
+
+        r = ToolResult.success_result({"rows": [Row(Point(x=1, y=2), ["a"])]})
+        assert json.loads(r.to_message_content()) == {
+            "rows": [{"point": {"x": 1, "y": 2}, "tags": ["a"]}]
+        }
+        assert ToolResult.success_result(Point(x=1, y=2)).to_message_content() == (
+            '{"x": 1, "y": 2}'
+        )
+
+    def test_unserializable_value_falls_back_to_str(self):
+        class Opaque:
+            def __str__(self):
+                return "opaque"
+
+        r = ToolResult.success_result({"v": Opaque()})
+        assert r.to_message_content() == '{"v": "opaque"}'
 
     def test_string_result_is_not_quoted(self):
         assert ToolResult.success_result("done").to_message_content() == "done"

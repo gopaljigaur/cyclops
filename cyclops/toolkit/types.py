@@ -3,6 +3,7 @@
 import json
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
+from pydantic_core import to_jsonable_python
 
 
 class ToolParameter(BaseModel):
@@ -124,7 +125,7 @@ class ToolResult(BaseModel):
             text = (
                 self.result
                 if isinstance(self.result, str)
-                else json.dumps(self.result, default=str)
+                else json.dumps(to_jsonable_python(self.result, fallback=str))
             )
             parts.append({"type": "text", "text": text})
         if all(part["type"] == "text" for part in parts):
