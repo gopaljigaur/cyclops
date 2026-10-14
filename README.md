@@ -202,7 +202,7 @@ agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHook
 agent.run("What files are in the current directory?")
 ```
 
-Span hierarchy per run: `agent.run` → `llm.completion` (with token counts + latency) and `tool.<name>` children. See [Observability guide](https://cyclops.gopalji.me/guides/observability/) for OTLP/Jaeger setup and full attribute reference.
+Span hierarchy per run: `invoke_agent` with `chat` (token counts) and `execute_tool <name>` children, using the OpenTelemetry GenAI semantic conventions. The factories build their own tracer provider; pass `TelemetryHooks(tracer_provider=...)` to use yours. One instance is safe to share across concurrent runs. See [Observability guide](https://cyclops.gopalji.me/guides/observability/) for OTLP/Jaeger setup and full attribute reference.
 
 ## Providers
 

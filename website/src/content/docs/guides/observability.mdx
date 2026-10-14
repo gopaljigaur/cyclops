@@ -6,7 +6,7 @@ description: Emit OpenTelemetry spans for every agent event.
 import exampleSrc from '../../../../../examples/otel_example.py?raw';
 import { Code } from '@astrojs/starlight/components';
 
-`TelemetryHooks` instruments every agent run with [OpenTelemetry](https://opentelemetry.io/) spans. Configure any OTLP-compatible backend — Jaeger, Honeycomb, Grafana Tempo, Datadog, or the console — then pass `TelemetryHooks()` to `AgentConfig`.
+`TelemetryHooks` instruments every agent run with [OpenTelemetry](https://opentelemetry.io/) spans. Send them to any OTLP backend (Jaeger, Honeycomb, Grafana Tempo, Datadog) or to the console by passing a `TelemetryHooks` instance to `AgentConfig`.
 
 ## Quick start
 
@@ -17,38 +17,62 @@ agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant", hooks=TelemetryHook
 agent.run("Summarise the Pythagorean theorem.")
 ```
 
-`TelemetryHooks.console()` sets up a `TracerProvider` and `ConsoleSpanExporter` automatically — no boilerplate required. Spans are flushed automatically at the end of each run.
+`TelemetryHooks.console()` builds its own `TracerProvider` with a `ConsoleSpanExporter`. It does not touch the global tracer provider. Spans are exported in batches; call `hooks.flush()` when you need them out immediately (the provider also flushes at interpreter exit).
+
+## Your own tracer provider
+
+Pass the provider your application already configures. Without one, spans go to the global provider.
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+
+provider = TracerProvider()
+# provider.add_span_processor(...)
+hooks = TelemetryHooks(tracer_provider=provider)
+```
+
+Flushing and shutdown stay with your application.
+
+## Concurrent runs
+
+One `TelemetryHooks` instance can serve many runs at once, from threads or asyncio tasks. Span state is kept in a `ContextVar`, so each run gets its own root span and parallel tool calls in one run each get their own span. A run started while an OpenTelemetry span is current (for example inside a request handler, or an agent called from another agent's tool) becomes a child of that span. This holds for `run()` and `stream()` too: the sync methods carry the caller's context onto the loop that runs them.
+
+A run that raises, is cancelled, or whose stream is closed early ends its span with status `ERROR`, together with any LLM or tool span it cut short. An LLM error the agent recovers from (a model that rejects native tool calls, retried in naive mode) fails only that `chat` span.
 
 ## Span hierarchy
 
 Each `agent.run()` call produces a root span with nested children:
 
 ```
-agent.run
-├── llm.completion
-├── tool.<name>
-├── llm.completion
-└── tool.<name>
+invoke_agent
+├── chat
+├── execute_tool <name>
+├── chat
+└── execute_tool <name>
 ```
+
+Span names and `gen_ai.*` attributes follow the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) in part: the hooks do not receive the request model or the provider, so `gen_ai.request.model` and `gen_ai.provider.name` are not set yet. While an LLM call or a tool runs, its span is the current span, so spans from an instrumented HTTP client or from the tool's own code nest under it.
 
 ## Span attributes
 
 | Span | Attribute | Description |
 |---|---|---|
-| `agent.run` | `agent.input.length` | Character length of the input message |
-| `agent.run` | `agent.output.length` | Character length of the final response |
-| `llm.completion` | `llm.message_count` | Number of messages sent to the LLM |
-| `llm.completion` | `llm.model` | Model identifier returned by the API |
-| `llm.completion` | `llm.prompt_tokens` | Prompt token count |
-| `llm.completion` | `llm.completion_tokens` | Completion token count |
-| `llm.completion` | `llm.total_tokens` | Total token count |
-| `llm.completion` | `llm.latency_ms` | Round-trip latency in milliseconds |
-| `tool.<name>` | `tool.name` | Tool name |
-| `tool.<name>` | `tool.args_count` | Number of arguments passed |
-| `tool.<name>` | `tool.result.length` | Character length of the tool result |
-| Any | `error` | `true` when the span represents a failure |
-| Any | `error.message` | Exception message |
-| Any | `error.type` | Exception class name |
+| all | `gen_ai.operation.name` | `invoke_agent`, `chat` or `execute_tool` |
+| `invoke_agent` | `cyclops.input.length` | Character length of the input message |
+| `invoke_agent` | `cyclops.output.length` | Character length of the final response |
+| `chat` | `cyclops.llm.message_count` | Number of messages sent to the LLM |
+| `chat` | `gen_ai.response.model` | Model identifier returned by the API |
+| `chat` | `gen_ai.response.id` | Response id returned by the API |
+| `chat` | `gen_ai.response.finish_reasons` | Finish reason of each choice |
+| `chat` | `gen_ai.usage.input_tokens` | Prompt token count |
+| `chat` | `gen_ai.usage.output_tokens` | Completion token count |
+| `execute_tool <name>` | `gen_ai.tool.name` | Tool name |
+| `execute_tool <name>` | `gen_ai.tool.call.id` | Tool call id (native tool calls only) |
+| `execute_tool <name>` | `cyclops.tool.args_count` | Number of arguments passed |
+| `execute_tool <name>` | `cyclops.tool.result.length` | Character length of the tool result |
+| any failed span | `error.type` | Exception class name; the span status is `ERROR` and the exception is recorded as an event |
+
+Latency is the span duration.
 
 ## Send to Jaeger (OTLP)
 
@@ -80,7 +104,7 @@ Then open [http://localhost:16686](http://localhost:16686) and search for servic
 
 ## Known limitation
 
-`on_run_end` is not called for `stream()` / `astream()`, so the root `agent.run` span is not closed for streaming runs. Use `run()` or `arun()` if you need complete traces.
+`on_run_end` is not called for `stream()` / `astream()`, so the root `invoke_agent` span is not closed for streaming runs. Use `run()` or `arun()` if you need complete traces.
 
 ## Full example
 
