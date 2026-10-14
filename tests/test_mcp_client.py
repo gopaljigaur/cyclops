@@ -245,6 +245,7 @@ def test_bridge_tools_work_from_another_loop():
         add = next(t for t in tools if t.name == "demo__add")
         assert asyncio.run(add.execute(a=4, b=5)).result == "9"
         assert bridge.connected_names == ["demo"]
+        assert [t.name for t in bridge.tools(["demo"])] == [t.name for t in tools]
     finally:
         bridge.stop()
 

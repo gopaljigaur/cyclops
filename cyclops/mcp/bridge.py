@@ -50,7 +50,11 @@ class MCPBridge:
         self._run(self.client.detach(name))
 
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]:
-        return [_BridgeTool(self._loop, t) for t in self.client.tools(servers)]
+        async def collect() -> List[MCPClientTool]:
+            return self.client.tools(servers)
+
+        # Read on the bridge loop, where attach and detach change the client.
+        return [_BridgeTool(self._loop, t) for t in self._run(collect())]
 
     def stop(self) -> None:
         """Disconnect every server and stop the background loop."""
