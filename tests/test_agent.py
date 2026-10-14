@@ -726,6 +726,21 @@ def test_failed_run_returns_error_result_with_usage_so_far():
     assert "error" not in result.model_dump()
 
 
+def test_error_result_follows_on_run_error():
+    hooks = MagicMock(spec=AgentHooks)
+    agent = Agent(config=_make_config(hooks=hooks))
+    error = litellm.APIConnectionError(
+        message="down", llm_provider="openai", model="gpt-3.5-turbo"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=error)):
+        result = agent.run_with_response("hi")
+
+    assert result.error is error
+    hooks.on_run_error.assert_called_once_with(error)
+    hooks.on_run_end.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_arun_raises_the_run_error():
     import asyncio
