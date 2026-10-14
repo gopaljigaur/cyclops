@@ -8,6 +8,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from cyclops.toolkit.tool import Tool
+from cyclops.toolkit.types import ToolAnnotations
 
 _FRONTMATTER = re.compile(r"---\n(.*?)\n---\n?(.*)", re.DOTALL)
 
@@ -31,7 +32,12 @@ class Skill(BaseModel):
         match = _FRONTMATTER.match(file.read_text())
         if match is None:
             raise ValueError(f"{file} has no YAML frontmatter")
-        front = yaml.safe_load(match.group(1))
+        try:
+            front = yaml.safe_load(match.group(1))
+        except yaml.YAMLError as e:
+            raise ValueError(f"{file} has invalid YAML frontmatter: {e}") from e
+        if not isinstance(front, dict):
+            raise ValueError(f"{file} frontmatter must be a YAML mapping")
         skill = cls.model_validate(
             {**front, "path": file.parent, "body": match.group(2)}
         )
@@ -54,7 +60,12 @@ class Skills:
                 if skill.name in self.skills:
                     raise ValueError(f"Duplicate skill '{skill.name}' in {file}")
                 self.skills[skill.name] = skill
-        self.tool = Tool("load_skill", _TOOL_DESCRIPTION, self.load)
+        self.tool = Tool(
+            "load_skill",
+            _TOOL_DESCRIPTION,
+            self.load,
+            ToolAnnotations(read_only=True),
+        )
 
     def prompt(self) -> str:
         """The skill listing appended to the system prompt."""
@@ -68,7 +79,13 @@ class Skills:
         )
 
     def load(self, name: str, file: Optional[str] = None) -> str:
-        """Return a skill's body, or one of its files when file is given."""
+        """Return a skill's body, or one of its files when file is given.
+
+        Args:
+            name: The skill's name, as listed in the system prompt.
+            file: A path relative to the skill's folder, to read that file
+                instead of the instructions.
+        """
         if name not in self.skills:
             raise ValueError(f"Unknown skill '{name}'")
         skill = self.skills[name]
@@ -79,4 +96,6 @@ class Skills:
         # resolve() follows symlinks, so a link out of the folder is refused too.
         if not target.is_relative_to(root):
             raise ValueError(f"'{file}' is outside the skill '{name}'")
+        if not target.is_file():
+            raise ValueError(f"'{file}' not found in the skill '{name}'")
         return target.read_text()

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from cyclops.core.agent import Agent
 from cyclops.core.types import AgentConfig
 from cyclops.skills import Skills
+from cyclops.toolkit.tool import Tool
 
 
 def _write_skill(root, name, description="Does a thing.", body="Step one.", extra=""):
@@ -109,6 +110,49 @@ def test_missing_frontmatter(tmp_path):
 
     with pytest.raises(ValueError, match="no YAML frontmatter"):
         Skills(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "front, error",
+    [
+        ("", "must be a YAML mapping"),
+        ("- a\n- b", "must be a YAML mapping"),
+        ("name: [unclosed", "invalid YAML frontmatter"),
+    ],
+)
+def test_malformed_frontmatter_names_the_file(tmp_path, front, error):
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / "SKILL.md").write_text(f"---\n{front}\n---\nbody\n")
+
+    with pytest.raises(ValueError, match=error) as e:
+        Skills(tmp_path)
+    assert "SKILL.md" in str(e.value)
+
+
+@pytest.mark.parametrize("path", ["missing.md", "reference", "."])
+def test_load_missing_file_or_dir(tmp_path, path):
+    (_write_skill(tmp_path, "pdf-forms") / "reference").mkdir()
+
+    with pytest.raises(ValueError) as e:
+        Skills(tmp_path).load("pdf-forms", path)
+    assert str(e.value) == f"'{path}' not found in the skill 'pdf-forms'"
+
+
+def test_tool_schema_and_annotations(tmp_path):
+    definition = Skills(tmp_path).tool.definition
+
+    assert definition.annotations.read_only is True
+    assert definition.parameters["name"].description
+    assert definition.parameters["file"].description
+    assert definition.parameters["name"].required
+    assert not definition.parameters["file"].required
+
+
+def test_agent_rejects_a_tool_named_load_skill(tmp_path):
+    clash = Tool("load_skill", "Mine.", lambda: "x")
+
+    with pytest.raises(ValueError, match="Duplicate tool name: 'load_skill'"):
+        Agent(AgentConfig(model="gpt-4o"), tools=[clash], skills=Skills(tmp_path))
 
 
 def test_name_must_match_folder(tmp_path):
