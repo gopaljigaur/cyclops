@@ -846,27 +846,32 @@ async def test_tool_raising_cancelled_stops_sibling_calls():
 
 
 def test_interrupted_sync_run_cancels_the_run():
-    """An interrupt while run() waits cancels the run on the shared loop."""
+    """An interrupt while run() waits cancels the run and waits for it to unwind."""
     import asyncio
-    import concurrent.futures
     import threading
 
     from cyclops.toolkit.tool import Tool
 
     started = threading.Event()
-    cancelled = threading.Event()
+    cleaned = threading.Event()
+    original_wait = threading.Event.wait
+    interrupts = []
 
     async def slow() -> str:
         started.set()
         try:
             await asyncio.sleep(10)
         except asyncio.CancelledError:
-            cancelled.set()
+            await asyncio.sleep(0.05)
+            cleaned.set()
             raise
         return "done"
 
     def interrupted(self, timeout=None):
-        started.wait(5)
+        if self is started or interrupts:
+            return original_wait(self, timeout)
+        interrupts.append(True)
+        original_wait(started, 5)
         raise KeyboardInterrupt
 
     agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow", slow)])
@@ -875,12 +880,13 @@ def test_interrupted_sync_run_cancels_the_run():
 
     with (
         patch("litellm.acompletion", new=AsyncMock(return_value=response)),
-        patch.object(concurrent.futures.Future, "result", interrupted),
+        patch.object(threading.Event, "wait", interrupted),
     ):
         with pytest.raises(KeyboardInterrupt):
             agent.run("go")
 
-    assert cancelled.wait(5)
+    assert cleaned.is_set()
+    assert agent.messages[-1]["content"] == "Tool call cancelled."
 
 
 def test_run_without_tools_ignores_max_iterations():
@@ -955,3 +961,84 @@ def test_interrupted_sync_stream_waits_for_cleanup():
 
     assert cleaned.is_set()
     assert agent.messages[-1]["content"] == "Tool call cancelled."
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tools_finish_their_cleanup():
+    """Cancelling a run cancels each tool once, so slower cleanup still completes."""
+    import asyncio
+
+    from cyclops.toolkit.tool import Tool
+
+    started = []
+    cleaned = []
+
+    def make(name: str, cleanup: float):
+        async def tool() -> str:
+            started.append(name)
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                await asyncio.sleep(cleanup)
+                cleaned.append(name)
+                raise
+            return "done"
+
+        return Tool(name, name, tool)
+
+    agent = Agent(config=_make_config(), tools=[make("quick", 0), make("slow", 0.05)])
+    calls = [
+        _make_tool_call("tc_1", "quick", "{}"),
+        _make_tool_call("tc_2", "slow", "{}"),
+    ]
+    response = _make_completion_response(content=None, tool_calls=calls)
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        task = asyncio.create_task(agent.arun("go"))
+        while len(started) < 2:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert sorted(cleaned) == ["quick", "slow"]
+
+
+def test_usage_is_unknown_when_a_step_has_none():
+    """Totals are None when any completion of the run reports no usage."""
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    tc = _make_tool_call("tc_1", "add", '{"a": 2, "b": 3}')
+    first = _make_completion_response(content=None, tool_calls=[tc])
+    first.usage = None
+    responses = [first, _make_completion_response(content="5")]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        result = agent.run_with_response("2 + 3?")
+
+    assert result.tokens_used is None
+    assert result.prompt_tokens is None
+
+
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded")
+def test_forked_child_gets_its_own_loop():
+    """After fork, the child starts a new shared loop instead of reusing a dead one."""
+    import os
+
+    if not hasattr(os, "fork"):
+        pytest.skip("needs os.fork")
+
+    agent = Agent(config=_make_config())
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("hi")),
+    ):
+        agent.run("start the loop")
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os._exit(0 if agent.run("in the child") == "hi" else 1)
+            except BaseException:
+                os._exit(1)
+        _, status = os.waitpid(pid, 0)
+
+    assert os.WEXITSTATUS(status) == 0

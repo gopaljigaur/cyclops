@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import json
+import os
 import queue
 import threading
 from contextlib import aclosing
@@ -33,11 +34,22 @@ _loop: Optional[asyncio.AbstractEventLoop] = None
 _loop_lock = threading.Lock()
 
 
-def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
-    """Await fn(*args) from sync code on a long-lived loop in a daemon thread.
+def _reset_after_fork() -> None:
+    global _loop, _loop_lock
+    _loop = None
+    _loop_lock = threading.Lock()
 
-    One loop for every sync call lets LiteLLM's background logging finish, and
-    never blocks or re-enters a loop the caller may already be running.
+
+if hasattr(os, "register_at_fork"):
+    # A forked child inherits the loop but not the thread running it.
+    os.register_at_fork(after_in_child=_reset_after_fork)
+
+
+def _start_task(make: Callable[[], Awaitable], finished: threading.Event):
+    """Start make() as a task on the shared loop; finished is set once it unwinds.
+
+    One long-lived loop in a daemon thread serves every sync call, so LiteLLM's
+    background logging can finish and a loop the caller runs is never blocked.
     """
     global _loop
     with _loop_lock:
@@ -52,16 +64,33 @@ def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
         # Blocking here would wait on the loop this call is running on.
         raise RuntimeError("Use the async Agent methods from async code")
 
-    async def wrapper():
-        return await fn(*args)
+    def on_done(_: asyncio.Future) -> None:
+        finished.set()
 
-    future = asyncio.run_coroutine_threadsafe(wrapper(), _loop)
+    async def start() -> asyncio.Future:
+        task = asyncio.ensure_future(make())
+        task.add_done_callback(on_done)
+        return task
+
+    return asyncio.run_coroutine_threadsafe(start(), _loop).result()
+
+
+def _wait(task: asyncio.Future, finished: threading.Event) -> None:
+    """Wait for a task; if interrupted (e.g. Ctrl-C), cancel it and let it unwind."""
     try:
-        return future.result()
-    except BaseException:
-        # Interrupted (e.g. Ctrl-C): stop the run instead of leaving it going.
-        future.cancel()
-        raise
+        finished.wait()
+    finally:
+        if not finished.is_set():
+            task.get_loop().call_soon_threadsafe(task.cancel)
+            finished.wait()
+
+
+def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
+    """Await fn(*args) from sync code on the shared loop."""
+    finished = threading.Event()
+    task = _start_task(lambda: fn(*args), finished)
+    _wait(task, finished)
+    return task.result()
 
 
 def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
@@ -71,28 +100,22 @@ def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
     chunk only when the caller asks for one, like `async for` would.
     """
     chunks: queue.Queue = queue.Queue()
+    demand = asyncio.Semaphore(0)
     finished = threading.Event()
 
-    async def pump(demand: asyncio.Semaphore) -> None:
-        async with aclosing(agen):
-            while True:
-                await demand.acquire()
-                try:
-                    chunks.put(await agen.__anext__())
-                except StopAsyncIteration:
-                    return
+    async def pump() -> None:
+        try:
+            async with aclosing(agen):
+                while True:
+                    await demand.acquire()
+                    try:
+                        chunks.put(await agen.__anext__())
+                    except StopAsyncIteration:
+                        return
+        finally:
+            chunks.put(_DONE)
 
-    def on_done(_: asyncio.Task) -> None:
-        chunks.put(_DONE)
-        finished.set()
-
-    async def start() -> Tuple[asyncio.Task, asyncio.Semaphore]:
-        demand = asyncio.Semaphore(0)
-        task = asyncio.ensure_future(pump(demand))
-        task.add_done_callback(on_done)
-        return task, demand
-
-    task, demand = _run_coroutine_sync(start)
+    task = _start_task(pump, finished)
     loop = task.get_loop()
     try:
         while True:
@@ -101,11 +124,11 @@ def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
             if chunk is _DONE:
                 break
             yield chunk
-        task.result()
     finally:
-        # Closing early or an interrupt cancels the task; wait for it to unwind.
+        # Closing early cancels the task; this is a no-op once it is done.
         loop.call_soon_threadsafe(task.cancel)
-        finished.wait()
+        _wait(task, finished)
+    task.result()
 
 
 class _Run:
@@ -120,12 +143,14 @@ class _Run:
         self.cached_tokens = 0
         self.total_tokens = 0
         self.cost: Optional[float] = 0.0
-        self.has_usage = False
+        self.usage_missing = False
 
     def add_usage(self, response) -> None:
         usage = getattr(response, "usage", None)
-        if usage is not None:
-            self.has_usage = True
+        if usage is None:
+            # A step without usage makes the run totals unknown.
+            self.usage_missing = True
+        else:
             self.prompt_tokens += usage.prompt_tokens or 0
             self.completion_tokens += usage.completion_tokens or 0
             self.total_tokens += usage.total_tokens or 0
@@ -308,7 +333,8 @@ class Agent:
             asyncio.ensure_future(self._execute_tool_call(tc)) for tc in msg.tool_calls
         ]
         try:
-            results = await asyncio.gather(*tasks)
+            # Shielded so the tools are cancelled once, here, and can clean up.
+            results = await asyncio.shield(asyncio.gather(*tasks))
         except asyncio.CancelledError:
             # Stop the other calls too, then answer every call to keep the
             # transcript valid.
@@ -548,7 +574,7 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _build_agent_response(self, run: _Run) -> AgentResponse:
-        usage = run.has_usage
+        usage = not run.usage_missing
         return AgentResponse(
             content=run.content,
             tool_calls=run.tool_calls,
