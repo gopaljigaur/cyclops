@@ -23,7 +23,7 @@ config = AgentConfig(
 | `temperature` | `float` | `0.1` | Sampling temperature. Lower values are more deterministic. |
 | `max_tokens` | `int \| None` | `None` | Maximum tokens in the response. `None` uses the model's default. |
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
-| `tool_mode` | `str` | `"auto"` | `"auto"` detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
+| `tool_mode` | `str` | `"auto"` | `"auto"` uses native function calling and switches this agent to `"naive"` if LiteLLM reports the model does not support tools; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
 | `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
@@ -89,7 +89,7 @@ See [Cost Tracking](cost-tracking.md) for the full field reference.
 
 ## stream() and astream()
 
-`stream()` yields text tokens as they are produced. For agents without tools this is true streaming straight from the LLM. For agents with tools, the tool loop runs first, then the final answer is streamed.
+`stream()` yields text tokens as they are produced. Every completion in the run is streamed, including the steps that call tools.
 
 ```python
 for token in agent.stream("Explain black holes briefly."):

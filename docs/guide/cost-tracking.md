@@ -2,7 +2,7 @@
 
 ## run_with_response() and arun_with_response()
 
-Instead of returning a plain string, these methods return an `AgentResponse` that includes the text reply, every tool call made, and token/cost metadata pulled from the LiteLLM response object.
+Instead of returning a plain string, these methods return an `AgentResponse` that includes the text reply, every tool call made, and token/cost totals summed over every LiteLLM completion in the run.
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -40,9 +40,11 @@ asyncio.run(main())
 | `content` | `str` | The final text response from the agent. |
 | `tool_calls` | `List[ToolCall]` | Every tool call made during the run, in order. |
 | `model` | `str` | The model identifier used (from `AgentConfig.model`). |
+| `stop_reason` | `str` | `"completed"` for a final answer, `"max_iterations"` when the run hit `AgentConfig.max_iterations` (then `content` is empty). |
 | `tokens_used` | `int \| None` | Total tokens consumed (prompt + completion). `None` if unavailable. |
 | `prompt_tokens` | `int \| None` | Tokens in the prompt/context sent to the model. |
 | `completion_tokens` | `int \| None` | Tokens in the generated response. |
+| `cached_tokens` | `int \| None` | Prompt tokens the provider served from its cache. |
 | `cost` | `float \| None` | Estimated USD cost computed by LiteLLM. `None` if the model is not in LiteLLM's pricing table. |
 
 Each `ToolCall` in `tool_calls` has:
