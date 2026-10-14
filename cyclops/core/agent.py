@@ -7,7 +7,6 @@ from contextlib import aclosing
 from typing import (
     Any,
     AsyncGenerator,
-    Callable,
     Dict,
     Generator,
     Iterator,
@@ -18,7 +17,6 @@ from typing import (
 )
 
 import litellm
-from litellm.utils import supports_prompt_caching
 
 from cyclops.core.events import (
     Event,
@@ -37,6 +35,13 @@ from cyclops.core.middleware import (
     ToolCallContext,
     ToolMiddleware,
 )
+from cyclops.core.providers import (
+    _every_deployment,
+    _marker_caching_supported,
+    _native_schema,
+    _tool_message_images_supported,
+    _tools_unsupported,
+)
 from cyclops.core.session import Session
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
@@ -45,14 +50,6 @@ from cyclops.toolkit.types import ToolResult
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 _CANCELLED_RESULT = "Tool call cancelled."
-# LiteLLM turns image parts of a tool message into the provider's own image
-# blocks for these providers (on vertex_ai only for Gemini models); others
-# accept only text in a tool message.
-_TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
-# Providers that cache a prompt prefix at cache_control markers (on vertex_ai
-# only for Anthropic models). Gemini turns them into billed cachedContents
-# resources instead, and OpenAI caches without them.
-_CACHE_MARKER_PROVIDERS = {"anthropic", "bedrock"}
 # Cache the system prompt (with the tools before it) and the conversation so far.
 _CACHE_POINTS = [
     {"location": "message", "role": "system"},
@@ -83,23 +80,6 @@ def _unfinished_text(task: asyncio.Future) -> str:
     if error is not None:
         return _failed_text(error)
     return _split_images(task.result()[1].to_message_content())[0]
-
-
-def _takes_tool_message_images(model: str, provider: str) -> bool:
-    if provider == "vertex_ai":
-        return model.startswith("gemini")
-    return provider in _TOOL_MESSAGE_IMAGE_PROVIDERS
-
-
-def _caches_at_markers(model: str, provider: str) -> bool:
-    if provider == "vertex_ai":
-        marker_provider = model.startswith("claude")
-    else:
-        marker_provider = provider in _CACHE_MARKER_PROVIDERS
-    # LiteLLM adds Bedrock cache points for every model.
-    return marker_provider and supports_prompt_caching(
-        model=model, custom_llm_provider=provider
-    )
 
 
 def _usage(response) -> Optional[Usage]:
@@ -228,19 +208,6 @@ class RunHandle:
         self._run.cancelled = True
         if self._run.started:
             self._task.cancel(RUN_STOPPED)
-
-
-def _native_schema(model: str, custom_llm_provider: Optional[str] = None) -> bool:
-    """True if LiteLLM's own entry for this provider lists native structured output.
-
-    Not `supports_native_structured_output`: it falls back to another provider's
-    entry, while the Vertex AI builder reads only its own.
-    """
-    try:
-        info = litellm.get_model_info(model, custom_llm_provider)
-    except Exception:  # not mapped
-        return False
-    return info.get("supports_native_structured_output") is True
 
 
 class Agent:
@@ -446,7 +413,7 @@ class Agent:
             except litellm.UnsupportedParamsError:
                 if mode != "native" or self.config.tool_mode != "auto":
                     raise
-                if not self._tools_unsupported():
+                if not _tools_unsupported(self.config):
                     raise
                 self._detected_tool_mode = "naive"
                 del run.history[start:]
@@ -480,16 +447,16 @@ class Agent:
             "max_tokens": self.config.max_tokens,
             **self.config.completion_kwargs,
         }
-        if self.config.prompt_caching and self._caches_at_markers():
+        if self.config.prompt_caching and _marker_caching_supported(self.config):
             kwargs["cache_control_injection_points"] = _CACHE_POINTS
         # With tools only where LiteLLM sends the schema natively: elsewhere it
         # may emulate it with a forced tool call, which blocks the agent's tools.
         if response_model is not None and (
             (
                 mode == "none"
-                and self._every_deployment(litellm.supports_response_schema)
+                and _every_deployment(self.config, litellm.supports_response_schema)
             )
-            or (mode == "native" and self._every_deployment(_native_schema))
+            or (mode == "native" and _every_deployment(self.config, _native_schema))
         ):
             kwargs["response_format"] = response_model
         system_prompt = self.config.system_prompt
@@ -649,7 +616,7 @@ class Agent:
             run.result.tool_calls.append(
                 ToolCall(id=tc.id, name=tc.function.name, arguments=args, result=text)
             )
-            if images and not self._tool_message_images_supported():
+            if images and not _tool_message_images_supported(self.config):
                 label = f"Images returned by {tc.function.name}:"
                 moved_images += [{"type": "text", "text": label}, *images]
                 content = text
@@ -873,56 +840,6 @@ class Agent:
     # ------------------------------------------------------------------
     # Tool mode detection
     # ------------------------------------------------------------------
-
-    def _deployments(self) -> List[Dict[str, Any]]:
-        """LiteLLM params of every deployment the model resolves to."""
-        if self.config.router:
-            return [
-                d["litellm_params"]
-                for d in self.config.router.get_model_list(self.config.model) or []
-            ]
-        return [{"model": self.config.model}]
-
-    def _every_deployment(self, supports: Callable[..., bool]) -> bool:
-        """True if a LiteLLM `supports_*` check holds for every deployment."""
-        return all(
-            supports(model=p["model"], custom_llm_provider=p.get("custom_llm_provider"))
-            for p in self._deployments()
-        )
-
-    def _tools_unsupported(self) -> bool:
-        """True if LiteLLM lists no `tools` support for every deployment of the model."""
-        params = self._deployments()
-        for p in params:
-            supported = litellm.get_supported_openai_params(
-                model=p["model"], custom_llm_provider=p.get("custom_llm_provider")
-            )
-            if supported is None or "tools" in supported:
-                return False
-        return bool(params)
-
-    def _tool_message_images_supported(self) -> bool:
-        """True if every deployment of the model takes images in a tool message."""
-        params = self._deployments()
-        return bool(params) and all(
-            _takes_tool_message_images(
-                *litellm.get_llm_provider(
-                    p["model"], custom_llm_provider=p.get("custom_llm_provider")
-                )[:2]
-            )
-            for p in params
-        )
-
-    def _caches_at_markers(self) -> bool:
-        """True if every deployment of the model caches at cache_control markers."""
-        return all(
-            _caches_at_markers(
-                *litellm.get_llm_provider(
-                    p["model"], custom_llm_provider=p.get("custom_llm_provider")
-                )[:2]
-            )
-            for p in self._deployments()
-        )
 
     def _get_tool_mode(self) -> str:
         if not self.tools:
