@@ -239,6 +239,15 @@ class TestParameterSchema:
         result = asyncio.run(f.execute(_a=1, param_0="x", param_2="y", _b=2))
         assert result == "1xy2"
 
+    def test_user_alias_kept_for_renamed_parameter(self):
+        @tool
+        def f(_x: Annotated[int, Field(alias="x")], schema: str = "s") -> str:
+            """F."""
+            return f"{_x}{schema}"
+
+        assert set(f.definition.to_json_schema()["properties"]) == {"x", "schema"}
+        assert asyncio.run(f.execute(x=1)) == "1s"
+
     def test_extra_arguments_keep_their_names(self):
         @tool
         def f(_private: int, **rest) -> dict:

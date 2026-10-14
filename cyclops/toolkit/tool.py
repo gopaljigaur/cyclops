@@ -22,7 +22,7 @@ def _args_model(name: str, func: Callable) -> Tuple[type[BaseModel], Dict[str, s
         p.arg_name: p.description
         for p in parse_docstring(inspect.getdoc(func) or "").params
     }
-    fields: Dict[str, Any] = {}
+    fields: Dict[str, Tuple[Any, Any, Dict[str, Any]]] = {}
     renames: Dict[str, str] = {}
     extra: Literal["allow", "forbid"] = "forbid"
     params = inspect.signature(func).parameters
@@ -37,28 +37,40 @@ def _args_model(name: str, func: Callable) -> Tuple[type[BaseModel], Dict[str, s
         annotation = Any if param.annotation is param.empty else param.annotation
         default = ... if param.default is param.empty else param.default
         field_name = param.name
-        field_args: Dict[str, Any] = {}
         # Pydantic drops names with a leading underscore and warns on ones
-        # that shadow BaseModel attributes, so those go through an alias
+        # that shadow BaseModel attributes, so those get another field name
         if param.name.startswith("_") or hasattr(BaseModel, param.name):
             field_name = f"param_{i}"
             while field_name in params or field_name in fields:
                 field_name += "_"
             renames[field_name] = param.name
-            field_args["alias"] = param.name
+        field_args: Dict[str, Any] = {}
         # An explicit description=None would drop one set through Annotated
         if param.name in docs:
             field_args["description"] = docs[param.name]
-        if field_args:
-            default = Field(default, **field_args)
-        fields[field_name] = (annotation, default)
-    # String annotations resolve in the function's module, like they would there
-    model = create_model(
-        name,
-        __config__=ConfigDict(extra=extra),
-        __module__=func.__module__,
-        **fields,
-    )
+        fields[field_name] = (annotation, default, field_args)
+
+    def build() -> type[BaseModel]:
+        definitions: Dict[str, Any] = {
+            field: (annotation, Field(default, **args) if args else default)
+            for field, (annotation, default, args) in fields.items()
+        }
+        # String annotations resolve in the function's module, as they would there
+        return create_model(
+            name,
+            __config__=ConfigDict(extra=extra),
+            __module__=func.__module__,
+            **definitions,
+        )
+
+    model = build()
+    # Renamed fields are exposed under the parameter name, unless an
+    # Annotated Field already set an alias
+    unaliased = [f for f in renames if model.model_fields[f].alias is None]
+    for field in unaliased:
+        fields[field][2]["alias"] = renames[field]
+    if unaliased:
+        model = build()
     return model, renames
 
 
