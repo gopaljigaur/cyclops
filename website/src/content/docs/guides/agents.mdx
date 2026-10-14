@@ -19,7 +19,7 @@ config = AgentConfig(
     max_tokens=1024,
     system_prompt="You are a concise technical assistant.",
     tool_mode="auto",
-    max_iterations=10,
+    max_steps=10,
 )
 ```
 
@@ -31,7 +31,9 @@ config = AgentConfig(
 | `system_prompt` | `str` or `None` | `None` | System instruction prepended to every conversation turn. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router` or `None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
-| `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
+| `max_steps` | `int` | `10` | Most LLM completions in one run. A run without tools makes one. |
+| `max_total_tokens` | `int` or `None` | `None` | Most tokens one run may use, checked between steps. |
+| `max_cost` | `float` or `None` | `None` | Most USD one run may cost, checked between steps. |
 | `hooks` | `AgentHooks` or `None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](/guides/hooks/). |
 
 ## Constructing an Agent
@@ -114,7 +116,7 @@ response = agent.run("What was the code word?")
 
 ## run_with_response() and arun_with_response()
 
-When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns an `AgentResponse` object instead of a plain string.
+When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns a `RunResult` instead of a plain string.
 
 ```python
 result = agent.run_with_response("Summarize quantum computing in two sentences.")
@@ -138,18 +140,24 @@ print()
 
 See [Streaming](/guides/streaming/) for detailed examples.
 
-## max_iterations
+## Step and budget limits
 
-When tools are in use, the agent can call tools multiple times before producing the final answer. `max_iterations` caps how many tool-call rounds are allowed. If the cap is reached, the agent returns the string `"Reached maximum tool call iterations."`.
+When tools are in use the agent can call tools several times before producing the final answer. Three limits bound one run, each checked between steps (a step is one LLM completion and the tool calls it asks for):
+
+- `max_steps` caps the number of completions (default `10`).
+- `max_total_tokens` caps the tokens summed over the run's completions.
+- `max_cost` caps the run's estimated USD cost.
+
+Reaching a limit is not an error. The run ends with `stop_reason="max_steps"` or `stop_reason="budget"` on the `RunResult` from `run_with_response()`, and `content` is empty. A step in progress always finishes, so a run can exceed a budget by its last step. A completion that reports no usage, or a cost LiteLLM can't price, doesn't count against a budget.
 
 ```python
 config = AgentConfig(
     model="groq/llama-3.1-8b-instant",
-    max_iterations=5,  # allow up to 5 rounds of tool calls
+    max_steps=5,
+    max_total_tokens=20_000,
+    max_cost=0.05,  # USD
 )
 ```
-
-The default of `10` is enough for almost every task. Lowering it prevents runaway loops in production.
 
 ## Full example
 

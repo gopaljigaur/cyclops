@@ -41,7 +41,9 @@ class AgentConfig(BaseModel):
     system_prompt: Optional[str] = None
     tool_mode: Literal["auto", "native", "naive"] = "auto"
     router: Optional[Any] = None   # LiteLLM Router
-    max_iterations: int = 10
+    max_steps: int = 10
+    max_total_tokens: Optional[int] = None
+    max_cost: Optional[float] = None   # USD
     hooks: Optional[AgentHooks] = None
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool = False
@@ -49,28 +51,36 @@ class AgentConfig(BaseModel):
 
 ---
 
-### AgentResponse
+### RunResult
 
-Returned by `run_with_response()` and `arun_with_response()`.
+Returned by `run_with_response()` and `arun_with_response()`. See [Cost Tracking](guide/cost-tracking.md) for the fields.
 
 ```python
-class AgentResponse(BaseModel):
+class RunResult(BaseModel):
     content: str
     tool_calls: List[ToolCall]
     model: str
-    stop_reason: Literal["completed", "max_iterations"]
-    tokens_used: Optional[int]
-    cost: Optional[float]
-    prompt_tokens: Optional[int]
-    completion_tokens: Optional[int]
-    cached_tokens: Optional[int]
+    stop_reason: Literal["completed", "max_steps", "budget", "cancelled", "error"]
+    steps: int
+    usage: Optional[Usage]
+    error: Optional[Exception]
+    # Read-only properties over usage:
+    tokens_used, cost, prompt_tokens, completion_tokens, cached_tokens
+
+
+class Usage(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost: Optional[float]  # None when LiteLLM can't price a completion
 ```
 
 ---
 
 ### ToolCall
 
-Records a single tool invocation within an `AgentResponse`.
+Records a single tool invocation within a `RunResult`.
 
 ```python
 class ToolCall(BaseModel):

@@ -13,7 +13,7 @@ config = AgentConfig(
     max_tokens=1024,
     system_prompt="You are a concise technical assistant.",
     tool_mode="auto",
-    max_iterations=10,
+    max_steps=10,
 )
 ```
 
@@ -25,7 +25,9 @@ config = AgentConfig(
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` uses native function calling and switches this agent to `"naive"` if LiteLLM reports the model does not support tools; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
-| `max_iterations` | `int` | `10` | Maximum number of tool-call rounds before the agent stops. |
+| `max_steps` | `int` | `10` | Most LLM completions in one run. A run without tools makes one. |
+| `max_total_tokens` | `int \| None` | `None` | Most tokens one run may use, checked between steps. |
+| `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
 | `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |
@@ -75,12 +77,12 @@ Both methods accept an optional `response_model` parameter for structured output
 
 ## run_with_response() and arun_with_response()
 
-When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns an `AgentResponse` object instead of a bare string.
+When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns a `RunResult` instead of a bare string.
 
 ```python
-from cyclops import AgentResponse
+from cyclops import RunResult
 
-result: AgentResponse = agent.run_with_response("Summarize quantum computing in two sentences.")
+result: RunResult = agent.run_with_response("Summarize quantum computing in two sentences.")
 
 print(result.content)
 print(f"Tokens: {result.tokens_used}  Cost: ${result.cost:.6f}")
@@ -189,15 +191,21 @@ print(response.cached_tokens)
 
 Providers only cache a prefix above a minimum length (1024 tokens for most Anthropic models). To place breakpoints yourself, leave `prompt_caching` off and pass LiteLLM's `cache_control_injection_points` in `completion_kwargs`.
 
-## max_iterations
+## Step and budget limits
 
-When tools are in use the agent can call tools multiple times in a row before producing the final answer. `max_iterations` caps how many tool-call rounds are allowed. If the cap is hit the run stops with `stop_reason="max_iterations"` on the `AgentResponse` from `run_with_response()`, and `content` is empty.
+When tools are in use the agent can call tools several times before producing the final answer. Three limits bound one run, each checked between steps (a step is one LLM completion and the tool calls it asks for):
+
+- `max_steps` caps the number of completions (default `10`).
+- `max_total_tokens` caps the tokens summed over the run's completions.
+- `max_cost` caps the run's estimated USD cost.
+
+Reaching a limit is not an error. The run ends with `stop_reason="max_steps"` or `stop_reason="budget"` on the `RunResult` from `run_with_response()`, and `content` is empty. A step in progress always finishes, so a run can exceed a budget by its last step. A completion that reports no usage, or a cost LiteLLM can't price, doesn't count against a budget.
 
 ```python
 config = AgentConfig(
     model="groq/llama-3.1-8b-instant",
-    max_iterations=5,   # Allow up to 5 rounds of tool calls
+    max_steps=5,
+    max_total_tokens=20_000,
+    max_cost=0.05,  # USD
 )
 ```
-
-For most tasks the default of `10` is more than enough. Lowering it prevents runaway loops in production.

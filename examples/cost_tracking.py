@@ -1,7 +1,7 @@
 """Cost and token tracking example: run_with_response() / arun_with_response()
 
 Demonstrates:
-  1. Inspecting AgentResponse metadata (tokens_used, cost, prompt_tokens,
+  1. Inspecting RunResult metadata (tokens_used, cost, prompt_tokens,
      completion_tokens) from a single synchronous run
   2. Async variant with arun_with_response()
   3. Accumulating cost and tokens across multiple calls to track a session budget
@@ -16,7 +16,7 @@ Swap MODEL below if you only have a local Ollama instance available.
 
 import asyncio
 
-from cyclops import Agent, AgentConfig, AgentResponse
+from cyclops import Agent, AgentConfig, RunResult
 
 # ---------------------------------------------------------------------------
 # Model configuration
@@ -35,11 +35,11 @@ MODEL = "gpt-4o-mini"
 
 
 # ---------------------------------------------------------------------------
-# Helper: pretty-print an AgentResponse
+# Helper: pretty-print a RunResult
 # ---------------------------------------------------------------------------
 
 
-def print_response(label: str, response: AgentResponse) -> None:
+def print_response(label: str, response: RunResult) -> None:
     print(f"\n--- {label} ---")
     print(
         f"Content          : {response.content[:120]}{'...' if len(response.content) > 120 else ''}"
@@ -61,7 +61,7 @@ def print_response(label: str, response: AgentResponse) -> None:
 # ---------------------------------------------------------------------------
 
 
-def demo_single_run() -> AgentResponse:
+def demo_single_run() -> RunResult:
     print("=" * 60)
     print("1. Single run_with_response() call")
     print("=" * 60)
@@ -83,7 +83,7 @@ def demo_single_run() -> AgentResponse:
 # ---------------------------------------------------------------------------
 
 
-async def demo_async_run() -> AgentResponse:
+async def demo_async_run() -> RunResult:
     print("\n" + "=" * 60)
     print("2. Single arun_with_response() call (async)")
     print("=" * 60)
@@ -164,21 +164,21 @@ def demo_cost_accumulation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Demonstrate accessing the raw AgentResponse fields directly
+# 4. Demonstrate accessing the raw RunResult fields directly
 # ---------------------------------------------------------------------------
 
 
 def demo_field_access() -> None:
     print("\n" + "=" * 60)
-    print("4. Direct field access on AgentResponse")
+    print("4. Direct field access on RunResult")
     print("=" * 60)
 
     config = AgentConfig(model=MODEL, temperature=0.1)
     agent = Agent(config)
 
-    response: AgentResponse = agent.run_with_response("Name three sorting algorithms.")
+    response: RunResult = agent.run_with_response("Name three sorting algorithms.")
 
-    # AgentResponse is a Pydantic model: all fields are typed attributes
+    # RunResult is a Pydantic model: all fields are typed attributes
     assert isinstance(response.content, str)
     assert response.model == MODEL
 

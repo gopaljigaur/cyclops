@@ -314,7 +314,7 @@ async def test_arun_with_tools_loop():
 
 
 def test_run_with_response_method():
-    """run_with_response() returns an AgentResponse with metadata."""
+    """run_with_response() returns a RunResult with metadata."""
     agent = Agent(config=_make_config())
     response = _make_completion_response("Hello!")
 
@@ -541,24 +541,223 @@ def test_failing_end_hook_becomes_tool_error():
     assert agent.messages[2]["content"] == "Error: add failed: hook broke"
 
 
-def test_max_iterations_sets_stop_reason():
-    """Hitting max_iterations is a stop reason, not answer text."""
-    agent = Agent(config=_make_config(max_iterations=2), tools=[_make_simple_tool()])
-    responses = [
+def _tool_call_responses(n):
+    return [
         _make_completion_response(
             content=None,
             tool_calls=[_make_tool_call(f"tc_{i}", "add", '{"a": 1, "b": 1}')],
         )
-        for i in range(2)
+        for i in range(n)
     ]
 
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+
+def test_max_steps_sets_stop_reason():
+    """Hitting max_steps is a stop reason, not answer text."""
+    agent = Agent(config=_make_config(max_steps=2), tools=[_make_simple_tool()])
+
+    with patch(
+        "litellm.acompletion", new=AsyncMock(side_effect=_tool_call_responses(2))
+    ):
         result = agent.run_with_response("loop")
 
-    assert result.stop_reason == "max_iterations"
+    assert result.stop_reason == "max_steps"
+    assert result.steps == 2
     assert result.content == ""
     assert len(result.tool_calls) == 2
     assert agent.messages[-1]["role"] == "tool"
+
+
+def test_unknown_config_fields_are_rejected():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _make_config(max_iterations=3)
+
+
+def test_token_budget_ends_the_run_between_steps():
+    """Reaching max_total_tokens stops before the next completion."""
+    agent = Agent(config=_make_config(max_total_tokens=50), tools=[_make_simple_tool()])
+    mock = AsyncMock(side_effect=_tool_call_responses(3))
+
+    with patch("litellm.acompletion", new=mock):
+        result = agent.run_with_response("loop")
+
+    assert result.stop_reason == "budget"
+    assert result.steps == 2
+    assert result.tokens_used == 60
+    assert mock.call_count == 2
+    # Every tool call of the last step still has its result.
+    assert agent.messages[-1]["role"] == "tool"
+
+
+def test_cost_budget_ends_the_run_between_steps():
+    agent = Agent(config=_make_config(max_cost=0.001), tools=[_make_simple_tool()])
+
+    with (
+        patch(
+            "litellm.acompletion", new=AsyncMock(side_effect=_tool_call_responses(3))
+        ),
+        patch("litellm.completion_cost", return_value=0.001),
+    ):
+        result = agent.run_with_response("loop")
+
+    assert result.stop_reason == "budget"
+    assert result.steps == 1
+    assert result.cost == pytest.approx(0.001)
+
+
+def test_unknown_cost_does_not_end_the_run():
+    agent = Agent(config=_make_config(max_cost=0.001), tools=[_make_simple_tool()])
+    responses = [*_tool_call_responses(1), _make_completion_response("2")]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        result = agent.run_with_response("1 + 1?")
+
+    assert result.cost is None
+    assert result.stop_reason == "completed"
+    assert result.content == "2"
+
+
+def test_final_answer_completes_even_over_budget():
+    agent = Agent(config=_make_config(max_total_tokens=1))
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("hi")),
+    ):
+        result = agent.run_with_response("hello")
+
+    assert result.stop_reason == "completed"
+    assert result.content == "hi"
+    assert result.steps == 1
+
+
+def test_token_budget_counts_steps_after_one_without_usage():
+    """A completion without usage doesn't switch the token limit off."""
+    agent = Agent(config=_make_config(max_total_tokens=50), tools=[_make_simple_tool()])
+    responses = _tool_call_responses(4)
+    responses[0].usage = None
+    mock = AsyncMock(side_effect=responses)
+
+    with patch("litellm.acompletion", new=mock):
+        result = agent.run_with_response("loop")
+
+    assert result.stop_reason == "budget"
+    assert result.usage is None
+    assert mock.call_count == 3
+
+
+def test_cost_budget_counts_steps_after_one_without_pricing():
+    """A completion LiteLLM can't price doesn't switch the cost limit off."""
+    agent = Agent(config=_make_config(max_cost=0.002), tools=[_make_simple_tool()])
+    cost = MagicMock(side_effect=[Exception("no pricing"), 0.001, 0.001, 0.001])
+    mock = AsyncMock(side_effect=_tool_call_responses(4))
+
+    with (
+        patch("litellm.acompletion", new=mock),
+        patch("litellm.completion_cost", new=cost),
+    ):
+        result = agent.run_with_response("loop")
+
+    assert result.stop_reason == "budget"
+    assert result.cost is None
+    assert mock.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_token_budget_ends_a_streamed_run():
+    agent = Agent(config=_make_config(max_total_tokens=30), tools=[_make_simple_tool()])
+    first = _make_completion_response(
+        content=None, tool_calls=[_make_tool_call("tc_1", "add", '{"a": 1, "b": 1}')]
+    )
+    chunks = [_tool_call_chunk(0, '{"a": 1, "b": 1}', id="tc_1", name="add")]
+    mock = AsyncMock(side_effect=[_stream(chunks), _stream([_text_chunk("2")])])
+
+    with (
+        patch("litellm.acompletion", new=mock),
+        patch("litellm.stream_chunk_builder", return_value=first),
+    ):
+        text = [chunk async for chunk in agent.astream("1 + 1?")]
+
+    assert text == []
+    assert mock.call_count == 1
+    assert agent.messages[-1]["role"] == "tool"
+
+
+def test_token_budget_ends_a_naive_run():
+    agent = Agent(
+        config=_make_config(tool_mode="naive", max_total_tokens=30),
+        tools=[_make_simple_tool()],
+    )
+    responses = [
+        _make_completion_response('{"tool": "add", "args": {"a": 1, "b": 1}}'),
+        _make_completion_response("2"),
+    ]
+    mock = AsyncMock(side_effect=responses)
+
+    with patch("litellm.acompletion", new=mock):
+        result = agent.run_with_response("1 + 1?")
+
+    assert result.stop_reason == "budget"
+    assert result.steps == 1
+    assert mock.call_count == 1
+
+
+def test_former_token_fields_are_rejected():
+    from pydantic import ValidationError
+
+    from cyclops import RunResult
+
+    with pytest.raises(ValidationError):
+        RunResult(content="x", model="m", tokens_used=99, cost=1.5)
+
+
+def test_failed_run_returns_error_result_with_usage_so_far():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    error = litellm.APIConnectionError(
+        message="down", llm_provider="openai", model="gpt-3.5-turbo"
+    )
+    responses = [*_tool_call_responses(1), error]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        result = agent.run_with_response("1 + 1?")
+
+    assert result.stop_reason == "error"
+    assert result.error is error
+    assert result.steps == 1
+    assert result.tokens_used == 30
+    assert "error" not in result.model_dump()
+
+
+def test_error_result_follows_on_run_error():
+    hooks = MagicMock(spec=AgentHooks)
+    agent = Agent(config=_make_config(hooks=hooks))
+    error = litellm.APIConnectionError(
+        message="down", llm_provider="openai", model="gpt-3.5-turbo"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=error)):
+        result = agent.run_with_response("hi")
+
+    assert result.error is error
+    hooks.on_run_error.assert_called_once_with(error)
+    hooks.on_run_end.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_arun_raises_the_run_error():
+    import asyncio
+
+    agent = Agent(config=_make_config())
+    error = litellm.APIConnectionError(
+        message="down", llm_provider="openai", model="gpt-3.5-turbo"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=error)):
+        with pytest.raises(litellm.APIConnectionError):
+            await agent.arun("hi")
+        with pytest.raises(litellm.APIConnectionError):
+            await asyncio.to_thread(agent.run, "hi")
 
 
 @pytest.mark.asyncio
@@ -888,9 +1087,9 @@ def test_interrupted_sync_run_cancels_the_run():
     assert agent.messages[-1]["content"] == "Tool call cancelled."
 
 
-def test_run_without_tools_ignores_max_iterations():
-    """max_iterations limits tool rounds; a run without tools still answers."""
-    agent = Agent(config=_make_config(max_iterations=0))
+def test_run_without_tools_ignores_max_steps():
+    """max_steps limits tool rounds; a run without tools still answers."""
+    agent = Agent(config=_make_config(max_steps=0))
 
     with patch(
         "litellm.acompletion",

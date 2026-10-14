@@ -142,7 +142,7 @@ The agent sends every result to the model through `ToolResult.to_message_content
 - Images are sent in the tool message for providers whose tool messages take images through LiteLLM: Anthropic, Bedrock, Gemini, and Gemini models on Vertex AI. Other providers, OpenAI and Vertex AI partner models among them, accept only text there: the tool message gets the text, and the images follow in a user message after the round's tool messages. Through a router, images stay in the tool message only when every deployment takes them. In naive tool mode the images go in the user message that carries the tool result.
 - A provider that rejects a user message right after a tool message (reported for Mistral) cannot take images from tools; return text only for such models.
 
-Hooks (`on_tool_end`) and `AgentResponse.tool_calls` receive the text of the result.
+Hooks (`on_tool_end`) and `RunResult.tool_calls` receive the text of the result.
 
 ## Annotations
 

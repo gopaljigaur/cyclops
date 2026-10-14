@@ -15,7 +15,6 @@ from typing import (
     Dict,
     Iterator,
     List,
-    Literal,
     Optional,
     Tuple,
     Type,
@@ -25,7 +24,7 @@ import litellm
 from litellm.utils import supports_prompt_caching
 
 from cyclops.core.hooks import _tool_call_id
-from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
+from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
 
@@ -173,37 +172,24 @@ def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
     task.result()
 
 
-class _Run:
-    """What one run produced: tool calls, summed usage and why it stopped."""
-
-    def __init__(self) -> None:
-        self.content = ""
-        self.stop_reason: Literal["completed", "max_iterations"] = "completed"
-        self.tool_calls: List[ToolCall] = []
-        self.prompt_tokens = 0
-        self.completion_tokens = 0
-        self.cached_tokens = 0
-        self.total_tokens = 0
-        self.cost: Optional[float] = 0.0
-        self.usage_missing = False
-
-    def add_usage(self, response) -> None:
-        usage = getattr(response, "usage", None)
-        if usage is None:
-            # A step without usage makes the run totals unknown.
-            self.usage_missing = True
-        else:
-            self.prompt_tokens += usage.prompt_tokens or 0
-            self.completion_tokens += usage.completion_tokens or 0
-            self.total_tokens += usage.total_tokens or 0
-            details = getattr(usage, "prompt_tokens_details", None)
-            self.cached_tokens += getattr(details, "cached_tokens", None) or 0
-        if self.cost is not None:
-            try:
-                self.cost += litellm.completion_cost(completion_response=response)
-            except Exception:
-                # Unknown pricing for any step makes the run total unknown.
-                self.cost = None
+def _usage(response) -> Optional[Usage]:
+    """Tokens and cost of one completion; None if it reports no usage."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    details = getattr(usage, "prompt_tokens_details", None)
+    try:
+        cost: Optional[float] = litellm.completion_cost(completion_response=response)
+    except Exception:
+        # LiteLLM has no pricing for this model.
+        cost = None
+    return Usage(
+        prompt_tokens=usage.prompt_tokens or 0,
+        completion_tokens=usage.completion_tokens or 0,
+        cached_tokens=getattr(details, "cached_tokens", None) or 0,
+        total_tokens=usage.total_tokens or 0,
+        cost=cost,
+    )
 
 
 class Agent:
@@ -250,23 +236,36 @@ class Agent:
         self, input_message: str, response_model: Optional[Type] = None
     ) -> Any:
         """Run the agent asynchronously. Returns str or Pydantic model instance."""
-        run = _Run()
-        async for _ in self._loop(input_message, run, False, response_model):
-            pass
+        result = await self._result(input_message, response_model)
+        if result.error is not None:
+            raise result.error
         if response_model is not None:
-            return response_model.model_validate_json(run.content)
-        return run.content
+            return response_model.model_validate_json(result.content)
+        return result.content
 
-    def run_with_response(self, input_message: str) -> AgentResponse:
-        """Run and return a full AgentResponse with cost/token metadata."""
+    def run_with_response(self, input_message: str) -> RunResult:
+        """Run and return a RunResult with the stop reason, usage and cost."""
         return _run_coroutine_sync(self.arun_with_response, input_message)
 
-    async def arun_with_response(self, input_message: str) -> AgentResponse:
-        """Run async and return a full AgentResponse with cost/token metadata."""
-        run = _Run()
-        async for _ in self._loop(input_message, run, stream=False):
-            pass
-        return self._build_agent_response(run)
+    async def arun_with_response(self, input_message: str) -> RunResult:
+        """Run async and return a RunResult with the stop reason, usage and cost.
+
+        An exception during the run ends it with stop_reason "error" instead of
+        raising.
+        """
+        return await self._result(input_message)
+
+    async def _result(
+        self, input_message: str, response_model: Optional[Type] = None
+    ) -> RunResult:
+        run = RunResult(model=self.config.model)
+        try:
+            async for _ in self._loop(input_message, run, False, response_model):
+                pass
+        except Exception as e:
+            run.stop_reason = "error"
+            run.error = e
+        return run
 
     def stream(self, input_message: str) -> Iterator[str]:
         """Stream output tokens. Naive tool mode yields the final answer as one chunk."""
@@ -275,7 +274,8 @@ class Agent:
     async def astream(self, input_message: str) -> AsyncGenerator[str, None]:
         """Async stream output tokens. Naive tool mode yields the final answer as one chunk."""
         # aclosing passes an early close down to the LiteLLM stream.
-        async with aclosing(self._loop(input_message, _Run(), stream=True)) as loop:
+        run = RunResult(model=self.config.model)
+        async with aclosing(self._loop(input_message, run, stream=True)) as loop:
             async for chunk in loop:
                 yield chunk
 
@@ -286,7 +286,7 @@ class Agent:
     async def _loop(
         self,
         input_message: str,
-        run: _Run,
+        run: RunResult,
         stream: bool,
         response_model: Optional[Type] = None,
     ) -> AsyncGenerator[str, None]:
@@ -325,7 +325,7 @@ class Agent:
     async def _steps(
         self,
         input_message: str,
-        run: _Run,
+        run: RunResult,
         stream: bool,
         mode: str,
         response_model: Optional[Type],
@@ -359,8 +359,12 @@ class Agent:
                 system_prompt or _DEFAULT_SYSTEM_PROMPT
             ) + self._build_tools_prompt()
 
-        # max_iterations limits tool rounds; a run without tools makes one call.
-        for _ in range(self.config.max_iterations if mode != "none" else 1):
+        # Limits count what is known, even once the reported totals are not.
+        spent_tokens, spent_cost = 0, 0.0
+        for step in range(self.config.max_steps if mode != "none" else 1):
+            if step and self._over_budget(spent_tokens, spent_cost):
+                run.stop_reason = "budget"
+                return
             messages = self._build_messages(system_prompt)
             response: Any
             # Naive mode never streams deltas: the text may be a tool call.
@@ -381,7 +385,15 @@ class Agent:
                 response = await self._acompletion(messages=messages, **kwargs)
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
-            run.add_usage(response)
+            run.steps += 1
+            step_usage = _usage(response)
+            if step_usage is not None:
+                spent_tokens += step_usage.total_tokens
+                spent_cost += step_usage.cost or 0.0
+            if run.usage is None or step_usage is None:
+                run.usage = None
+            else:
+                run.usage += step_usage
             msg = response.choices[0].message
 
             if not naive and msg.tool_calls:
@@ -409,9 +421,17 @@ class Agent:
                 yield content
             return
 
-        run.stop_reason = "max_iterations"
+        run.stop_reason = "max_steps"
 
-    async def _run_native_tool_calls(self, msg, run: _Run) -> None:
+    def _over_budget(self, tokens: int, cost: float) -> bool:
+        """True once tokens or cost reached max_total_tokens or max_cost."""
+        max_tokens = self.config.max_total_tokens
+        if max_tokens is not None and tokens >= max_tokens:
+            return True
+        max_cost = self.config.max_cost
+        return max_cost is not None and cost >= max_cost
+
+    async def _run_native_tool_calls(self, msg, run: RunResult) -> None:
         self._append_tool_call_message(msg)
         tasks = [
             asyncio.ensure_future(self._execute_tool_call(tc)) for tc in msg.tool_calls
@@ -730,21 +750,3 @@ class Agent:
             if self.config.hooks:
                 self.config.hooks.on_llm_error(e)
             raise
-
-    # ------------------------------------------------------------------
-    # AgentResponse builder
-    # ------------------------------------------------------------------
-
-    def _build_agent_response(self, run: _Run) -> AgentResponse:
-        usage = not run.usage_missing
-        return AgentResponse(
-            content=run.content,
-            tool_calls=run.tool_calls,
-            model=self.config.model,
-            stop_reason=run.stop_reason,
-            tokens_used=run.total_tokens if usage else None,
-            cost=run.cost if usage else None,
-            prompt_tokens=run.prompt_tokens if usage else None,
-            completion_tokens=run.completion_tokens if usage else None,
-            cached_tokens=run.cached_tokens if usage else None,
-        )
