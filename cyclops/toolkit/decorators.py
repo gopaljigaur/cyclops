@@ -7,6 +7,7 @@ from docstring_parser import parse as parse_docstring
 
 from cyclops.toolkit.tool import Tool
 from cyclops.toolkit.registry import ToolRegistry
+from cyclops.toolkit.types import ToolAnnotations
 
 
 def tool(
@@ -15,6 +16,7 @@ def tool(
     name: Optional[str] = None,
     description: Optional[str] = None,
     registry: Optional[ToolRegistry] = None,
+    annotations: Optional[ToolAnnotations] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]:
     """Decorator to convert a function into a tool
 
@@ -47,7 +49,7 @@ def tool(
             description or (summary or "").strip() or f"Tool: {tool_name}"
         )
 
-        created_tool = Tool(tool_name, tool_description, f)
+        created_tool = Tool(tool_name, tool_description, f, annotations)
 
         if registry:
             registry.register(created_tool)

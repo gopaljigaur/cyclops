@@ -5,6 +5,7 @@ from cyclops.toolkit.decorators import tool
 from cyclops.toolkit.types import (
     ImageContent,
     TextContent,
+    ToolAnnotations,
     ToolResult,
 )
 from cyclops.toolkit.registry import ToolRegistry
@@ -14,6 +15,7 @@ __all__ = [
     "BaseTool",
     "tool",
     "ToolResult",
+    "ToolAnnotations",
     "TextContent",
     "ImageContent",
     "ToolRegistry",

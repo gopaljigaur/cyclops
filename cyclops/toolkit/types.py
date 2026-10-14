@@ -15,6 +15,15 @@ class ToolParameter(BaseModel):
     default: Any = None
 
 
+class ToolAnnotations(BaseModel):
+    """Behaviour hints for a tool, mirroring MCP tool annotations"""
+
+    read_only: Optional[bool] = None
+    destructive: Optional[bool] = None
+    idempotent: Optional[bool] = None
+    open_world: Optional[bool] = None
+
+
 class ToolDefinition(BaseModel):
     """Tool definition metadata"""
 
@@ -24,6 +33,7 @@ class ToolDefinition(BaseModel):
     input_schema: Optional[Dict[str, Any]] = Field(
         default=None, description="Full JSON Schema of the parameters"
     )
+    annotations: ToolAnnotations = Field(default_factory=ToolAnnotations)
 
     def to_json_schema(self) -> Dict[str, Any]:
         if self.input_schema is not None:

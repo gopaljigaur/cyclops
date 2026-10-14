@@ -3,12 +3,12 @@
 import asyncio
 import inspect
 from abc import ABC
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from docstring_parser import parse as parse_docstring
 from pydantic import BaseModel, Field, create_model
 
-from cyclops.toolkit.types import ToolDefinition, ToolParameter
+from cyclops.toolkit.types import ToolAnnotations, ToolDefinition, ToolParameter
 
 
 def _args_model(name: str, func: Callable) -> type[BaseModel]:
@@ -69,9 +69,11 @@ class BaseTool(ABC):
         self,
         name: str,
         description: str,
+        annotations: Optional[ToolAnnotations] = None,
     ):
         self.name = name
         self.description = description
+        self.annotations = annotations or ToolAnnotations()
         self._definition = self._build_definition()
 
     async def execute(self, **kwargs):
@@ -89,6 +91,7 @@ class BaseTool(ABC):
             description=self.description,
             parameters=_parameters(schema),
             input_schema=schema,
+            annotations=self.annotations,
         )
 
     @property
@@ -105,10 +108,11 @@ class Tool(BaseTool):
         name: str,
         description: str,
         func: Callable,
+        annotations: Optional[ToolAnnotations] = None,
     ):
         self.func = func
         self._is_async = inspect.iscoroutinefunction(func)
-        super().__init__(name, description)
+        super().__init__(name, description, annotations)
 
     def _build_definition(self) -> ToolDefinition:
         return self._definition_for(self.func)

@@ -13,6 +13,7 @@ from cyclops.toolkit.tool import BaseTool, Tool
 from cyclops.toolkit.types import (
     ImageContent,
     TextContent,
+    ToolAnnotations,
     ToolDefinition,
     ToolResult,
 )
@@ -394,6 +395,39 @@ class TestFunctionTool:
         assert params["b"].type == "boolean"
         assert params["lst"].type == "array"
         assert params["dct"].type == "object"
+
+
+# ---------------------------------------------------------------------------
+# Annotations
+# ---------------------------------------------------------------------------
+
+
+class TestAnnotations:
+    def test_default_annotations_are_unset(self):
+        @tool
+        def f() -> str:
+            """F."""
+            return ""
+
+        assert f.annotations == ToolAnnotations()
+        assert f.annotations.read_only is None
+
+    def test_decorator_annotations(self):
+        @tool(annotations=ToolAnnotations(read_only=True, open_world=False))
+        def f() -> str:
+            """F."""
+            return ""
+
+        assert f.annotations.read_only is True
+        assert f.definition.annotations.open_world is False
+
+    def test_base_tool_annotations(self):
+        class Delete(BaseTool):
+            async def execute(self, path: str) -> str:  # type: ignore[override]
+                return path
+
+        t = Delete("delete", "Delete a file", ToolAnnotations(destructive=True))
+        assert t.definition.annotations.destructive is True
 
 
 # ---------------------------------------------------------------------------
