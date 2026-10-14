@@ -1,10 +1,19 @@
-"""MCPClientTool — wraps a remote MCP tool as a cyclops BaseTool."""
+"""MCPClientTool: a remote MCP tool as a cyclops BaseTool."""
 
-import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from mcp import types as mcp_types
+
 from cyclops.toolkit.tool import BaseTool
-from cyclops.toolkit.types import ToolDefinition, ToolParameter
+from cyclops.toolkit.types import (
+    ContentBlock,
+    ImageContent,
+    TextContent,
+    ToolAnnotations,
+    ToolDefinition,
+    ToolParameter,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from cyclops.mcp.bridge import MCPBridge
@@ -18,6 +27,9 @@ def _mcp_schema_to_params(input_schema: Dict[str, Any]) -> Dict[str, ToolParamet
     _valid = {"string", "integer", "number", "boolean", "array", "object"}
     for name, prop in props.items():
         json_type = prop.get("type", "string")
+        if isinstance(json_type, list):
+            # A union such as ["string", "null"]: describe the first non-null type.
+            json_type = next((t for t in json_type if t != "null"), "string")
         if json_type not in _valid:
             json_type = "string"
         params[name] = ToolParameter(
@@ -29,33 +41,72 @@ def _mcp_schema_to_params(input_schema: Dict[str, Any]) -> Dict[str, ToolParamet
     return params
 
 
+def to_tool_result(result: mcp_types.CallToolResult) -> ToolResult:
+    """Map an MCP tool result onto a ToolResult.
+
+    Text and images become content blocks and ``structuredContent`` becomes
+    ``result``. ``isError`` gives an error result carrying the text.
+    """
+    blocks: List[ContentBlock] = []
+    for content in result.content:
+        if isinstance(content, mcp_types.TextContent):
+            blocks.append(TextContent(text=content.text))
+        elif isinstance(content, mcp_types.ImageContent):
+            blocks.append(ImageContent(data=content.data, mime_type=content.mimeType))
+        elif isinstance(content, mcp_types.EmbeddedResource) and isinstance(
+            content.resource, mcp_types.TextResourceContents
+        ):
+            blocks.append(TextContent(text=content.resource.text))
+        else:
+            blocks.append(TextContent(text=content.model_dump_json()))
+    if result.isError:
+        text = "\n".join(b.text for b in blocks if isinstance(b, TextContent))
+        return ToolResult.error_result(text)
+    return ToolResult(result=result.structuredContent, content=blocks)
+
+
+def _annotations(tool: mcp_types.Tool) -> ToolAnnotations:
+    hints = tool.annotations
+    if hints is None:
+        return ToolAnnotations()
+    return ToolAnnotations(
+        read_only=hints.readOnlyHint,
+        destructive=hints.destructiveHint,
+        idempotent=hints.idempotentHint,
+        open_world=hints.openWorldHint,
+    )
+
+
 class MCPClientTool(BaseTool):
-    """A BaseTool backed by a remote MCP server tool."""
+    """A BaseTool backed by a tool on an attached MCP server."""
 
     def __init__(
         self,
-        bridge: "MCPBridge",
         client: "MCPClient",
-        name: str,
-        description: str,
-        input_schema: Dict[str, Any],
+        server: str,
+        tool: mcp_types.Tool,
+        name: Optional[str] = None,
     ) -> None:
-        self._bridge = bridge
-        self._client = client
-        self._input_schema = input_schema
-        super().__init__(name, description)
+        self.client = client
+        self.server = server
+        self.tool = tool
+        super().__init__(name or tool.name, tool.description or "", _annotations(tool))
 
     def _build_definition(self) -> ToolDefinition:
         return ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters=_mcp_schema_to_params(self._input_schema),
+            parameters=_mcp_schema_to_params(self.tool.inputSchema),
+            input_schema=self.tool.inputSchema,
+            annotations=self.annotations,
         )
 
-    async def execute(self, **kwargs: Any) -> str:
-        return await asyncio.to_thread(
-            self._bridge.call_tool, self._client, self.name, kwargs
-        )
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        try:
+            result = await self.client.call_tool(self.server, self.tool.name, kwargs)
+        except Exception as e:
+            return ToolResult.error_result(str(e) or type(e).__name__)
+        return to_tool_result(result)
 
 
 def tools_from_server(
@@ -63,18 +114,7 @@ def tools_from_server(
     name: str,
     command: List[str],
     env: Optional[Dict[str, str]] = None,
-) -> tuple["MCPClient", list[MCPClientTool]]:
-    """Connect to an MCP server and return (client, list_of_tools)."""
-    client = bridge.connect(name, command, env=env)
-    tool_infos = bridge.list_tools(client)
-    tools = [
-        MCPClientTool(
-            bridge=bridge,
-            client=client,
-            name=t["name"],
-            description=t.get("description", ""),
-            input_schema=t.get("input_schema", {}),
-        )
-        for t in tool_infos
-    ]
-    return client, tools
+) -> tuple["MCPClient", List[MCPClientTool]]:
+    """Attach a stdio server to the bridge and return (client, tools)."""
+    tools = bridge.attach(name, command, env=env)
+    return bridge.client, tools

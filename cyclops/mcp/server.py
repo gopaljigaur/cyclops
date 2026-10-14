@@ -2,13 +2,40 @@
 
 from typing import Any, Dict, List
 
+from mcp import types as mcp_types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool as MCPTool, TextContent
+from mcp.types import CallToolResult, Tool as MCPTool
 
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import BaseTool
 from cyclops.toolkit.plugins import PluginManager
+from cyclops.toolkit.types import TextContent, ToolResult
+
+
+def _to_call_result(result: ToolResult) -> CallToolResult:
+    """Serve a ToolResult's content blocks as MCP text and image content."""
+    if result.is_error:
+        error = result.error or "tool execution failed"
+        return CallToolResult(
+            content=[mcp_types.TextContent(type="text", text=error)], isError=True
+        )
+    content: List[mcp_types.ContentBlock] = [
+        (
+            mcp_types.TextContent(type="text", text=block.text)
+            if isinstance(block, TextContent)
+            else mcp_types.ImageContent(
+                type="image", data=block.data, mimeType=block.mime_type
+            )
+        )
+        for block in result.content
+    ]
+    if not content:
+        # No blocks: the result itself, rendered as text or JSON.
+        text = result.to_message_content()
+        assert isinstance(text, str)
+        content.append(mcp_types.TextContent(type="text", text=text))
+    return CallToolResult(content=content)
 
 
 class MCPServer:
@@ -55,14 +82,16 @@ class MCPServer:
         @self.server.call_tool()
         async def handle_call_tool(
             name: str, arguments: Dict[str, Any]
-        ) -> List[TextContent]:
+        ) -> CallToolResult:
             try:
                 result = await self.tool_registry.execute_tool(
                     tool_name=name, **arguments
                 )
-                return [TextContent(type="text", text=str(result))]
             except Exception as e:
-                return [TextContent(type="text", text=f"Error: {str(e)}")]
+                return _to_call_result(ToolResult.error_result(str(e)))
+            if not isinstance(result, ToolResult):
+                result = ToolResult.success_result(result)
+            return _to_call_result(result)
 
     def add_tool(self, tool: BaseTool) -> None:
         """Add a tool to the server"""

@@ -1,84 +1,106 @@
 # MCP
 
-The Model Context Protocol (MCP) is an open standard for exposing tools to LLMs. Cyclops ships a lightweight client and server so you can either consume tools from any MCP server or publish your Cyclops tools as an MCP server.
+The Model Context Protocol (MCP) is an open standard for exposing tools to LLMs. Cyclops ships a client and a server so you can either consume tools from any MCP server or publish your Cyclops tools as an MCP server.
 
 ## MCPClient
 
-`MCPClient` connects to an external MCP server over stdio and lets you list and call its tools programmatically.
-
-### connect_stdio
-
-Pass a command list (`[executable, *args]`) and optionally a dict of environment variables:
+`MCPClient` is an async client that runs on your event loop. Attach servers by name, pass their tools to an agent, and detach them when you are done. Leaving the `async with` block disconnects every server.
 
 ```python
 import asyncio
-from cyclops import MCPClient
+from cyclops import Agent, AgentConfig, MCPClient
 
 
 async def main():
-    client = MCPClient()
-    await client.connect_stdio(["python", "my_mcp_server.py"])
-    # ...
-    await client.disconnect()
+    async with MCPClient() as mcp:
+        await mcp.attach("math", ["python", "mcp_server.py"])
+
+        agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant"), tools=mcp.tools())
+        response = await agent.arun("Add 17 and 25, then greet Alice.")
+        print(response)
 
 
 asyncio.run(main())
 ```
 
-### list_tools
+### Transports
 
-Returns a list of dicts, each with `"name"`, `"description"`, and `"input_schema"` keys:
-
-```python
-tools = await client.list_tools()
-for t in tools:
-    print(t["name"], "—", t["description"])
-```
-
-### call_tool
-
-Calls a named tool with a dict of arguments and returns the result as a string:
+Pass `command` for a stdio server, or `url` for a remote one. A url uses streamable HTTP; set `transport="sse"` for servers that only speak the older SSE transport. Headers are set per server:
 
 ```python
-result = await client.call_tool("add", {"a": 5, "b": 3})
-print(result)  # "8.0"
+await mcp.attach("local", ["python", "mcp_server.py"], env={"LOG_LEVEL": "debug"})
+await mcp.attach("remote", url="https://example.com/mcp", headers={"Authorization": "Bearer ..."})
+await mcp.attach("legacy", url="https://example.com/sse", transport="sse")
 ```
 
-### disconnect
+### Timeouts and reconnects
 
-Always disconnect when done to release the subprocess:
+`connect_timeout` (default 30 seconds) bounds connecting, listing the server's tools, and opening HTTP connections; `call_timeout` (default none) bounds each tool call, and is the only limit on how long a streamable HTTP call may take. A call that times out returns an error result.
+
+When a session drops, the next call reconnects. A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run. Concurrent calls share one reconnect.
+
+### Tool names
+
+Tools are named `<server>__<tool>`, so tools from different servers do not collide. Set `prefix` to use another prefix, or `prefix=False` to keep the server's names. `attach` raises `ValueError` if a name is already taken by another attached server:
 
 ```python
-await client.disconnect()
+await mcp.attach("math", ["python", "mcp_server.py"])                 # math__add
+await mcp.attach("calc", ["python", "mcp_server.py"], prefix="m")     # m__add
+await mcp.attach("plain", ["python", "mcp_server.py"], prefix=False)  # add
 ```
 
-### Full example
+The server's input schema is sent to the model as is, including nested objects and `$defs`.
+
+### Results
+
+`execute()` returns a `ToolResult`. Text and image content become its `content` blocks (`TextContent`, `ImageContent`) and `structuredContent` becomes its `result`; the agent sends it to the model like any other tool result. A result with `isError` set becomes an error result carrying the server's text. The server's tool annotations (`readOnlyHint` and the others) become the tool's `ToolAnnotations`.
+
+### Server sets per agent or per run
+
+`attach` returns the server's tools and `tools()` takes a list of server names, so one client can serve agents with different server sets. Servers can be attached and detached at any point, from any task on the client's loop. A server's tools must be awaited on the loop that attached it; from sync code, use `MCPBridge`:
 
 ```python
-import asyncio
-from cyclops import MCPClient
+await mcp.attach("files", ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
+await mcp.attach("search", url="https://example.com/mcp")
 
+reader = Agent(config, tools=mcp.tools(["files"]))
+researcher = Agent(config, tools=mcp.tools(["files", "search"]))
 
-async def main():
-    client = MCPClient()
-    try:
-        await client.connect_stdio(["python", "mcp_server.py"])
-
-        tools = await client.list_tools()
-        print("Available tools:", [t["name"] for t in tools])
-
-        result = await client.call_tool("greet", {"name": "World"})
-        print(result)  # "Hello, World!"
-    finally:
-        await client.disconnect()
-
-
-asyncio.run(main())
+await mcp.detach("search")
 ```
+
+### Calling tools directly
+
+`call_tool` returns the raw MCP `CallToolResult`:
+
+```python
+result = await mcp.call_tool("math", "add", {"a": 5, "b": 3})
+print(result.content[0].text)  # "8.0"
+```
+
+## MCPBridge
+
+For scripts without an event loop, `MCPBridge` runs an `MCPClient` on a background thread. Its tools work with the sync `agent.run()`:
+
+```python
+from cyclops import Agent, AgentConfig, MCPBridge
+
+bridge = MCPBridge()
+try:
+    tools = bridge.attach("math", ["python", "mcp_server.py"])
+    agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant"), tools=tools)
+    print(agent.run("Add 17 and 25."))
+finally:
+    bridge.stop()
+```
+
+`bridge.attach` takes the same arguments as `MCPClient.attach`.
 
 ## MCPServer
 
 `MCPServer` wraps a `ToolRegistry` and exposes its tools over the stdio MCP protocol. Any MCP-compatible client (Claude Desktop, Cursor, tiny-agents) can connect to it.
+
+A tool that returns a `ToolResult` has its text and image content blocks served as MCP content. A tool that raises, or returns an error result, is served with `isError` set.
 
 ### add_tool
 
@@ -125,54 +147,9 @@ server = MCPServer(name="my-agent-tools")  # load_plugins=True by default
 await server.run_stdio()
 ```
 
-## Using MCP tools with Agent
-
-To bridge an MCP server into a Cyclops agent, connect the client, convert its tools into `Tool` objects, and pass them to the agent.
-
-```python
-import asyncio
-from cyclops import Agent, AgentConfig, MCPClient
-from cyclops.toolkit.tool import Tool, BaseTool
-from typing import Any
-
-
-class MCPProxyTool(BaseTool):
-    """Wraps a single MCP tool so the agent can call it."""
-
-    def __init__(self, client: MCPClient, name: str, description: str):
-        super().__init__(name=name, description=description)
-        self._client = client
-
-    async def execute(self, **kwargs: Any) -> str:
-        return await self._client.call_tool(self.name, kwargs)
-
-
-async def main():
-    client = MCPClient()
-    await client.connect_stdio(["python", "mcp_server.py"])
-
-    # Build proxy tools from the server's tool list.
-    mcp_tools = await client.list_tools()
-    proxy_tools = [
-        MCPProxyTool(client, t["name"], t["description"] or "")
-        for t in mcp_tools
-    ]
-
-    config = AgentConfig(model="groq/llama-3.1-8b-instant")
-    agent = Agent(config, tools=proxy_tools)
-
-    response = await agent.arun("Add 17 and 25, then greet Alice.")
-    print(response)
-
-    await client.disconnect()
-
-
-asyncio.run(main())
-```
-
 ## Connecting to the filesystem MCP server
 
-The [MCP filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) is a popular MCP server that exposes file-system operations. Connect to it with:
+The [MCP filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) exposes file system operations:
 
 ```python
 import asyncio
@@ -180,20 +157,15 @@ from cyclops import MCPClient
 
 
 async def main():
-    client = MCPClient()
-    # The npx invocation downloads and runs the official filesystem server.
-    await client.connect_stdio(
-        ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-    )
+    async with MCPClient() as mcp:
+        # The npx invocation downloads and runs the filesystem server.
+        tools = await mcp.attach(
+            "fs", ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+        )
+        print("Filesystem tools:", [t.name for t in tools])
 
-    tools = await client.list_tools()
-    print("Filesystem tools:", [t["name"] for t in tools])
-
-    # List files in /tmp.
-    result = await client.call_tool("list_directory", {"path": "/tmp"})
-    print(result)
-
-    await client.disconnect()
+        result = await mcp.call_tool("fs", "list_directory", {"path": "/tmp"})
+        print(result.content[0].text)
 
 
 asyncio.run(main())
