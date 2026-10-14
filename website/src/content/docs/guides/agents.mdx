@@ -31,7 +31,7 @@ config = AgentConfig(
 | `system_prompt` | `str` or `None` | `None` | System instruction prepended to every conversation turn. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router` or `None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
-| `max_steps` | `int` | `10` | Most LLM completions in one run. A run without tools makes one. |
+| `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds included. A run without tools makes at least one. |
 | `max_total_tokens` | `int` or `None` | `None` | Most tokens one run may use, checked between steps. |
 | `max_cost` | `float` or `None` | `None` | Most USD one run may cost, checked between steps. |
 | `hooks` | `AgentHooks` or `None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](/guides/hooks/). |

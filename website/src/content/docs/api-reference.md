@@ -57,6 +57,9 @@ class AgentConfig(BaseModel):
     max_total_tokens: Optional[int] = None
     max_cost: Optional[float] = None   # USD
     hooks: Optional[AgentHooks] = None
+    middleware: List[ToolMiddleware] = []
+    guards: List[Guard] = []
+    max_guard_rounds: int = 3
 ```
 
 | Field | Default | Description |
@@ -71,6 +74,9 @@ class AgentConfig(BaseModel):
 | `max_total_tokens` | `None` | Most tokens per run, checked between steps. |
 | `max_cost` | `None` | Most USD per run, checked between steps. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
+| `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
+| `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
+| `max_guard_rounds` | `3` | How many times per run guards may send the model back. |
 
 ---
 
@@ -83,7 +89,8 @@ class RunResult(BaseModel):
     content: str
     tool_calls: List[ToolCall]
     model: str
-    stop_reason: Literal["completed", "max_steps", "budget", "cancelled", "error"]
+    run_id: str
+    stop_reason: Literal["completed", "max_steps", "budget", "guard", "cancelled", "error"]
     steps: int
     usage: Optional[Usage]
     error: Optional[Exception]
@@ -167,6 +174,33 @@ class AgentHooks:
 | `on_tool_error` | When a tool raises an exception or is cancelled | `None` |
 
 See [Hooks guide](/guides/hooks/) for full documentation.
+
+---
+
+### ToolMiddleware
+
+Async middleware around every tool call, set with `AgentConfig.middleware`.
+
+```python
+class ToolMiddleware:
+    async def before_tool(self, call: ToolCallContext) -> Union[None, Deny, Dict[str, Any]]: ...
+    async def after_tool(self, call: ToolCallContext, result: ToolResult, error: Optional[Exception]) -> Optional[ToolResult]: ...
+
+@dataclass
+class ToolCallContext:
+    tool_name: str
+    arguments: Dict[str, Any]
+    call_id: Optional[str]
+    run_id: str
+    annotations: ToolAnnotations
+    agent_path: Tuple[str, ...]
+
+@dataclass
+class Deny:
+    reason: str
+```
+
+A guard is `Callable[[GuardContext], Awaitable[Optional[str]]]`; `GuardContext` has `content`, `messages`, `run_id` and `agent_path`. See [Hooks guide](/guides/hooks/#tool-middleware).
 
 ---
 
