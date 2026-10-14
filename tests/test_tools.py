@@ -248,6 +248,14 @@ class TestParameterSchema:
         assert set(f.definition.to_json_schema()["properties"]) == {"x", "schema"}
         assert asyncio.run(f.execute(x=1)) == "1s"
 
+    def test_positional_only_parameters(self):
+        def f(a: int, limit: int = 5, /, *, scale: int = 1) -> int:
+            return (a + limit) * scale
+
+        t = Tool(name="f", description="d", func=f)
+        assert asyncio.run(t.execute(a=1)) == 6
+        assert asyncio.run(t.execute(a=1, limit=2, scale=3)) == 9
+
     def test_extra_arguments_keep_their_names(self):
         @tool
         def f(_private: int, **rest) -> dict:

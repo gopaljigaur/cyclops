@@ -149,6 +149,11 @@ class Tool(BaseTool):
     ):
         self.func = func
         self._is_async = inspect.iscoroutinefunction(func)
+        self._positional_only = [
+            p.name
+            for p in inspect.signature(func).parameters.values()
+            if p.kind is p.POSITIONAL_ONLY
+        ]
         super().__init__(name, description, annotations)
 
     def _build_definition(self) -> ToolDefinition:
@@ -175,7 +180,8 @@ class Tool(BaseTool):
                 ],
             )
         kwargs.update(extra)
+        args = [kwargs.pop(name) for name in self._positional_only]
         if self._is_async:
-            return await self.func(**kwargs)
+            return await self.func(*args, **kwargs)
         # A blocking sync function must not stall the event loop
-        return await asyncio.to_thread(self.func, **kwargs)
+        return await asyncio.to_thread(self.func, *args, **kwargs)
