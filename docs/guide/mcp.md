@@ -35,13 +35,13 @@ await mcp.attach("legacy", url="https://example.com/sse", transport="sse")
 
 ### Timeouts and reconnects
 
-`connect_timeout` (default 30 seconds) bounds connecting and the HTTP requests; `call_timeout` (default none) bounds each tool call. A call that times out returns an error result.
+`connect_timeout` (default 30 seconds) bounds connecting, listing the server's tools, and opening HTTP connections; `call_timeout` (default none) bounds each tool call. A call that times out returns an error result.
 
-When a session drops, the next call reconnects. A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run.
+When a session drops, the next call reconnects. A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run. Concurrent calls share one reconnect.
 
 ### Tool names
 
-Tools are named `<server>__<tool>`, so tools from different servers do not collide. Set `prefix` to use another prefix, or `prefix=False` to keep the server's names:
+Tools are named `<server>__<tool>`, so tools from different servers do not collide. Set `prefix` to use another prefix, or `prefix=False` to keep the server's names. `attach` raises `ValueError` if a name is already taken by another attached server:
 
 ```python
 await mcp.attach("math", ["python", "mcp_server.py"])                 # math__add
@@ -57,7 +57,7 @@ The server's input schema is sent to the model as is, including nested objects a
 
 ### Server sets per agent or per run
 
-`attach` returns the server's tools and `tools()` takes a list of server names, so one client can serve agents with different server sets. Servers can be attached and detached at any point, from any task:
+`attach` returns the server's tools and `tools()` takes a list of server names, so one client can serve agents with different server sets. Servers can be attached and detached at any point, from any task on the client's loop. A server's tools must be awaited on the loop that attached it; from sync code, use `MCPBridge`:
 
 ```python
 await mcp.attach("files", ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"])

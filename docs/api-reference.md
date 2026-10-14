@@ -329,13 +329,13 @@ class MCPClient:
 
 ### MCPClientTool
 
-A `BaseTool` for one tool on an attached server. `execute()` returns a `ToolResult`: an error result when the server sets `isError` or the call fails, otherwise the text, or a list of content parts when the result has images. `definition.to_json_schema()` returns the server's input schema unchanged.
+A `BaseTool` for one tool on an attached server. Await `execute()` on the loop that attached the server. It returns a `ToolResult`: an error result when the server sets `isError` or the call fails, otherwise the text, or a list of content parts when the result has images. `definition.to_json_schema()` returns the server's input schema unchanged.
 
 ---
 
 ### MCPBridge
 
-Sync wrapper that runs an `MCPClient` on a background event loop.
+Sync wrapper that runs an `MCPClient` on a background event loop. Its tools run each call on that loop, so they can be awaited from any loop.
 
 ```python
 class MCPBridge:
@@ -344,6 +344,9 @@ class MCPBridge:
     def detach(self, name: str) -> None: ...
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
     def stop(self) -> None: ...
+
+    @property
+    def connected_names(self) -> List[str]: ...
 ```
 
 ---
