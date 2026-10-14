@@ -1913,3 +1913,125 @@ async def test_cancel_during_a_streamed_completion():
     assert result.stop_reason == "cancelled"
     assert result.content == ""
     assert agent.messages == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_handle_iterates_once():
+    agent = Agent(config=_make_config())
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("hi")),
+    ):
+        handle = agent.start("hello", stream=False)
+        assert [type(e).__name__ for e in [e async for e in handle]][-1] == (
+            "RunFinished"
+        )
+        with pytest.raises(RuntimeError):
+            handle.__aiter__()
+        await handle
+
+
+@pytest.mark.asyncio
+async def test_second_cancel_leaves_the_tool_cleanup_alone():
+    import asyncio
+
+    from cyclops.toolkit.tool import Tool
+
+    started = asyncio.Event()
+    cleaned = []
+
+    async def slow() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.01)
+            cleaned.append(1)
+            raise
+        return "done"
+
+    agent = Agent(config=_make_config(), tools=[Tool("slow", "Slow tool", slow)])
+    tc = _make_tool_call("tc_1", "slow", "{}")
+    response = _make_completion_response(content=None, tool_calls=[tc])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        handle = agent.start("go", stream=False)
+        await started.wait()
+        handle.cancel()
+        await asyncio.sleep(0)
+        handle.cancel()
+        result = await handle
+
+    assert result.stop_reason == "cancelled"
+    assert cleaned == [1]
+    assert agent.messages[-1]["content"] == "Tool call cancelled."
+
+
+@pytest.mark.asyncio
+async def test_steer_before_the_first_completion_is_in_it():
+    agent = Agent(config=_make_config())
+    mock = AsyncMock(return_value=_make_completion_response("Bonjour."))
+
+    with patch("litellm.acompletion", new=mock):
+        handle = agent.start("hello", stream=False)
+        handle.steer("In French, please.")
+        result = await handle
+
+    assert result.steps == 1
+    sent = mock.call_args.kwargs["messages"]
+    assert [m["content"] for m in sent] == ["hello", "In French, please."]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "limits", [{"max_steps": 1}, {"max_steps": 5, "max_total_tokens": 30}]
+)
+async def test_steer_without_a_step_left_stays_for_the_next_run(limits):
+    import asyncio
+
+    agent = Agent(config=_make_config(**limits))
+    asked = asyncio.Event()
+
+    async def complete(**kwargs):
+        asked.set()
+        await asyncio.sleep(0)
+        return _make_completion_response("Hi.")
+
+    with patch("litellm.acompletion", new=complete):
+        handle = agent.start("hello", stream=False)
+        await asked.wait()
+        handle.steer("In French, please.")
+        result = await handle
+
+    assert result.stop_reason == "completed"
+    assert result.content == "Hi."
+    assert agent.messages[-1] == {"role": "user", "content": "In French, please."}
+
+
+@pytest.mark.asyncio
+async def test_guards_judge_the_answer_after_a_steer():
+    import asyncio
+
+    judged = []
+
+    async def guard(context):
+        judged.append(context.content)
+        return None
+
+    agent = Agent(config=_make_config(guards=[guard]))
+    asked = asyncio.Event()
+    answers = iter(["Hi.", "Bonjour."])
+
+    async def complete(**kwargs):
+        asked.set()
+        await asyncio.sleep(0)
+        return _make_completion_response(next(answers))
+
+    with patch("litellm.acompletion", new=complete):
+        handle = agent.start("hello", stream=False)
+        await asked.wait()
+        handle.steer("In French, please.")
+        result = await handle
+
+    assert result.content == "Bonjour."
+    assert judged == ["Bonjour."]

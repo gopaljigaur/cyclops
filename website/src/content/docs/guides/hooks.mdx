@@ -41,7 +41,7 @@ agent.run("What is the weather in London?")
 |---|---|---|
 | `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
 | `on_run_end(content)` | When a run finishes, streamed or not | `None` |
-| `on_run_error(error)` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. | `None` |
+| `on_run_error(error)` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (`handle.cancel()`, or a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. A handle cancelled before its run started fires no hooks at all; its events still end with `RunFinished`. | `None` |
 | `on_llm_start(messages)` | Before each LiteLLM completion call | `None` |
 | `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
