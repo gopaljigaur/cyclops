@@ -1,5 +1,6 @@
 """Tool definitions and base classes"""
 
+import asyncio
 import inspect
 import types
 import typing
@@ -101,4 +102,5 @@ class Tool(BaseTool):
         """Execute the wrapped function"""
         if self._is_async:
             return await self.func(**kwargs)
-        return self.func(**kwargs)
+        # A blocking sync function must not stall the event loop
+        return await asyncio.to_thread(self.func, **kwargs)

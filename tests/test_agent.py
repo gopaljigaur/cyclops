@@ -1042,3 +1042,28 @@ def test_forked_child_gets_its_own_loop():
         _, status = os.waitpid(pid, 0)
 
     assert os.WEXITSTATUS(status) == 0
+
+
+def test_sync_tool_can_run_another_agent():
+    """A sync @tool runs in a worker thread, so it may call another agent's run()."""
+    from cyclops.toolkit import tool
+
+    inner = Agent(config=_make_config())
+
+    @tool
+    def ask(question: str) -> str:
+        """Ask the inner agent."""
+        return inner.run(question)
+
+    agent = Agent(config=_make_config(), tools=[ask])
+    tc = _make_tool_call("tc_1", "ask", '{"question": "capital of France?"}')
+    responses = [
+        _make_completion_response(content=None, tool_calls=[tc]),
+        _make_completion_response(content="Paris"),
+        _make_completion_response(content="It is Paris."),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        assert agent.run("Ask about France") == "It is Paris."
+
+    assert agent.messages[2]["content"] == "Paris"
