@@ -1,6 +1,10 @@
 """Decorators for creating tools"""
 
+import inspect
 from typing import Callable, Optional, Union
+
+from docstring_parser import parse as parse_docstring
+
 from cyclops.toolkit.tool import Tool
 from cyclops.toolkit.registry import ToolRegistry
 
@@ -31,12 +35,16 @@ def tool(
         @tool(name="custom_name", description="Custom description")
         def my_function():
             pass
+
+    Parameter descriptions are read from the docstring's Args/Parameters
+    section; the rest of the docstring becomes the tool description.
     """
 
     def decorator(f: Callable) -> Tool:
         tool_name = name or f.__name__
-        tool_description = description or (
-            f.__doc__.strip() if f.__doc__ else f"Tool: {tool_name}"
+        summary = parse_docstring(inspect.getdoc(f) or "").description
+        tool_description = (
+            description or (summary or "").strip() or f"Tool: {tool_name}"
         )
 
         created_tool = Tool(tool_name, tool_description, f)

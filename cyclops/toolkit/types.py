@@ -21,8 +21,13 @@ class ToolDefinition(BaseModel):
     name: str
     description: str
     parameters: Dict[str, ToolParameter] = Field(default_factory=dict)
+    input_schema: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full JSON Schema of the parameters"
+    )
 
     def to_json_schema(self) -> Dict[str, Any]:
+        if self.input_schema is not None:
+            return self.input_schema
         return {
             "type": "object",
             "properties": {

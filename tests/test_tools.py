@@ -1,18 +1,15 @@
-"""Tests for cyclops toolkit: @tool decorator, BaseTool, results and registry."""
+"""Tests for cyclops toolkit: @tool decorator, BaseTool, schemas, results and registry."""
 
 import asyncio
-import inspect
-from typing import Optional
+from enum import Enum
+from typing import Annotated, List, Literal, Optional
 
 import pytest
+from pydantic import BaseModel, Field, ValidationError
 
 from cyclops.toolkit.decorators import tool
 from cyclops.toolkit.registry import ToolRegistry
-from cyclops.toolkit.tool import (
-    BaseTool,
-    Tool,
-    _annotation_to_json_type,
-)
+from cyclops.toolkit.tool import BaseTool, Tool
 from cyclops.toolkit.types import (
     ImageContent,
     TextContent,
@@ -21,52 +18,147 @@ from cyclops.toolkit.types import (
 )
 
 # ---------------------------------------------------------------------------
-# _annotation_to_json_type
+# Parameter schemas
 # ---------------------------------------------------------------------------
 
 
-class TestAnnotationToJsonType:
-    """Unit tests for the _annotation_to_json_type helper."""
+class Color(str, Enum):
+    RED = "red"
+    BLUE = "blue"
 
-    def test_str_maps_to_string(self):
-        assert _annotation_to_json_type(str) == "string"
 
-    def test_int_maps_to_integer(self):
-        assert _annotation_to_json_type(int) == "integer"
+class Point(BaseModel):
+    x: int
+    y: int
 
-    def test_float_maps_to_number(self):
-        assert _annotation_to_json_type(float) == "number"
 
-    def test_bool_maps_to_boolean(self):
-        assert _annotation_to_json_type(bool) == "boolean"
+class TestParameterSchema:
+    """The JSON schema built from a function signature."""
 
-    def test_list_maps_to_array(self):
-        assert _annotation_to_json_type(list) == "array"
+    def test_list_has_items(self):
+        @tool
+        def f(tags: List[str]) -> str:
+            """F."""
+            return ""
 
-    def test_dict_maps_to_object(self):
-        assert _annotation_to_json_type(dict) == "object"
+        prop = f.definition.to_json_schema()["properties"]["tags"]
+        assert prop["type"] == "array"
+        assert prop["items"] == {"type": "string"}
 
-    def test_empty_annotation_defaults_to_string(self):
-        assert _annotation_to_json_type(inspect.Parameter.empty) == "string"
+    def test_literal_becomes_enum(self):
+        @tool
+        def f(mode: Literal["fast", "slow"]) -> str:
+            """F."""
+            return ""
 
-    def test_unknown_type_defaults_to_string(self):
-        class Foo:
-            pass
+        prop = f.definition.to_json_schema()["properties"]["mode"]
+        assert prop["enum"] == ["fast", "slow"]
 
-        assert _annotation_to_json_type(Foo) == "string"
+    def test_enum_is_referenced(self):
+        @tool
+        def f(color: Color) -> str:
+            """F."""
+            return ""
 
-    def test_optional_str_maps_to_string(self):
-        """Optional[str] is Union[str, None]; should resolve to 'string'."""
-        assert _annotation_to_json_type(Optional[str]) == "string"
+        schema = f.definition.to_json_schema()
+        assert schema["$defs"]["Color"]["enum"] == ["red", "blue"]
+        assert f.definition.parameters["color"].type == "string"
 
-    def test_optional_int_maps_to_integer(self):
-        assert _annotation_to_json_type(Optional[int]) == "integer"
+    def test_optional_allows_null(self):
+        @tool
+        def f(note: Optional[str] = None) -> str:
+            """F."""
+            return ""
 
-    def test_optional_float_maps_to_number(self):
-        assert _annotation_to_json_type(Optional[float]) == "number"
+        prop = f.definition.to_json_schema()["properties"]["note"]
+        assert {"type": "null"} in prop["anyOf"]
+        assert f.definition.parameters["note"].type == "string"
 
-    def test_optional_bool_maps_to_boolean(self):
-        assert _annotation_to_json_type(Optional[bool]) == "boolean"
+    def test_nested_model(self):
+        @tool
+        def f(point: Point) -> str:
+            """F."""
+            return ""
+
+        schema = f.definition.to_json_schema()
+        assert schema["$defs"]["Point"]["required"] == ["x", "y"]
+        assert f.definition.parameters["point"].type == "object"
+
+    def test_defaults_are_kept(self):
+        @tool
+        def f(limit: int = 5) -> str:
+            """F."""
+            return ""
+
+        schema = f.definition.to_json_schema()
+        assert schema["properties"]["limit"]["default"] == 5
+        assert "limit" not in schema.get("required", [])
+
+    def test_google_docstring_descriptions(self):
+        @tool
+        def f(query: str, limit: int = 5) -> str:
+            """Search the index.
+
+            Args:
+                query: Text to search for.
+                limit: Maximum number of hits.
+            """
+            return ""
+
+        props = f.definition.to_json_schema()["properties"]
+        assert props["query"]["description"] == "Text to search for."
+        assert props["limit"]["description"] == "Maximum number of hits."
+        assert f.description == "Search the index."
+
+    def test_numpy_docstring_descriptions(self):
+        @tool
+        def f(query: str) -> str:
+            """Search the index.
+
+            Parameters
+            ----------
+            query : str
+                Text to search for.
+            """
+            return ""
+
+        props = f.definition.to_json_schema()["properties"]
+        assert props["query"]["description"] == "Text to search for."
+        assert f.description == "Search the index."
+
+    def test_annotated_field_description(self):
+        @tool
+        def f(query: Annotated[str, Field(description="Text to search for.")]) -> str:
+            """Search."""
+            return ""
+
+        props = f.definition.to_json_schema()["properties"]
+        assert props["query"]["description"] == "Text to search for."
+        assert f.definition.parameters["query"].description == "Text to search for."
+
+    def test_unannotated_parameter_accepts_anything(self):
+        def f(x):
+            return x
+
+        t = Tool(name="f", description="d", func=f)
+        assert "type" not in t.definition.to_json_schema()["properties"]["x"]
+
+    def test_execute_validates_nested_model(self):
+        @tool
+        def f(point: Point) -> int:
+            """F."""
+            return point.x + point.y
+
+        assert asyncio.run(f.execute(point={"x": 1, "y": 2})) == 3
+
+    def test_execute_rejects_invalid_arguments(self):
+        @tool
+        def f(n: int) -> int:
+            """F."""
+            return n
+
+        with pytest.raises(ValidationError):
+            asyncio.run(f.execute(n="not a number"))
 
 
 # ---------------------------------------------------------------------------
