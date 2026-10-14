@@ -1,6 +1,7 @@
 """Tests for cyclops toolkit: @tool decorator, BaseTool, schemas, results and registry."""
 
 import asyncio
+import time
 from enum import Enum
 from typing import Annotated, List, Literal, Optional
 
@@ -347,6 +348,31 @@ class TestFunctionTool:
         t = Tool(name="multiply", description="Multiply", func=multiply)
         result = asyncio.run(t.execute(a=4, b=5))
         assert result == 20
+
+    def test_sync_function_does_not_block_event_loop(self):
+        def slow() -> str:
+            time.sleep(0.2)
+            return "done"
+
+        t = Tool(name="slow", description="Slow", func=slow)
+
+        async def main():
+            ticks = 0
+
+            async def tick():
+                nonlocal ticks
+                while True:
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            ticker = asyncio.create_task(tick())
+            result = await t.execute()
+            ticker.cancel()
+            return result, ticks
+
+        result, ticks = asyncio.run(main())
+        assert result == "done"
+        assert ticks > 5
 
     def test_definition_excludes_self_parameter(self):
         def func(x: str) -> str:
