@@ -34,10 +34,10 @@ config = AgentConfig(
 
 ## Constructing an Agent
 
-Pass a config, an optional list of tools, and optional memory storage.
+Pass a config and an optional list of tools.
 
 ```python
-from cyclops import Agent, AgentConfig, InMemoryStorage
+from cyclops import Agent, AgentConfig
 from cyclops.toolkit import tool
 
 
@@ -47,9 +47,8 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 
 
-memory = InMemoryStorage()
 config = AgentConfig(model="groq/llama-3.1-8b-instant")
-agent = Agent(config, tools=[greet], memory=memory)
+agent = Agent(config, tools=[greet])
 ```
 
 ## run() and arun()

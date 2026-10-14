@@ -1,0 +1,52 @@
+# Sessions
+
+A `Session` holds one conversation: its transcript (user and assistant messages, tool calls, tool results and reasoning blocks), its `id`, and the usage and cost of every run in it. Pass it to any run with `session=`; the agent then reads and extends the session's transcript and leaves its own history alone, so one agent can serve many conversations, also at the same time.
+
+```python
+from cyclops import Agent, AgentConfig, Session
+
+agent = Agent(AgentConfig(model="gpt-4o-mini"))
+session = Session()
+
+agent.run("My name is Alice.", session=session)
+print(agent.run("What is my name?", session=session))
+
+print(session.id, len(session.messages), session.usage)
+```
+
+Every entry point takes `session=`: `run`, `arun`, `run_with_response`, `arun_with_response`, `stream`, `astream`, `stream_events`, `astream_events` and `start`. Without a session, an agent keeps its own history in `agent.messages` as before.
+
+`session.usage` sums the usage of every run, including runs that fail or that `handle.cancel()` stops. Like a run's own `usage`, it becomes `None` once a run reports no usage.
+
+A run that fails or is cancelled leaves what it got to in the transcript: the user message, any completed steps, and an answer for every tool call it made (a cancelled call gets a cancelled result, a call whose middleware raised gets an error), so the session can go on. A completion in progress when the run stopped leaves nothing.
+
+Don't run the same session twice at once: both runs would append to one transcript.
+
+## Saving and loading
+
+A session is a Pydantic model with a stable JSON format that carries a `version` field (currently `1`):
+
+```python
+data = session.model_dump_json()
+session = Session.model_validate_json(data)
+```
+
+A `SessionStore` keeps sessions between runs or processes. It has three async methods, `load(session_id)` (returns `None` when there is no such session), `save(session)` and `delete(session_id)`. Cyclops ships two:
+
+- `InMemorySessionStore()` keeps sessions in the process.
+- `FileSessionStore(directory)` writes each session to `<directory>/<id>.json`. Ids must be letters, digits, `_` or `-`.
+
+```python
+from cyclops import FileSessionStore, Session
+
+store = FileSessionStore("./sessions")
+
+
+async def reply(user_id: str, message: str) -> str:
+    session = await store.load(user_id) or Session(id=user_id)
+    answer = await agent.arun(message, session=session)
+    await store.save(session)
+    return answer
+```
+
+To keep sessions in a database, write a class with the same three methods; `SessionStore` is a `Protocol`, so there is nothing to inherit.

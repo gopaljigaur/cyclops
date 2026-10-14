@@ -15,15 +15,14 @@ class Agent:
         self,
         config: AgentConfig,
         tools: Optional[List] = None,
-        memory: Optional[Memory] = None,
     ): ...
 ```
 
-**Methods**
+**Methods** (each run method also takes a keyword-only `session: Optional[Session] = None`)
 
 | Method | Signature | Description |
 |---|---|---|
-| `start` | `start(input_message: str, *, stream: bool = True, response_model: Optional[Type] = None) -> RunHandle` | Start a run on the running event loop; await, iterate, steer or cancel it. |
+| `start` | `start(input_message: str, *, stream: bool = True, response_model: Optional[Type] = None, session: Optional[Session] = None) -> RunHandle` | Start a run on the running event loop; await, iterate, steer or cancel it. |
 | `run` | `run(input_message: str, response_model: Optional[Type] = None) -> Any` | Run synchronously. Returns `str` or a Pydantic model instance. |
 | `arun` | `arun(input_message: str, response_model: Optional[Type] = None) -> Any` | Run asynchronously. |
 | `run_with_response` | `run_with_response(input_message: str) -> RunResult` | Run synchronously; return the result, stop reason, usage and cost. |
@@ -32,7 +31,7 @@ class Agent:
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
 | `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
 | `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
-| `reset` | `reset() -> None` | Clear conversation history. |
+| `reset` | `reset() -> None` | Clear the history of runs without a session. |
 
 **Properties**
 
@@ -81,9 +80,34 @@ class AgentConfig(BaseModel):
 
 ---
 
+### Session
+
+`cyclops.core.session`. One conversation, passed to any run with `session=`. See [Sessions](/guides/sessions/).
+
+```python
+class Session(BaseModel):
+    version: Literal[1] = 1
+    id: str                        # a random hex id by default
+    messages: List[Dict[str, Any]]
+    usage: Optional[Usage]
+
+
+class SessionStore(Protocol):
+    async def load(self, session_id: str) -> Optional[Session]: ...
+    async def save(self, session: Session) -> None: ...
+    async def delete(self, session_id: str) -> None: ...
+
+
+class InMemorySessionStore: ...                  # SessionStore in this process
+class FileSessionStore:                          # <directory>/<id>.json
+    def __init__(self, directory: str | Path): ...
+```
+
+---
+
 ### RunHandle
 
-Returned by `Agent.start(input_message, *, stream=True, response_model=None)`. See [Agents](/guides/agents/#start-steer-and-cancel-a-run).
+Returned by `Agent.start(input_message, *, stream=True, response_model=None, session=None)`. See [Agents](/guides/agents/#start-steer-and-cancel-a-run).
 
 ```python
 class RunHandle:

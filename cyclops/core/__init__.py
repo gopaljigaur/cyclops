@@ -16,6 +16,12 @@ from cyclops.core.types import (
     ToolCall,
     Usage,
 )
+from cyclops.core.session import (
+    FileSessionStore,
+    InMemorySessionStore,
+    Session,
+    SessionStore,
+)
 from cyclops.core.memory import Memory, InMemoryStorage, FileStorage
 
 __all__ = [
@@ -29,6 +35,10 @@ __all__ = [
     "ToolMiddleware",
     "Message",
     "RunHandle",
+    "Session",
+    "SessionStore",
+    "InMemorySessionStore",
+    "FileSessionStore",
     "RunResult",
     "ToolCall",
     "Usage",
