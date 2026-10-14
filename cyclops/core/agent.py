@@ -1,14 +1,15 @@
 """Core agent implementation"""
 
 import asyncio
-import concurrent.futures
 import inspect
 import json
+import threading
+from contextlib import aclosing
 from typing import (
     Any,
     AsyncGenerator,
-    AsyncIterator,
     Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -26,48 +27,45 @@ _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 _CANCELLED_RESULT = "Tool call cancelled."
 
 
-def _run_coroutine_sync(coro) -> Any:
-    """Run a coroutine synchronously without blocking an active event loop.
+_loop: Optional[asyncio.AbstractEventLoop] = None
+_loop_lock = threading.Lock()
 
-    Uses a ThreadPoolExecutor when a loop is active (e.g. Jupyter, nested async)
-    so the caller's loop is never blocked or re-entered.
+
+def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
+    """Await fn(*args) from sync code on a long-lived loop in a daemon thread.
+
+    One loop for every sync call lets LiteLLM's background logging finish, and
+    never blocks or re-enters a loop the caller may already be running.
     """
+    global _loop
+    with _loop_lock:
+        if _loop is None:
+            _loop = asyncio.new_event_loop()
+            threading.Thread(target=_loop.run_forever, daemon=True).start()
     try:
-        asyncio.get_running_loop()
+        running = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        running = None
+    if running is _loop:
+        # Blocking here would wait on the loop this call is running on.
+        raise RuntimeError("Use the async Agent methods from async code")
+
+    async def wrapper():
+        return await fn(*args)
+
+    return asyncio.run_coroutine_threadsafe(wrapper(), _loop).result()
 
 
 def _iterate_sync(agen: AsyncGenerator[str, None]) -> Iterator[str]:
-    """Drive an async iterator from sync code, on a worker thread if a loop is active."""
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.get_running_loop()
-        pool: Optional[concurrent.futures.ThreadPoolExecutor] = (
-            concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        )
-    except RuntimeError:
-        pool = None
-
-    def run(aw: Awaitable) -> Any:
-        if pool is not None:
-            return pool.submit(loop.run_until_complete, aw).result()
-        return loop.run_until_complete(aw)
-
+    """Drive an async generator from sync code on the shared loop."""
     try:
         while True:
             try:
-                yield run(agen.__anext__())
+                yield _run_coroutine_sync(agen.__anext__)
             except StopAsyncIteration:
                 return
     finally:
-        run(agen.aclose())
-        run(loop.shutdown_asyncgens())
-        loop.close()
-        if pool is not None:
-            pool.shutdown()
+        _run_coroutine_sync(agen.aclose)
 
 
 class _Run:
@@ -133,7 +131,7 @@ class Agent:
 
     def run(self, input_message: str, response_model: Optional[Type] = None) -> Any:
         """Run the agent synchronously. Returns str or Pydantic model instance."""
-        return _run_coroutine_sync(self.arun(input_message, response_model))
+        return _run_coroutine_sync(self.arun, input_message, response_model)
 
     async def arun(
         self, input_message: str, response_model: Optional[Type] = None
@@ -146,7 +144,7 @@ class Agent:
 
     def run_with_response(self, input_message: str) -> AgentResponse:
         """Run and return a full AgentResponse with cost/token metadata."""
-        return _run_coroutine_sync(self.arun_with_response(input_message))
+        return _run_coroutine_sync(self.arun_with_response, input_message)
 
     async def arun_with_response(self, input_message: str) -> AgentResponse:
         """Run async and return a full AgentResponse with cost/token metadata."""
@@ -161,8 +159,10 @@ class Agent:
 
     async def astream(self, input_message: str) -> AsyncGenerator[str, None]:
         """Async stream output tokens. Naive tool mode yields the final answer as one chunk."""
-        async for chunk in self._loop(input_message, _Run(), stream=True):
-            yield chunk
+        # aclosing passes an early close down to the LiteLLM stream.
+        async with aclosing(self._loop(input_message, _Run(), stream=True)) as loop:
+            async for chunk in loop:
+                yield chunk
 
     # ------------------------------------------------------------------
     # The agent loop
@@ -170,30 +170,34 @@ class Agent:
 
     async def _loop(
         self, input_message: str, run: _Run, stream: bool
-    ) -> AsyncIterator[str]:
+    ) -> AsyncGenerator[str, None]:
         """Run one turn, yielding text deltas when streaming, and fill in `run`."""
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
         start = len(self._history)
         mode = self._get_tool_mode()
         try:
-            async for chunk in self._steps(input_message, run, stream, mode):
-                yield chunk
+            async with aclosing(self._steps(input_message, run, stream, mode)) as steps:
+                async for chunk in steps:
+                    yield chunk
         except litellm.UnsupportedParamsError:
             if mode != "native" or self.config.tool_mode != "auto":
                 raise
-            if litellm.supports_function_calling(self.config.model):
+            if not self._tools_unsupported():
                 raise
             self._detected_tool_mode = "naive"
             del self._history[start:]
-            async for chunk in self._steps(input_message, run, stream, "naive"):
-                yield chunk
+            async with aclosing(
+                self._steps(input_message, run, stream, "naive")
+            ) as steps:
+                async for chunk in steps:
+                    yield chunk
         if self.config.hooks:
             self.config.hooks.on_run_end(run.content)
 
     async def _steps(
         self, input_message: str, run: _Run, stream: bool, mode: str
-    ) -> AsyncIterator[str]:
+    ) -> AsyncGenerator[str, None]:
         self._history.append({"role": "user", "content": input_message})
         naive = mode == "naive"
         kwargs: Dict[str, Any] = {
@@ -214,11 +218,16 @@ class Agent:
             # Naive mode never streams deltas: the text may be a tool call.
             if stream and not naive:
                 chunks = []
-                async for chunk in self._astream_completion(messages, kwargs):
-                    chunks.append(chunk)
-                    delta = chunk.choices[0].delta.content if chunk.choices else None
-                    if delta:
-                        yield delta
+                async with aclosing(
+                    self._astream_completion(messages, kwargs)
+                ) as completion:
+                    async for chunk in completion:
+                        chunks.append(chunk)
+                        delta = (
+                            chunk.choices[0].delta.content if chunk.choices else None
+                        )
+                        if delta:
+                            yield delta
                 response = litellm.stream_chunk_builder(chunks, messages=messages)
             else:
                 response = await self._acompletion(messages=messages, **kwargs)
@@ -280,13 +289,12 @@ class Agent:
     async def _execute_tool_call(self, tool_call) -> Tuple[Dict[str, Any], str]:
         """Parse a native tool call's arguments and run it. Returns (args, result)."""
         name = tool_call.function.name
-        args = tool_call.function.arguments
-        if isinstance(args, str):
+        raw = tool_call.function.arguments
+        try:
             # Some providers send "" for a call without arguments.
-            try:
-                args = json.loads(args) if args else {}
-            except json.JSONDecodeError as e:
-                return {}, f"Error: arguments for {name} are not valid JSON: {e}"
+            args = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as e:
+            return {}, f"Error: arguments for {name} are not valid JSON: {e}"
         if not isinstance(args, dict):
             return {}, f"Error: arguments for {name} must be a JSON object"
         return args, await self._call_tool(name, args)
@@ -382,6 +390,23 @@ class Agent:
     # Tool mode detection
     # ------------------------------------------------------------------
 
+    def _tools_unsupported(self) -> bool:
+        """True if LiteLLM lists no `tools` support for every deployment of the model."""
+        if self.config.router:
+            params = [
+                d["litellm_params"]
+                for d in self.config.router.get_model_list(self.config.model) or []
+            ]
+        else:
+            params = [{"model": self.config.model}]
+        for p in params:
+            supported = litellm.get_supported_openai_params(
+                model=p["model"], custom_llm_provider=p.get("custom_llm_provider")
+            )
+            if supported is None or "tools" in supported:
+                return False
+        return bool(params)
+
     def _get_tool_mode(self) -> str:
         if not self.tools:
             return "none"
@@ -443,7 +468,7 @@ class Agent:
     # LiteLLM wrappers
     # ------------------------------------------------------------------
 
-    async def _astream_completion(self, messages, kwargs) -> AsyncIterator[Any]:
+    async def _astream_completion(self, messages, kwargs) -> AsyncGenerator[Any, None]:
         response = await self._acompletion(
             messages=messages,
             stream=True,
@@ -457,6 +482,8 @@ class Agent:
             if self.config.hooks:
                 self.config.hooks.on_llm_error(e)
             raise
+        finally:
+            await response.aclose()
 
     async def _acompletion(self, **kwargs):
         if self.config.hooks:

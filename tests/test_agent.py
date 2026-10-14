@@ -404,27 +404,25 @@ def test_run_inside_running_loop_keeps_runtime_error():
             asyncio.run(caller())
 
 
-def _unsupported_tools_error():
+def _unsupported_params_error(param: str = "tools"):
     return litellm.UnsupportedParamsError(
-        message="does not support parameters: ['tools']",
-        llm_provider="custom",
-        model="local-model",
+        message=f"does not support parameters: ['{param}']",
+        llm_provider="ollama",
+        model="llama2",
     )
 
 
 def test_fallback_to_naive_on_unsupported_tools():
     """The unsupported-params error switches only this agent to naive mode."""
     tool = _make_simple_tool()
-    agent = Agent(config=_make_config("local-model"), tools=[tool])
-    other = Agent(config=_make_config("local-model"), tools=[tool])
+    # LiteLLM lists no `tools` support for the ollama provider.
+    agent = Agent(config=_make_config("ollama/llama2"), tools=[tool])
+    other = Agent(config=_make_config("ollama/llama2"), tools=[tool])
     naive_call = _make_completion_response('{"tool": "add", "args": {"a": 1, "b": 2}}')
     final = _make_completion_response("It is 3.")
-    mock = AsyncMock(side_effect=[_unsupported_tools_error(), naive_call, final])
+    mock = AsyncMock(side_effect=[_unsupported_params_error(), naive_call, final])
 
-    with (
-        patch("litellm.acompletion", new=mock),
-        patch("litellm.supports_function_calling", return_value=False),
-    ):
+    with patch("litellm.acompletion", new=mock):
         assert agent.run("1 + 2?") == "It is 3."
 
     assert "tools" not in mock.call_args.kwargs
@@ -449,21 +447,41 @@ def test_unrelated_error_keeps_native_mode():
     assert agent._get_tool_mode() == "native"
 
 
-def test_unsupported_params_on_tool_capable_model_is_raised():
-    """A model that supports tools rejected some other parameter: no fallback."""
-    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+@pytest.mark.parametrize("model", ["gpt-3.5-turbo", "openai/my-fine-tune"])
+def test_unsupported_params_on_tool_capable_model_is_raised(model):
+    """A model whose provider supports tools rejected another parameter: no fallback."""
+    agent = Agent(config=_make_config(model), tools=[_make_simple_tool()])
+    error = _unsupported_params_error("temperature")
 
-    with (
-        patch(
-            "litellm.acompletion",
-            new=AsyncMock(side_effect=_unsupported_tools_error()),
-        ),
-        patch("litellm.supports_function_calling", return_value=True),
-    ):
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=error)):
         with pytest.raises(litellm.UnsupportedParamsError):
             agent.run("hi")
 
     assert agent._get_tool_mode() == "native"
+
+
+@pytest.mark.parametrize(
+    "deployment, expected_mode",
+    [("openai/gpt-5", "native"), ("ollama/llama2", "naive")],
+)
+def test_fallback_through_router_checks_the_deployment(deployment, expected_mode):
+    """Through a Router, the alias is resolved to its deployment before deciding."""
+    router = litellm.Router(
+        model_list=[{"model_name": "smart", "litellm_params": {"model": deployment}}]
+    )
+    final = _make_completion_response("done")
+    router.acompletion = AsyncMock(side_effect=[_unsupported_params_error(), final])
+    agent = Agent(
+        config=_make_config("smart", router=router), tools=[_make_simple_tool()]
+    )
+
+    if expected_mode == "native":
+        with pytest.raises(litellm.UnsupportedParamsError):
+            agent.run("hi")
+    else:
+        assert agent.run("hi") == "done"
+
+    assert agent._get_tool_mode() == expected_mode
 
 
 def test_invalid_tool_arguments_return_parse_error():
@@ -682,3 +700,106 @@ def test_stream_with_tools_sync():
         assert list(agent.stream("1 + 1?")) == ["2"]
 
     assert agent.messages[2]["content"] == "2"
+
+
+def test_cached_tokens_are_summed():
+    """Cached prompt tokens add up across the completions of a run."""
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    tc = _make_tool_call("tc_1", "add", '{"a": 2, "b": 3}')
+    responses = [
+        _make_completion_response(content=None, tool_calls=[tc]),
+        _make_completion_response(content="5"),
+    ]
+    for response in responses:
+        response.usage.prompt_tokens_details = MagicMock(cached_tokens=4)
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        result = agent.run_with_response("2 + 3?")
+
+    assert result.cached_tokens == 8
+
+
+def test_litellm_callbacks_fire_for_sync_runs():
+    """Sync calls share one loop, so LiteLLM's async success logging completes."""
+    import functools
+    import time
+
+    from litellm.integrations.custom_logger import CustomLogger
+
+    events = []
+
+    class Recorder(CustomLogger):
+        async def async_log_success_event(self, *args, **kwargs):
+            events.append("success")
+
+    agent = Agent(config=_make_config())
+    acompletion = functools.partial(litellm.acompletion, mock_response="hi")
+    with (
+        patch.object(litellm, "callbacks", [Recorder()]),
+        patch("litellm.acompletion", new=acompletion),
+    ):
+        for _ in range(3):
+            agent.run("hi")
+        deadline = time.monotonic() + 5
+        while len(events) < 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    assert events == ["success"] * 3
+
+
+def test_stream_inside_running_loop():
+    """stream() works when called from code that already runs an event loop."""
+    import asyncio
+
+    agent = Agent(config=_make_config())
+
+    async def caller():
+        return list(agent.stream("hi"))
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_stream([_text_chunk("a"), _text_chunk("b")])),
+    ):
+        assert asyncio.run(caller()) == ["a", "b"]
+
+
+def test_closing_sync_stream_early_closes_the_completion_stream():
+    """Leaving a sync stream early closes the underlying LiteLLM stream."""
+    closed = []
+
+    async def completion_stream():
+        try:
+            for text in ["a", "b", "c"]:
+                yield _text_chunk(text)
+        finally:
+            closed.append(True)
+
+    agent = Agent(config=_make_config())
+    with patch("litellm.acompletion", new=AsyncMock(return_value=completion_stream())):
+        stream = agent.stream("hi")
+        assert next(stream) == "a"
+        stream.close()
+
+    assert closed == [True]
+
+
+def test_sync_run_from_an_async_tool_raises():
+    """A sync run started on the shared loop raises instead of deadlocking."""
+    from cyclops.toolkit.tool import Tool
+
+    inner = Agent(config=_make_config())
+
+    async def ask() -> str:
+        return inner.run("nested")
+
+    agent = Agent(config=_make_config(), tools=[Tool("ask", "Ask", ask)])
+    tc = _make_tool_call("tc_1", "ask", "{}")
+    responses = [
+        _make_completion_response(content=None, tool_calls=[tc]),
+        _make_completion_response(content="ok"),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        assert agent.run("go") == "ok"
+
+    assert "Use the async Agent methods" in agent.messages[2]["content"]
