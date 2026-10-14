@@ -520,6 +520,7 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -530,6 +531,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -540,6 +542,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "pydantic", specifier = ">=2.12.4" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [package.metadata.requires-dev]
@@ -550,6 +553,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "ruff", specifier = ">=0.14.4" },
+    { name = "types-pyyaml", specifier = ">=6.0.12" },
 ]
 
 [[package]]
@@ -2467,6 +2471,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8e/45/81b94a52caed434b94da65729c03ad0fb7665fab0f7db9ee54c94e541403/typer_slim-0.20.0.tar.gz", hash = "sha256:9fc6607b3c6c20f5c33ea9590cbeb17848667c51feee27d9e314a579ab07d1a3", size = 106561, upload-time = "2025-10-20T17:03:46.642Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/dd/5cbf31f402f1cc0ab087c94d4669cfa55bd1e818688b910631e131d74e75/typer_slim-0.20.0-py3-none-any.whl", hash = "sha256:f42a9b7571a12b97dddf364745d29f12221865acef7a2680065f9bb29c7dc89d", size = 47087, upload-time = "2025-10-20T17:03:44.546Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260906"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/6e/abec85b9013db5b934b0280a6dd104904d84f7bcbaab2e2f3def87ac7463/types_pyyaml-6.0.12.20260906.tar.gz", hash = "sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212", size = 18649, upload-time = "2026-09-06T06:35:35.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/c0/fc0644b7ddcfb969e95845837143cb5173ddd6e06ee4ba5fc493cd9329b7/types_pyyaml-6.0.12.20260906-py3-none-any.whl", hash = "sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b", size = 21282, upload-time = "2026-09-06T06:35:34.372Z" },
 ]
 
 [[package]]
