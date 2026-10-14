@@ -4,7 +4,7 @@ import asyncio
 import threading
 from typing import Any, Coroutine, List, Optional, Sequence, TypeVar
 
-from cyclops.mcp.client import MCPClient
+from cyclops.mcp.client import MCPClient, ServerStatus
 from cyclops.mcp.tools import MCPClientTool
 from cyclops.toolkit.types import ToolResult
 
@@ -57,6 +57,9 @@ class MCPBridge:
 
         # Read on the bridge loop, where attach and detach change the client.
         return [_BridgeTool(self._loop, t) for t in self._run(collect())]
+
+    def status(self, name: str) -> ServerStatus:
+        return self.client.status(name)
 
     def stop(self) -> None:
         """Disconnect every server and stop the background loop."""

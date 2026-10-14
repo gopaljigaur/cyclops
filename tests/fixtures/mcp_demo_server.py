@@ -72,6 +72,14 @@ def header(name: str, ctx: Context) -> str:
 
 
 @mcp.tool()
+async def grow(name: str, ctx: Context) -> str:
+    """Add a tool by that name and announce the change"""
+    mcp.add_tool(lambda: name, name=name, description="Added at runtime")
+    await ctx.session.send_tool_list_changed()
+    return name
+
+
+@mcp.tool()
 def crash() -> str:
     """Exit the server process"""
     os._exit(1)

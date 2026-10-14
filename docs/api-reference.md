@@ -447,13 +447,17 @@ class MCPClient:
         transport: Optional[Literal["stdio", "http", "sse"]] = None,
         env: Optional[Dict[str, str]] = None,
         headers: Optional[Dict[str, str]] = None,
+        auth: Optional[httpx.Auth] = None,
         prefix: Union[str, bool] = True,
         connect_timeout: float = 30.0,
-        call_timeout: Optional[float] = None,
+        call_timeout: Optional[float] = 60.0,
+        idle_timeout: Optional[float] = None,
+        reconnection: ReconnectionOptions = ReconnectionOptions(),
     ) -> List[MCPClientTool]: ...
     async def detach(self, name: str) -> None: ...
     async def aclose(self) -> None: ...
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
+    def status(self, server: str) -> ServerStatus: ...
     async def call_tool(
         self, server: str, tool: str, arguments: Dict[str, Any]
     ) -> CallToolResult: ...
@@ -463,6 +467,21 @@ class MCPClient:
 ```
 
 `MCPClient` is an async context manager; leaving it calls `aclose()`.
+
+```python
+@dataclass(frozen=True)
+class ReconnectionOptions:
+    initial_reconnection_delay: float = 1.0
+    max_reconnection_delay: float = 30.0
+    reconnection_delay_grow_factor: float = 2.0
+    max_retries: int = 5
+
+
+@dataclass(frozen=True)
+class ServerStatus:
+    state: Literal["connecting", "connected", "disconnected", "failed"]
+    error: Optional[str] = None
+```
 
 ---
 
@@ -482,6 +501,7 @@ class MCPBridge:
     def attach(self, name: str, command: Optional[List[str]] = None, **kwargs) -> List[MCPClientTool]: ...
     def detach(self, name: str) -> None: ...
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
+    def status(self, name: str) -> ServerStatus: ...
     def stop(self) -> None: ...
 
     @property
