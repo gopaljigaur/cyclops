@@ -1067,3 +1067,8 @@ def test_sync_tool_can_run_another_agent():
         assert agent.run("Ask about France") == "It is Paris."
 
     assert agent.messages[2]["content"] == "Paris"
+
+
+def test_duplicate_tool_names_are_rejected():
+    with pytest.raises(ValueError, match="Duplicate tool name: 'add'"):
+        Agent(config=_make_config(), tools=[_make_simple_tool(), _make_simple_tool()])

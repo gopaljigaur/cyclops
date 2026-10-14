@@ -176,7 +176,11 @@ class Agent:
         self.config = config
         self._history: List[Dict[str, Any]] = []
         self.tools = tools or []
-        self._tools_by_name: Dict[str, Any] = {t.name: t for t in self.tools}
+        self._tools_by_name: Dict[str, Any] = {}
+        for t in self.tools:
+            if t.name in self._tools_by_name:
+                raise ValueError(f"Duplicate tool name: '{t.name}'")
+            self._tools_by_name[t.name] = t
         self.memory = memory
         # Set to "naive" once this agent's model rejects native tool calling.
         self._detected_tool_mode: Optional[str] = None
