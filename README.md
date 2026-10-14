@@ -68,6 +68,7 @@ print(agent.run("What is Apple's stock price?"))
 | **Structured output** | `agent.run(..., response_model=MyModel)` returns a Pydantic instance |
 | **Cost tracking** | `agent.run_with_response()` returns tokens used and estimated cost |
 | **Skills** | Load instructions from `SKILL.md` folders only when the task needs them |
+| **Sessions** | `Session` transcripts with usage, saved and loaded through a `SessionStore` (in memory or files) |
 | **Memory** | `InMemoryStorage` and `FileStorage` for persistent key-value context |
 | **MCP** | Connect to any MCP server as a tool source, or expose your tools as an MCP server |
 | **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically |
@@ -133,6 +134,17 @@ print(agent.run("Where do I work?"))  # "You work in Tokyo"
 
 agent.reset()
 print(agent.run("What's my name?"))   # no memory of Alice
+```
+
+To keep conversations apart, or save one and continue it later, pass a `Session`:
+
+```python
+from cyclops import FileSessionStore, Session
+
+store = FileSessionStore("./sessions")
+session = await store.load("alice") or Session(id="alice")
+await agent.arun("Where do I work?", session=session)
+await store.save(session)
 ```
 
 ## Memory

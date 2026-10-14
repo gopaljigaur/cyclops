@@ -42,6 +42,7 @@ from cyclops.core.middleware import (
     ToolCallContext,
     ToolMiddleware,
 )
+from cyclops.core.session import Session
 from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
@@ -162,10 +163,10 @@ def _wait(task: asyncio.Future, finished: threading.Event) -> None:
             finished.wait()
 
 
-def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any) -> Any:
-    """Await fn(*args) from sync code on the shared loop."""
+def _run_coroutine_sync(fn: Callable[..., Awaitable], *args: Any, **kwargs: Any) -> Any:
+    """Await fn(*args, **kwargs) from sync code on the shared loop."""
     finished = threading.Event()
-    task = _start_task(lambda: fn(*args), finished)
+    task = _start_task(lambda: fn(*args, **kwargs), finished)
     _wait(task, finished)
     return task.result()
 
@@ -253,10 +254,14 @@ class _HooksMiddleware(ToolMiddleware):
 
 
 class _Run:
-    """One run in progress: its result so far, its events and its steering."""
+    """One run in progress: its transcript, result so far, events and steering."""
 
-    def __init__(self, model: str) -> None:
+    def __init__(
+        self, model: str, history: List[Dict[str, Any]], session: Optional[Session]
+    ) -> None:
         self.result = RunResult(model=model)
+        self.history = history
+        self.session = session
         self.events: asyncio.Queue = asyncio.Queue()
         # Set by astream_events, whose caller takes the events as they come.
         self.paced = False
@@ -339,7 +344,6 @@ class Agent:
         self,
         config: AgentConfig,
         tools: Optional[List] = None,
-        memory=None,
         skills: Optional[Skills] = None,
     ):
         self.config = config
@@ -351,7 +355,6 @@ class Agent:
             if t.name in self._tools_by_name:
                 raise ValueError(f"Duplicate tool name: '{t.name}'")
             self._tools_by_name[t.name] = t
-        self.memory = memory
         # Set to "naive" once this agent's model rejects native tool calling.
         self._detected_tool_mode: Optional[str] = None
 
@@ -360,12 +363,12 @@ class Agent:
     # ------------------------------------------------------------------
 
     def reset(self) -> None:
-        """Clear conversation history."""
+        """Clear the history of runs without a session."""
         self._history = []
 
     @property
     def messages(self) -> List[Dict[str, Any]]:
-        """Return a copy of the current conversation history."""
+        """A copy of the history of runs without a session."""
         return list(self._history)
 
     def start(
@@ -374,29 +377,48 @@ class Agent:
         *,
         stream: bool = True,
         response_model: Optional[Type] = None,
+        session: Optional[Session] = None,
     ) -> RunHandle:
         """Start a run in a task on the running event loop and return its handle.
 
         With stream=False the completions aren't streamed, so each step's text
         arrives as one TextDelta. response_model asks the provider for that
         schema when it supports one; the result's content is the raw JSON.
+        With a session, the run reads and extends the session's transcript and
+        adds its usage to the session, instead of using this agent's history.
         """
-        run = _Run(self.config.model)
+        history = self._history if session is None else session.messages
+        run = _Run(self.config.model, history, session)
         task = asyncio.get_running_loop().create_task(
             self._execute(input_message, run, stream, response_model)
         )
         return RunHandle(run, task)
 
-    def run(self, input_message: str, response_model: Optional[Type] = None) -> Any:
+    def run(
+        self,
+        input_message: str,
+        response_model: Optional[Type] = None,
+        *,
+        session: Optional[Session] = None,
+    ) -> Any:
         """Run the agent synchronously. Returns str or Pydantic model instance."""
-        return _run_coroutine_sync(self.arun, input_message, response_model)
+        return _run_coroutine_sync(
+            self.arun, input_message, response_model, session=session
+        )
 
     async def arun(
-        self, input_message: str, response_model: Optional[Type] = None
+        self,
+        input_message: str,
+        response_model: Optional[Type] = None,
+        *,
+        session: Optional[Session] = None,
     ) -> Any:
         """Run the agent asynchronously. Returns str or Pydantic model instance."""
         result = await self.start(
-            input_message, stream=False, response_model=response_model
+            input_message,
+            stream=False,
+            response_model=response_model,
+            session=session,
         )
         if result.error is not None:
             raise result.error
@@ -404,43 +426,59 @@ class Agent:
             return response_model.model_validate_json(result.content)
         return result.content
 
-    def run_with_response(self, input_message: str) -> RunResult:
+    def run_with_response(
+        self, input_message: str, *, session: Optional[Session] = None
+    ) -> RunResult:
         """Run and return a RunResult with the stop reason, usage and cost."""
-        return _run_coroutine_sync(self.arun_with_response, input_message)
+        return _run_coroutine_sync(
+            self.arun_with_response, input_message, session=session
+        )
 
-    async def arun_with_response(self, input_message: str) -> RunResult:
+    async def arun_with_response(
+        self, input_message: str, *, session: Optional[Session] = None
+    ) -> RunResult:
         """Run async and return a RunResult with the stop reason, usage and cost.
 
         An exception during the run ends it with stop_reason "error" instead of
         raising.
         """
-        return await self.start(input_message, stream=False)
+        return await self.start(input_message, stream=False, session=session)
 
-    def stream(self, input_message: str) -> Iterator[str]:
+    def stream(
+        self, input_message: str, *, session: Optional[Session] = None
+    ) -> Iterator[str]:
         """Stream output tokens. Naive tool mode yields the final answer as one chunk."""
-        return _iterate_sync(self.astream(input_message))
+        return _iterate_sync(self.astream(input_message, session=session))
 
-    async def astream(self, input_message: str) -> AsyncGenerator[str, None]:
+    async def astream(
+        self, input_message: str, *, session: Optional[Session] = None
+    ) -> AsyncGenerator[str, None]:
         """Async stream output tokens. Naive tool mode yields the final answer as one chunk."""
-        async with aclosing(self.astream_events(input_message)) as events:
+        async with aclosing(
+            self.astream_events(input_message, session=session)
+        ) as events:
             async for event in events:
                 if isinstance(event, TextDelta):
                     yield event.text
                 elif isinstance(event, RunFinished) and event.result.error is not None:
                     raise event.result.error
 
-    def stream_events(self, input_message: str) -> Iterator[Event]:
+    def stream_events(
+        self, input_message: str, *, session: Optional[Session] = None
+    ) -> Iterator[Event]:
         """Stream the run's events; the last one is RunFinished."""
-        return _iterate_sync(self.astream_events(input_message))
+        return _iterate_sync(self.astream_events(input_message, session=session))
 
-    async def astream_events(self, input_message: str) -> AsyncGenerator[Event, None]:
+    async def astream_events(
+        self, input_message: str, *, session: Optional[Session] = None
+    ) -> AsyncGenerator[Event, None]:
         """Async stream the run's events; the last one is RunFinished.
 
         A failed run ends with RunFinished and stop_reason "error" instead of
         raising. The run waits for the caller to take each event; closing the
         iterator early cancels it.
         """
-        handle = self.start(input_message)
+        handle = self.start(input_message, session=session)
         handle._run.paced = True
         try:
             async with aclosing(handle.__aiter__()) as events:
@@ -475,6 +513,13 @@ class Agent:
         except Exception as e:
             run.result.stop_reason = "error"
             run.result.error = e
+        session = run.session
+        if session is not None:
+            # Unknown once any run's usage is unknown, like a run's own total.
+            if session.usage is None or run.result.usage is None:
+                session.usage = None
+            else:
+                session.usage += run.result.usage
         run.emit(RunFinished(result=run.result))
         return run.result
 
@@ -488,7 +533,7 @@ class Agent:
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
         try:
-            start = len(self._history)
+            start = len(run.history)
             mode = self._get_tool_mode()
             try:
                 await self._steps(input_message, run, stream, mode, response_model)
@@ -498,7 +543,7 @@ class Agent:
                 if not self._tools_unsupported():
                     raise
                 self._detected_tool_mode = "naive"
-                del self._history[start:]
+                del run.history[start:]
                 await self._steps(input_message, run, stream, "naive", response_model)
         except BaseException as e:
             # Failures, cancellation and a stream closed early all end the run here.
@@ -506,7 +551,7 @@ class Agent:
                 self.config.hooks.on_run_error(e)
             raise
         # Steering the run had no step left for waits for the next run.
-        self._history += [{"role": "user", "content": m} for m in run.steering]
+        run.history += [{"role": "user", "content": m} for m in run.steering]
         run.steering.clear()
         if self.config.hooks:
             self.config.hooks.on_run_end(run.result.content)
@@ -519,7 +564,7 @@ class Agent:
         mode: str,
         response_model: Optional[Type],
     ) -> None:
-        self._history.append({"role": "user", "content": input_message})
+        run.history.append({"role": "user", "content": input_message})
         result = run.result
         naive = mode == "naive"
         # Naive mode never streams deltas: the text may be a tool call.
@@ -563,15 +608,15 @@ class Agent:
                 result.stop_reason = "budget"
                 return
             if feedback is not None:
-                self._history.append({"role": "user", "content": feedback})
+                run.history.append({"role": "user", "content": feedback})
                 feedback = None
             # Cleared only once the completion returns, so a naive fallback
             # that drops this attempt sends them again.
             steered = len(run.steering)
-            self._history += [
+            run.history += [
                 {"role": "user", "content": m} for m in run.steering[:steered]
             ]
-            messages = self._build_messages(system_prompt)
+            messages = self._build_messages(run.history, system_prompt)
             response: Any
             if streamed:
                 chunks = []
@@ -626,10 +671,10 @@ class Agent:
                 # A steer came in while the model answered: answer it in the
                 # next step. Guards judge the answer the run ends on.
                 assistant["content"] = content
-                self._history.append(assistant)
+                run.history.append(assistant)
             else:
                 assistant["content"] = content
-                self._history.append(assistant)
+                run.history.append(assistant)
                 feedback = await self._guard_feedback(content, run)
                 if feedback is None:
                     result.content = content
@@ -658,16 +703,16 @@ class Agent:
         name = call["tool"]
         _, result = await self._call_tool(run, None, name, call.get("args", {}))
         text, images = _split_images(result.to_message_content())
-        self._history.append({"role": "assistant", "content": f"[Used tool: {name}]"})
+        run.history.append({"role": "assistant", "content": f"[Used tool: {name}]"})
         message: Any = f"Tool result: {text}"
         if images:
             message = [{"type": "text", "text": message}, *images]
-        self._history.append({"role": "user", "content": message})
+        run.history.append({"role": "user", "content": message})
 
     async def _run_native_tool_calls(
         self, msg, assistant: Dict[str, Any], run: _Run
     ) -> None:
-        self._append_tool_call_message(msg, assistant)
+        self._append_tool_call_message(run.history, msg, assistant)
         tasks = [
             asyncio.ensure_future(self._execute_tool_call(tc, run))
             for tc in msg.tool_calls
@@ -683,7 +728,7 @@ class Agent:
                 task.cancel(*reason)
             await asyncio.wait(tasks)
             for tc, task in zip(msg.tool_calls, tasks):
-                self._append_tool_result(tc, _unfinished_text(task))
+                self._append_tool_result(run.history, tc, _unfinished_text(task))
             raise
         moved_images: List[Dict[str, Any]] = []
         for tc, (args, result) in zip(msg.tool_calls, results):
@@ -696,10 +741,10 @@ class Agent:
                 label = f"Images returned by {tc.function.name}:"
                 moved_images += [{"type": "text", "text": label}, *images]
                 content = text
-            self._append_tool_result(tc, content)
+            self._append_tool_result(run.history, tc, content)
         # Must follow all tool messages of the round
         if moved_images:
-            self._history.append({"role": "user", "content": moved_images})
+            run.history.append({"role": "user", "content": moved_images})
 
     # ------------------------------------------------------------------
     # Tool execution helpers
@@ -829,7 +874,7 @@ class Agent:
     async def _guard_feedback(self, content: str, run: _Run) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""
         context = GuardContext(
-            content=content, messages=self.messages, run_id=run.result.run_id
+            content=content, messages=list(run.history), run_id=run.result.run_id
         )
         for guard in self.config.guards:
             feedback = await guard(context)
@@ -841,7 +886,10 @@ class Agent:
     # History helpers
     # ------------------------------------------------------------------
 
-    def _append_tool_call_message(self, msg, message: Dict[str, Any]) -> None:
+    @staticmethod
+    def _append_tool_call_message(
+        history: List[Dict[str, Any]], msg, message: Dict[str, Any]
+    ) -> None:
         message["tool_calls"] = [
             {
                 "id": tc.id,
@@ -853,7 +901,7 @@ class Agent:
             }
             for tc in msg.tool_calls
         ]
-        self._history.append(message)
+        history.append(message)
 
     @staticmethod
     def _assistant_message(msg, content: Optional[str]) -> Dict[str, Any]:
@@ -865,8 +913,9 @@ class Agent:
                 message[key] = value
         return message
 
-    def _append_tool_result(self, tc, content: Any) -> None:
-        self._history.append(
+    @staticmethod
+    def _append_tool_result(history: List[Dict[str, Any]], tc, content: Any) -> None:
+        history.append(
             {
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -880,10 +929,12 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _build_messages(
-        self, system_prompt_override: Optional[str] = None
+        self,
+        history: List[Dict[str, Any]],
+        system_prompt_override: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Build message list for LiteLLM, optionally prepending a system prompt."""
-        messages = list(self._history)
+        messages = list(history)
         sys = system_prompt_override or self.config.system_prompt
         if sys:
             messages = [{"role": "system", "content": sys}] + messages

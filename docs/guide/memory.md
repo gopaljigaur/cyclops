@@ -93,7 +93,7 @@ class RedisMemory(Memory):
 
 ## Using memory with Agent
 
-Pass any `Memory` instance as the `memory` argument to `Agent`. The agent itself does not read or write memory automatically; memory is a side channel for your application logic to pass context in and out of agent runs.
+The agent does not read or write memory itself (it no longer takes a `memory` argument): memory is a side channel for your application logic to pass context in and out of agent runs. To keep a conversation's history, use a [session](sessions.md) instead.
 
 ```python
 import asyncio
@@ -106,7 +106,7 @@ async def main():
     await memory.store("last_topic", "machine learning")
 
     config = AgentConfig(model="groq/llama-3.1-8b-instant")
-    agent = Agent(config, memory=memory)
+    agent = Agent(config)
 
     # Build a context-aware prompt from memory.
     user_name = await memory.retrieve("user_name")
@@ -128,39 +128,6 @@ async def main():
 asyncio.run(main())
 ```
 
-## Example: conversation context from memory
+## Conversation history
 
-A common pattern for multi-session chatbots is to load previous conversation snippets from storage and inject them into the system prompt.
-
-```python
-import asyncio
-import json
-from cyclops import Agent, AgentConfig
-from cyclops import FileStorage
-
-
-async def chat_session(user_id: str, message: str) -> str:
-    memory = FileStorage(f"./data/users/{user_id}.json")
-
-    # Load history from previous session.
-    history_raw = await memory.retrieve("conversation_history") or []
-
-    config = AgentConfig(
-        model="groq/llama-3.1-8b-instant",
-        system_prompt=(
-            "You are a helpful assistant. "
-            f"Previous context: {json.dumps(history_raw[-5:])}"  # last 5 turns
-        ),
-    )
-    agent = Agent(config)
-    response = await agent.arun(message)
-
-    # Persist updated history.
-    history_raw.append({"user": message, "assistant": response})
-    await memory.store("conversation_history", history_raw)
-
-    return response
-
-
-asyncio.run(chat_session("user_123", "What did we talk about last time?"))
-```
+To carry a conversation across runs or processes, keep it in a [session](sessions.md) and save it with a `SessionStore`, instead of rebuilding context from memory by hand.

@@ -79,7 +79,7 @@ All memory backends implement the same async interface:
 
 ## Using memory with Agent
 
-Pass any `Memory` instance as the `memory` argument to `Agent`. The agent does not read or write memory automatically. Memory is a side channel for your application logic to pass context in and out of agent runs.
+The agent does not read or write memory itself (it no longer takes a `memory` argument): memory is a side channel for your application logic to pass context in and out of agent runs. To keep a conversation's history, use a [session](/guides/sessions/) instead.
 
 ```python
 import asyncio
@@ -92,7 +92,7 @@ async def main():
     await memory.store("last_topic", "machine learning")
 
     config = AgentConfig(model="groq/llama-3.1-8b-instant")
-    agent = Agent(config, memory=memory)
+    agent = Agent(config)
 
     # Build a context-aware prompt from memory.
     user_name = await memory.retrieve("user_name")

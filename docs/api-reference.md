@@ -16,10 +16,11 @@ class Agent:
         self,
         config: AgentConfig,
         tools: Optional[List] = None,
-        memory: Optional[Memory] = None,
         skills: Optional[Skills] = None,
     ): ...
 ```
+
+Every run method takes a keyword-only `session: Optional[Session] = None`.
 
 **Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `reset`
 
@@ -54,9 +55,34 @@ class AgentConfig(BaseModel):
 
 ---
 
+### Session
+
+`cyclops.core.session`. One conversation, passed to any run with `session=`. See [Sessions](guide/sessions.md).
+
+```python
+class Session(BaseModel):
+    version: Literal[1] = 1
+    id: str                        # a random hex id by default
+    messages: List[Dict[str, Any]]
+    usage: Optional[Usage]
+
+
+class SessionStore(Protocol):
+    async def load(self, session_id: str) -> Optional[Session]: ...
+    async def save(self, session: Session) -> None: ...
+    async def delete(self, session_id: str) -> None: ...
+
+
+class InMemorySessionStore: ...                  # SessionStore in this process
+class FileSessionStore:                          # <directory>/<id>.json
+    def __init__(self, directory: str | Path): ...
+```
+
+---
+
 ### RunHandle
 
-Returned by `Agent.start(input_message, *, stream=True, response_model=None)`. See [Agents](guide/agents.md#start-steer-and-cancel-a-run).
+Returned by `Agent.start(input_message, *, stream=True, response_model=None, session=None)`. See [Agents](guide/agents.md#start-steer-and-cancel-a-run).
 
 ```python
 class RunHandle:
