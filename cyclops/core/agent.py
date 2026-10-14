@@ -24,6 +24,7 @@ from typing import (
 import litellm
 
 from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
+from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolResult
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
@@ -191,10 +192,12 @@ class Agent:
         config: AgentConfig,
         tools: Optional[List] = None,
         memory=None,
+        skills: Optional[Skills] = None,
     ):
         self.config = config
         self._history: List[Dict[str, Any]] = []
-        self.tools = tools or []
+        self.tools = (tools or []) + ([skills.tool] if skills else [])
+        self.skills = skills
         self._tools_by_name: Dict[str, Any] = {}
         for t in self.tools:
             if t.name in self._tools_by_name:
@@ -293,6 +296,10 @@ class Agent:
             "max_tokens": self.config.max_tokens,
         }
         system_prompt = self.config.system_prompt
+        if self.skills:
+            system_prompt = (
+                system_prompt or _DEFAULT_SYSTEM_PROMPT
+            ) + self.skills.prompt()
         if mode == "native":
             kwargs["tools"] = self._get_tools_schema()
         if naive:

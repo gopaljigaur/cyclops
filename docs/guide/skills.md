@@ -1,0 +1,65 @@
+# Skills
+
+Long instructions either fill the system prompt on every call or are not there when the model needs them. A skill keeps them in a folder: the system prompt lists only each skill's name and description, and the model calls the `load_skill` tool to read a skill's instructions when a task calls for them.
+
+Skills use the open `SKILL.md` format, so a skill written for another tool that reads this format works unchanged.
+
+## A skill folder
+
+```text
+skills/
+└── release-notes/
+    ├── SKILL.md
+    └── template.md
+```
+
+`SKILL.md` starts with YAML frontmatter, followed by the instructions in markdown:
+
+```markdown
+---
+name: release-notes
+description: Write release notes from a list of changes. Use when asked for release notes or a changelog entry.
+---
+# Release notes
+
+1. Group the changes under Added, Changed and Fixed.
+2. Format the result with the template in `template.md`; load it with `file="template.md"`.
+```
+
+| Field | Rules |
+|---|---|
+| `name` | Lowercase letters, digits and hyphens, at most 64 characters. Must match the folder name. |
+| `description` | 1 to 1024 characters. Say what the skill does and when to use it: this is all the model sees until it loads the skill. |
+
+Other frontmatter fields are allowed and ignored. Files next to `SKILL.md` (references, templates, data) are read only when the model asks for them.
+
+## Using skills
+
+```python
+from cyclops import Agent, AgentConfig, Skills
+
+skills = Skills("./skills", "~/shared-skills")
+agent = Agent(AgentConfig(model="gpt-4o"), skills=skills)
+
+agent.run("Write release notes for 1.2.0: added CSV export, fixed a crash on empty input.")
+```
+
+`Skills(*dirs)` reads every `*/SKILL.md` in the given directories. It raises `FileNotFoundError` for a directory that does not exist, `ValueError` for a file without frontmatter or whose frontmatter is not a YAML mapping, a name that does not match its folder, or the same name in two directories, and a pydantic `ValidationError` for invalid fields.
+
+Passing `skills=` to `Agent` does two things:
+
+- appends the listing from `skills.prompt()` to the system prompt (to the default prompt when `system_prompt` is not set);
+- adds the `load_skill` tool next to any `tools=` you pass. A tool of yours with that name raises `ValueError`.
+
+## The load_skill tool
+
+`load_skill(name, file=None)` returns the skill's markdown body. With `file`, it returns that file from the skill's folder instead, given as a path relative to the folder. A path that resolves outside the folder, through `..`, an absolute path or a symlink, is refused, and so is a file that does not exist. Errors reach the model as a tool error, like any other tool.
+
+You can call the same thing directly:
+
+```python
+skills.load("release-notes")
+skills.load("release-notes", "template.md")
+```
+
+To use skills with your own prompt or tool list, pass `skills.tool` in `tools=` and add `skills.prompt()` to your system prompt yourself.

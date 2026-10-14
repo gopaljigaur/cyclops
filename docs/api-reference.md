@@ -17,6 +17,7 @@ class Agent:
         config: AgentConfig,
         tools: Optional[List] = None,
         memory: Optional[Memory] = None,
+        skills: Optional[Skills] = None,
     ): ...
 ```
 
@@ -151,6 +152,42 @@ class FileStorage(Memory):
 ```
 
 See [Memory guide](guide/memory.md) for examples.
+
+---
+
+## cyclops.skills
+
+### Skills
+
+Skills found in the subfolders of one or more directories. Each skill is a folder with a `SKILL.md`. Raises `FileNotFoundError` for a missing directory and `ValueError` for a duplicate name.
+
+```python
+class Skills:
+    def __init__(self, *dirs: Union[str, Path]): ...
+    skills: Dict[str, Skill]
+    tool: Tool  # load_skill
+    def prompt(self) -> str: ...
+    def load(self, name: str, file: Optional[str] = None) -> str: ...
+```
+
+See [Skills guide](guide/skills.md) for full documentation.
+
+---
+
+### Skill
+
+One parsed `SKILL.md`. Extra frontmatter fields are ignored.
+
+```python
+class Skill(BaseModel):
+    name: str          # lowercase letters, digits and hyphens; matches the folder
+    description: str   # 1 to 1024 characters
+    path: Path         # the skill's folder
+    body: str          # the markdown after the frontmatter
+
+    @classmethod
+    def from_file(cls, file: Path) -> "Skill": ...
+```
 
 ---
 

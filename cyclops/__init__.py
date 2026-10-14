@@ -30,6 +30,7 @@ from cyclops.mcp import (
     tools_from_server,
 )
 from cyclops.observability import TelemetryHooks
+from cyclops.skills import Skill, Skills
 
 __all__ = [
     "Agent",
@@ -52,4 +53,6 @@ __all__ = [
     "MCPClientTool",
     "tools_from_server",
     "TelemetryHooks",
+    "Skill",
+    "Skills",
 ]

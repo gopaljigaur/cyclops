@@ -37,6 +37,7 @@ export default defineConfig({
             { label: 'Streaming', slug: 'guides/streaming' },
             { label: 'Structured Output', slug: 'guides/structured-output' },
             { label: 'Memory', slug: 'guides/memory' },
+            { label: 'Skills', slug: 'guides/skills' },
             { label: 'MCP', slug: 'guides/mcp' },
             { label: 'Plugins', slug: 'guides/plugins' },
             { label: 'Cost Tracking', slug: 'guides/cost-tracking' },

@@ -15,5 +15,5 @@ repos:
     rev: v1.13.0
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, litellm, opentelemetry-api, opentelemetry-sdk]
+        additional_dependencies: [pydantic, litellm, opentelemetry-api, opentelemetry-sdk, types-PyYAML]
         exclude: ^examples/

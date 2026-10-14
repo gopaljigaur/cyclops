@@ -67,6 +67,7 @@ print(agent.run("What is Apple's stock price?"))
 | **Streaming** | `agent.stream()` and `agent.astream()` for token-by-token output |
 | **Structured output** | `agent.run(..., response_model=MyModel)` returns a Pydantic instance |
 | **Cost tracking** | `agent.run_with_response()` returns tokens used and estimated cost |
+| **Skills** | Load instructions from `SKILL.md` folders only when the task needs them |
 | **Memory** | `InMemoryStorage` and `FileStorage` for persistent key-value context |
 | **MCP** | Connect to any MCP server as a tool source, or expose your tools as an MCP server |
 | **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically |
@@ -269,6 +270,7 @@ See the [`examples/`](./examples) directory:
 | [`cost_tracking.py`](examples/cost_tracking.py) | Tokens and cost |
 | [`multi_turn_agent.py`](examples/multi_turn_agent.py) | Conversation history |
 | [`tool_loop_demo.py`](examples/tool_loop_demo.py) | Multi-step tool chains |
+| [`skills_example.py`](examples/skills_example.py) | Skills from `SKILL.md` folders |
 | [`memory_persistence.py`](examples/memory_persistence.py) | FileStorage |
 | [`async_agent.py`](examples/async_agent.py) | `arun()` and concurrent calls |
 | [`different_llms.py`](examples/different_llms.py) | Groq, Ollama, OpenAI, Together AI |
