@@ -22,7 +22,8 @@ class AgentConfig(BaseModel):
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
     # api_base, extra_headers, num_retries, timeout, reasoning_effort, thinking.
     completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
-    # Mark the system prompt and the latest message as cache breakpoints.
+    # Mark the system prompt and the latest message as cache breakpoints, for
+    # providers that cache at cache_control markers.
     prompt_caching: bool = False
 
 

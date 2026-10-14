@@ -35,6 +35,10 @@ _CANCELLED_RESULT = "Tool call cancelled."
 # accept only text in a tool message.
 _TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
 _DONE = object()
+# Providers that cache a prompt prefix at cache_control markers (on vertex_ai
+# only for Claude models). Gemini turns them into billed cachedContents
+# resources instead, and OpenAI caches without them.
+_CACHE_MARKER_PROVIDERS = {"anthropic", "bedrock"}
 # Cache the system prompt (with the tools before it) and the conversation so far.
 _CACHE_POINTS = [
     {"location": "message", "role": "system"},
@@ -54,6 +58,12 @@ def _takes_tool_message_images(model: str, provider: str) -> bool:
     if provider == "vertex_ai":
         return model.startswith("gemini")
     return provider in _TOOL_MESSAGE_IMAGE_PROVIDERS
+
+
+def _caches_at_markers(model: str, provider: str) -> bool:
+    if provider == "vertex_ai":
+        return model.startswith("claude")
+    return provider in _CACHE_MARKER_PROVIDERS
 
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
@@ -321,7 +331,7 @@ class Agent:
             "max_tokens": self.config.max_tokens,
             **self.config.completion_kwargs,
         }
-        if self.config.prompt_caching:
+        if self.config.prompt_caching and self._caches_at_markers():
             kwargs["cache_control_injection_points"] = _CACHE_POINTS
         # Only without tools: some providers emulate the schema with a forced
         # tool call, which would stop the agent's own tools from being called.
@@ -606,6 +616,18 @@ class Agent:
         params = self._deployments()
         return bool(params) and all(
             _takes_tool_message_images(
+                *litellm.get_llm_provider(
+                    p["model"], custom_llm_provider=p.get("custom_llm_provider")
+                )[:2]
+            )
+            for p in params
+        )
+
+    def _caches_at_markers(self) -> bool:
+        """True if every deployment of the model caches at cache_control markers."""
+        params = self._deployments()
+        return bool(params) and all(
+            _caches_at_markers(
                 *litellm.get_llm_provider(
                     p["model"], custom_llm_provider=p.get("custom_llm_provider")
                 )[:2]

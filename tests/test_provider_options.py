@@ -17,6 +17,7 @@ from litellm.types.utils import (
     StreamingChoices,
     Usage,
 )
+import pytest
 from pydantic import BaseModel
 
 from cyclops.core.agent import Agent
@@ -296,8 +297,16 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
 # ---------------------------------------------------------------------------
 
 
-def test_prompt_caching_marks_system_prompt_and_latest_message():
-    agent = Agent(AgentConfig(model="anthropic/claude-sonnet-4-5", prompt_caching=True))
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic/claude-sonnet-4-5",
+        "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "vertex_ai/claude-sonnet-4-5",
+    ],
+)
+def test_prompt_caching_marks_system_prompt_and_latest_message(model):
+    agent = Agent(AgentConfig(model=model, prompt_caching=True))
     mock = AsyncMock(return_value=_response("hi"))
     with patch("litellm.acompletion", new=mock):
         agent.run("hello")
@@ -306,6 +315,37 @@ def test_prompt_caching_marks_system_prompt_and_latest_message():
         {"location": "message", "role": "system"},
         {"location": "message", "index": -1},
     ]
+
+
+@pytest.mark.parametrize(
+    "model", ["gemini/gemini-2.5-flash", "vertex_ai/gemini-2.5-flash", "gpt-4o-mini"]
+)
+def test_prompt_caching_sends_no_markers_where_they_do_not_cache(model):
+    """Gemini would create a billed cache resource; OpenAI caches without markers."""
+    mock = AsyncMock(return_value=_response("hi"))
+    with patch("litellm.acompletion", new=mock):
+        Agent(AgentConfig(model=model, prompt_caching=True)).run("hello")
+
+    assert "cache_control_injection_points" not in mock.call_args.kwargs
+
+
+def test_prompt_caching_needs_every_router_deployment():
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": "anthropic/claude-sonnet-4-5"},
+            },
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": "gemini/gemini-2.5-flash"},
+            },
+        ]
+    )
+    router.acompletion = AsyncMock(return_value=_response("hi"))
+    Agent(AgentConfig(model="smart", router=router, prompt_caching=True)).run("hello")
+
+    assert "cache_control_injection_points" not in router.acompletion.call_args.kwargs
 
 
 def test_prompt_caching_is_off_by_default():
