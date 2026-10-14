@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from cyclops.toolkit.decorators import tool
+from cyclops.toolkit.plugins import PluginManager, Toolkit
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import BaseTool, Tool
 from cyclops.toolkit.types import (
@@ -524,3 +525,15 @@ class TestToolRegistry:
         registry.remove_tool("ping")
         registry.register(Tool("ping", "Ping again", lambda: "pong"))
         assert registry.get_tool("ping").description == "Ping again"
+
+    def test_plugin_duplicate_skips_only_that_tool(self):
+        class Tools(Toolkit):
+            a = Tool("a", "A", lambda: "a")
+            b = Tool("b", "B", lambda: "b")
+
+        manager = PluginManager()
+        manager.registry.register(Tool("a", "Existing", lambda: "x"))
+        manager.register(Tools())
+        manager.register_tools()
+        assert manager.registry.get_tool("a").description == "Existing"
+        assert manager.registry.get_tool("b") is not None
