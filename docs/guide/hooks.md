@@ -39,14 +39,14 @@ agent.run("What is the weather in London?")
 | `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
 | `on_tool_start(tool_name, args)` | Before each tool execution | `"deny"` to block, anything else to allow |
-| `on_tool_end(tool_name, args, result)` | After a tool executes successfully | `None` |
+| `on_tool_end(tool_name, args, result)` | After a tool executes successfully; `result` is the text sent to the model | `None` |
 | `on_tool_error(tool_name, args, error)` | When a tool raises an exception | `None` |
 
 All methods are no-ops by default. Override only the ones you need.
 
 ## Tool approval with on_tool_start
 
-`on_tool_start` is the only hook with side effects: returning the string `"deny"` blocks the tool call. Any other return value (including `None`) allows it. The agent receives `"[Tool '<name>' was not approved]"` as the tool result and continues.
+`on_tool_start` is the only hook with side effects: returning the string `"deny"` blocks the tool call. Any other return value (including `None`) allows it. The agent receives `"Error: Tool '<name>' was not approved"` as the tool result and continues.
 
 ```python
 from cyclops import Agent, AgentConfig, AgentHooks

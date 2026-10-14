@@ -2,70 +2,115 @@
 
 import asyncio
 import inspect
-import types
-import typing
 from abc import ABC
-from typing import Any, Callable, Dict, get_args, get_origin
+from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
-from cyclops.toolkit.types import ToolParameter, ToolDefinition
+from docstring_parser import parse as parse_docstring
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
-
-_PYTHON_TO_JSON_TYPE = {
-    str: "string",
-    int: "integer",
-    float: "number",
-    bool: "boolean",
-    list: "array",
-    dict: "object",
-}
-
-_ORIGIN_TO_JSON_TYPE = {
-    list: "array",
-    dict: "object",
-}
+from cyclops.toolkit.types import ToolAnnotations, ToolDefinition, ToolParameter
 
 
-def _annotation_to_json_type(annotation) -> str:
-    """Convert a Python type annotation to a JSON schema type string."""
-    if annotation is inspect.Parameter.empty:
-        return "string"
-    origin = get_origin(annotation)
-    if origin is not None:
-        is_union = origin is typing.Union
-        if not is_union and hasattr(types, "UnionType"):
-            is_union = isinstance(annotation, types.UnionType)
-        if is_union:
-            non_none = [a for a in get_args(annotation) if a is not type(None)]
-            if non_none:
-                return _annotation_to_json_type(non_none[0])
-            return "string"
-        return _ORIGIN_TO_JSON_TYPE.get(origin, "string")
-    return _PYTHON_TO_JSON_TYPE.get(annotation, "string")
+def _args_model(name: str, func: Callable) -> Tuple[type[BaseModel], Dict[str, str]]:
+    """Build a pydantic model of the function's parameters.
 
-
-def _params_from_sig(sig) -> Dict[str, ToolParameter]:
-    """Extract ToolParameter dict from an inspect.Signature."""
-    parameters = {}
-    for param_name, param in sig.parameters.items():
-        if param_name in ("self", "kwargs"):
+    Returns the model and a map from renamed fields back to parameter names.
+    Descriptions come from the Google or NumPy style docstring, or from
+    ``Annotated[..., Field(description=...)]``; the docstring wins.
+    """
+    docs = {
+        p.arg_name: p.description
+        for p in parse_docstring(inspect.getdoc(func) or "").params
+    }
+    fields: Dict[str, Tuple[Any, Any, Dict[str, Any]]] = {}
+    renames: Dict[str, str] = {}
+    extra: Literal["allow", "forbid"] = "forbid"
+    params = inspect.signature(func).parameters
+    for i, param in enumerate(params.values()):
+        if param.kind is param.VAR_KEYWORD:
+            extra = "allow"
+        if param.name == "self" or param.kind in (
+            param.VAR_POSITIONAL,
+            param.VAR_KEYWORD,
+        ):
             continue
-        param_type = _annotation_to_json_type(param.annotation)
-        required = param.default == inspect.Parameter.empty
-        parameters[param_name] = ToolParameter(
-            name=param_name,
-            type=param_type,
-            required=required,
-            default=param.default if not required else None,
+        annotation = Any if param.annotation is param.empty else param.annotation
+        default = ... if param.default is param.empty else param.default
+        field_name = param.name
+        # Pydantic drops names with a leading underscore and warns on ones
+        # that shadow BaseModel attributes, so those get another field name
+        if param.name.startswith("_") or hasattr(BaseModel, param.name):
+            field_name = f"param_{i}"
+            while field_name in params or field_name in fields:
+                field_name += "_"
+            renames[field_name] = param.name
+        field_args: Dict[str, Any] = {}
+        # An explicit description=None would drop one set through Annotated
+        if param.name in docs:
+            field_args["description"] = docs[param.name]
+        fields[field_name] = (annotation, default, field_args)
+
+    def build() -> type[BaseModel]:
+        definitions: Dict[str, Any] = {
+            field: (annotation, Field(default, **args) if args else default)
+            for field, (annotation, default, args) in fields.items()
+        }
+        # String annotations resolve in the function's module, as they would there
+        return create_model(
+            name,
+            __config__=ConfigDict(extra=extra),
+            __module__=func.__module__,
+            **definitions,
         )
-    return parameters
+
+    model = build()
+    # Renamed fields are exposed under the parameter name, unless an
+    # Annotated Field already set an alias
+    unaliased = [f for f in renames if model.model_fields[f].alias is None]
+    for field in unaliased:
+        fields[field][2]["alias"] = renames[field]
+    if unaliased:
+        model = build()
+    return model, renames
+
+
+def _json_type(prop: Dict[str, Any], defs: Dict[str, Any]) -> str:
+    """Top level JSON type of a property schema, for the parameter summary."""
+    if "$ref" in prop:
+        prop = defs[prop["$ref"].rsplit("/", 1)[-1]]
+    for option in prop.get("anyOf", []):
+        if option.get("type") != "null":
+            return _json_type(option, defs)
+    return prop.get("type", "string")
+
+
+def _parameters(schema: Dict[str, Any]) -> Dict[str, ToolParameter]:
+    defs = schema.get("$defs", {})
+    required = set(schema.get("required", []))
+    return {
+        name: ToolParameter(
+            name=name,
+            type=_json_type(prop, defs),
+            description=prop.get("description"),
+            required=name in required,
+            default=prop.get("default"),
+        )
+        for name, prop in schema["properties"].items()
+    }
 
 
 class BaseTool(ABC):
     """Abstract base tool class"""
 
-    def __init__(self, name: str, description: str):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        annotations: Optional[ToolAnnotations] = None,
+    ):
         self.name = name
         self.description = description
+        self.annotations = annotations or ToolAnnotations()
         self._definition = self._build_definition()
 
     async def execute(self, **kwargs):
@@ -73,9 +118,17 @@ class BaseTool(ABC):
         raise NotImplementedError(f"Tool '{self.name}' must implement execute()")
 
     def _build_definition(self) -> ToolDefinition:
-        parameters = _params_from_sig(inspect.signature(self.execute))
+        return self._definition_for(self.execute)
+
+    def _definition_for(self, func: Callable) -> ToolDefinition:
+        self._args_model, self._renames = _args_model(self.name, func)
+        schema = self._args_model.model_json_schema()
         return ToolDefinition(
-            name=self.name, description=self.description, parameters=parameters
+            name=self.name,
+            description=self.description,
+            parameters=_parameters(schema),
+            input_schema=schema,
+            annotations=self.annotations,
         )
 
     @property
@@ -87,20 +140,48 @@ class BaseTool(ABC):
 class Tool(BaseTool):
     """Simple function-based tool"""
 
-    def __init__(self, name: str, description: str, func: Callable):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        func: Callable,
+        annotations: Optional[ToolAnnotations] = None,
+    ):
         self.func = func
         self._is_async = inspect.iscoroutinefunction(func)
-        super().__init__(name, description)
+        self._positional_only = [
+            p.name
+            for p in inspect.signature(func).parameters.values()
+            if p.kind is p.POSITIONAL_ONLY
+        ]
+        super().__init__(name, description, annotations)
 
     def _build_definition(self) -> ToolDefinition:
-        parameters = _params_from_sig(inspect.signature(self.func))
-        return ToolDefinition(
-            name=self.name, description=self.description, parameters=parameters
-        )
+        return self._definition_for(self.func)
 
     async def execute(self, **kwargs) -> Any:
-        """Execute the wrapped function"""
+        """Validate the arguments against the schema and call the function"""
+        # Validation turns nested objects into the declared models and aliases
+        # into parameter names; extra arguments pass only with **kwargs
+        validated = self._args_model.model_validate(kwargs)
+        kwargs = {
+            self._renames.get(name, name): getattr(validated, name)
+            for name in self._args_model.model_fields
+        }
+        extra = validated.model_extra or {}
+        # An extra named like a declared parameter would replace its value
+        clashes = [k for k in extra if k in kwargs]
+        if clashes:
+            raise ValidationError.from_exception_data(
+                self.name,
+                [
+                    {"type": "extra_forbidden", "loc": (k,), "input": extra[k]}
+                    for k in clashes
+                ],
+            )
+        kwargs.update(extra)
+        args = [kwargs.pop(name) for name in self._positional_only]
         if self._is_async:
-            return await self.func(**kwargs)
+            return await self.func(*args, **kwargs)
         # A blocking sync function must not stall the event loop
-        return await asyncio.to_thread(self.func, **kwargs)
+        return await asyncio.to_thread(self.func, *args, **kwargs)

@@ -8,7 +8,6 @@ from cyclops.mcp.bridge import MCPBridge
 from cyclops.mcp.tools import MCPClientTool, _mcp_schema_to_params
 from cyclops.toolkit.types import ToolDefinition
 
-
 # ---------------------------------------------------------------------------
 # _mcp_schema_to_params
 # ---------------------------------------------------------------------------

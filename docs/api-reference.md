@@ -165,6 +165,7 @@ def tool(
     name: Optional[str] = None,
     description: Optional[str] = None,
     registry: Optional[ToolRegistry] = None,
+    annotations: Optional[ToolAnnotations] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -176,7 +177,12 @@ Abstract base class for all tools. Subclass this to create stateful tools.
 
 ```python
 class BaseTool(ABC):
-    def __init__(self, name: str, description: str): ...
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        annotations: Optional[ToolAnnotations] = None,
+    ): ...
     async def execute(self, **kwargs) -> Any: ...
 
     @property
@@ -191,15 +197,57 @@ Function-wrapping tool created by the `@tool` decorator.
 
 ```python
 class Tool(BaseTool):
-    def __init__(self, name: str, description: str, func: Callable): ...
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        func: Callable,
+        annotations: Optional[ToolAnnotations] = None,
+    ): ...
     async def execute(self, **kwargs) -> Any: ...
+```
+
+---
+
+### ToolResult
+
+What a tool may return instead of a plain value. See [Tool results](guide/tools.md#tool-results).
+
+```python
+class ToolResult(BaseModel):
+    success: bool = True
+    result: Any = None                   # structured data
+    error: Optional[str] = None
+    content: List[TextContent | ImageContent] = []
+
+    @property
+    def is_error(self) -> bool: ...
+    @classmethod
+    def success_result(cls, result: Any) -> "ToolResult": ...
+    @classmethod
+    def error_result(cls, error: str, result: Any = None) -> "ToolResult": ...
+    def to_message_content(self) -> Union[str, List[Dict[str, Any]]]: ...
+```
+
+---
+
+### ToolAnnotations
+
+Behaviour hints mirroring MCP tool annotations. Each field defaults to `None`.
+
+```python
+class ToolAnnotations(BaseModel):
+    read_only: Optional[bool] = None
+    destructive: Optional[bool] = None
+    idempotent: Optional[bool] = None
+    open_world: Optional[bool] = None
 ```
 
 ---
 
 ### ToolRegistry
 
-Named collection of tools with lookup and execution helpers.
+Named collection of tools with lookup and execution helpers. `register()` raises `ValueError` for a name that is already registered.
 
 ```python
 class ToolRegistry:

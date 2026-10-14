@@ -18,7 +18,6 @@ from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.types import AgentConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -539,7 +538,7 @@ def test_failing_end_hook_becomes_tool_error():
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
         assert agent.run("add") == "ok"
 
-    assert agent.messages[2]["content"] == "Error executing add: hook broke"
+    assert agent.messages[2]["content"] == "Error: add failed: hook broke"
 
 
 def test_max_iterations_sets_stop_reason():
@@ -1067,3 +1066,224 @@ def test_sync_tool_can_run_another_agent():
         assert agent.run("Ask about France") == "It is Paris."
 
     assert agent.messages[2]["content"] == "Paris"
+
+
+# ---------------------------------------------------------------------------
+# Tool results sent to the model
+# ---------------------------------------------------------------------------
+
+_IMAGE_PART = {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}
+
+
+def _chart_tool():
+    from cyclops.toolkit import ImageContent, TextContent, ToolResult, tool
+
+    @tool
+    def chart() -> ToolResult:
+        """Draw a chart."""
+        return ToolResult(
+            content=[
+                TextContent(text="a chart"),
+                ImageContent(data="aGk=", mime_type="image/png"),
+            ]
+        )
+
+    return chart
+
+
+def _run_tool_calls(agent, *calls):
+    """Run one round of native tool calls followed by a final answer."""
+    tool_calls = [
+        _make_tool_call(f"tc_{i}", name, "{}") for i, name in enumerate(calls)
+    ]
+    responses = [
+        _make_completion_response(content=None, tool_calls=tool_calls),
+        _make_completion_response(content="done"),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as mock:
+        assert agent.run("go") == "done"
+    return mock
+
+
+def test_duplicate_tool_names_are_rejected():
+    with pytest.raises(ValueError, match="Duplicate tool name: 'add'"):
+        Agent(config=_make_config(), tools=[_make_simple_tool(), _make_simple_tool()])
+
+
+def test_tool_results_are_rendered_for_the_model():
+    from cyclops.toolkit import TextContent, ToolResult, tool
+
+    @tool
+    def data() -> dict:
+        """Return data."""
+        return {"rows": 2}
+
+    @tool
+    def text() -> ToolResult:
+        """Return text."""
+        return ToolResult(content=[TextContent(text="two rows")])
+
+    @tool
+    def fail() -> ToolResult:
+        """Fail."""
+        return ToolResult.error_result("no access")
+
+    hooks = MagicMock(spec=AgentHooks)
+    hooks.on_tool_start.return_value = "allow"
+    agent = Agent(config=_make_config(hooks=hooks), tools=[data, text, fail])
+    _run_tool_calls(agent, "data", "text", "fail")
+
+    tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    assert tool_messages == ['{"rows": 2}', "two rows", "Error: no access"]
+    assert [c.args[2] for c in hooks.on_tool_end.call_args_list] == tool_messages
+
+
+def test_raising_tool_is_marked_as_error():
+    from cyclops.toolkit import tool
+
+    @tool
+    def boom() -> str:
+        """Raise."""
+        raise RuntimeError("disk full")
+
+    agent = Agent(config=_make_config(), tools=[boom])
+    _run_tool_calls(agent, "boom")
+    assert agent.messages[2]["content"] == "Error: boom failed: disk full"
+
+
+def test_tool_images_stay_in_tool_message_when_provider_accepts_them():
+    agent = Agent(
+        config=_make_config(model="anthropic/claude-3-5-sonnet-latest"),
+        tools=[_chart_tool()],
+    )
+    _run_tool_calls(agent, "chart")
+
+    assert [m["role"] for m in agent.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert agent.messages[2]["content"] == [
+        {"type": "text", "text": "a chart"},
+        _IMAGE_PART,
+    ]
+
+
+def test_tool_images_move_to_user_message_for_text_only_tool_messages():
+    agent = Agent(
+        config=_make_config(model="gpt-4o"),
+        tools=[_chart_tool(), _make_simple_tool()],
+    )
+    tool_calls = [
+        _make_tool_call("tc_1", "chart", "{}"),
+        _make_tool_call("tc_2", "add", '{"a": 1, "b": 2}'),
+    ]
+    responses = [
+        _make_completion_response(content=None, tool_calls=tool_calls),
+        _make_completion_response(content="done"),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as mock:
+        agent.run("go")
+
+    # The images follow every tool message of the round
+    assert [m["role"] for m in agent.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "user",
+        "assistant",
+    ]
+    assert agent.messages[2]["content"] == "a chart"
+    assert agent.messages[3]["content"] == "3"
+    assert agent.messages[4]["content"] == [
+        {"type": "text", "text": "Images returned by chart:"},
+        _IMAGE_PART,
+    ]
+    sent = mock.call_args_list[1].kwargs["messages"]
+    assert sent[-1] == agent.messages[4]
+
+
+def test_tool_images_in_naive_mode():
+    agent = Agent(config=_make_config(tool_mode="naive"), tools=[_chart_tool()])
+    responses = [
+        _make_completion_response('{"tool": "chart", "args": {}}'),
+        _make_completion_response("done"),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        agent.run("go")
+
+    assert agent.messages[2] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "Tool result: a chart"}, _IMAGE_PART],
+    }
+
+
+def test_streamed_run_renders_tool_results():
+    from cyclops.toolkit import ToolResult, tool
+
+    @tool
+    def fail() -> ToolResult:
+        """Fail."""
+        return ToolResult.error_result("no access")
+
+    agent = Agent(config=_make_config(), tools=[fail])
+    first = [_tool_call_chunk(0, "{}", id="tc_1", name="fail")]
+    second = [_text_chunk("sorry")]
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[_stream(first), _stream(second)]),
+    ):
+        assert list(agent.stream("go")) == ["sorry"]
+
+    assert agent.messages[2]["content"] == "Error: no access"
+
+
+def test_denied_and_unknown_tools_are_reported_as_errors():
+    class Deny(AgentHooks):
+        def on_tool_start(self, tool_name, args):
+            return "deny"
+
+    agent = Agent(config=_make_config(hooks=Deny()), tools=[_make_simple_tool()])
+    _run_tool_calls(agent, "add", "missing")
+
+    tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    assert tool_messages == [
+        "Error: Tool 'add' was not approved",
+        "Error: Tool 'missing' not found",
+    ]
+
+
+@pytest.mark.parametrize(
+    "deployments, kept",
+    [
+        (["anthropic/claude-3-5-sonnet-latest", "gemini/gemini-1.5-pro"], True),
+        (["anthropic/claude-3-5-sonnet-latest", "openai/gpt-4o"], False),
+        (["vertex_ai/gemini-1.5-pro"], True),
+        (["vertex_ai/meta/llama3-405b-instruct-maas"], False),
+    ],
+)
+def test_tool_image_route_checks_every_router_deployment(deployments, kept):
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "smart", "litellm_params": {"model": d}} for d in deployments
+        ]
+    )
+    tool_calls = [_make_tool_call("tc_1", "chart", "{}")]
+    router.acompletion = AsyncMock(
+        side_effect=[
+            _make_completion_response(content=None, tool_calls=tool_calls),
+            _make_completion_response(content="done"),
+        ]
+    )
+    agent = Agent(config=_make_config("smart", router=router), tools=[_chart_tool()])
+    agent.run("go")
+
+    roles = [m["role"] for m in agent.messages]
+    if kept:
+        assert roles == ["user", "assistant", "tool", "assistant"]
+        assert agent.messages[2]["content"][1] == _IMAGE_PART
+    else:
+        assert roles == ["user", "assistant", "tool", "user", "assistant"]
+        assert agent.messages[2]["content"] == "a chart"
