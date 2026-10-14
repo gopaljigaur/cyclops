@@ -22,6 +22,7 @@ from typing import (
 )
 
 import litellm
+from litellm.utils import supports_prompt_caching
 
 from cyclops.core.hooks import _tool_call_id
 from cyclops.core.types import AgentConfig, AgentResponse, ToolCall
@@ -36,7 +37,7 @@ _CANCELLED_RESULT = "Tool call cancelled."
 _TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
 _DONE = object()
 # Providers that cache a prompt prefix at cache_control markers (on vertex_ai
-# only for Claude models). Gemini turns them into billed cachedContents
+# only for Anthropic models). Gemini turns them into billed cachedContents
 # resources instead, and OpenAI caches without them.
 _CACHE_MARKER_PROVIDERS = {"anthropic", "bedrock"}
 # Cache the system prompt (with the tools before it) and the conversation so far.
@@ -62,8 +63,13 @@ def _takes_tool_message_images(model: str, provider: str) -> bool:
 
 def _caches_at_markers(model: str, provider: str) -> bool:
     if provider == "vertex_ai":
-        return model.startswith("claude")
-    return provider in _CACHE_MARKER_PROVIDERS
+        marker_provider = model.startswith("claude")
+    else:
+        marker_provider = provider in _CACHE_MARKER_PROVIDERS
+    # Bedrock adds cache points for every model, also those that reject them.
+    return marker_provider and supports_prompt_caching(
+        model=model, custom_llm_provider=provider
+    )
 
 
 _loop: Optional[asyncio.AbstractEventLoop] = None

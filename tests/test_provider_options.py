@@ -301,7 +301,7 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
     "model",
     [
         "anthropic/claude-sonnet-4-5",
-        "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         "vertex_ai/claude-sonnet-4-5",
     ],
 )
@@ -318,10 +318,18 @@ def test_prompt_caching_marks_system_prompt_and_latest_message(model):
 
 
 @pytest.mark.parametrize(
-    "model", ["gemini/gemini-2.5-flash", "vertex_ai/gemini-2.5-flash", "gpt-4o-mini"]
+    "model",
+    [
+        "gemini/gemini-2.5-flash",
+        "vertex_ai/gemini-2.5-flash",
+        "gpt-4o-mini",
+        "bedrock/meta.llama3-1-70b-instruct-v1:0",
+        "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+    ],
 )
 def test_prompt_caching_sends_no_markers_where_they_do_not_cache(model):
-    """Gemini would create a billed cache resource; OpenAI caches without markers."""
+    """Gemini would create a billed cache resource, OpenAI caches without markers
+    and these Bedrock models reject cache points."""
     mock = AsyncMock(return_value=_response("hi"))
     with patch("litellm.acompletion", new=mock):
         Agent(AgentConfig(model=model, prompt_caching=True)).run("hello")
