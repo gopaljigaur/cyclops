@@ -42,6 +42,7 @@ from cyclops.core.providers import (
     _tool_message_images_supported,
     _tools_unsupported,
 )
+from cyclops.core.run_state import _Run
 from cyclops.core.session import Session
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.types import AgentConfig, RunResult, ToolCall, Usage
@@ -124,31 +125,6 @@ class _HooksMiddleware(ToolMiddleware):
             self.hooks.on_tool_error(call.tool_name, call.arguments, e)
             return ToolResult.error_result(f"{call.tool_name} failed: {e}")
         return None
-
-
-class _Run:
-    """One run in progress: its transcript, result so far, events and steering."""
-
-    def __init__(
-        self, model: str, history: List[Dict[str, Any]], session: Optional[Session]
-    ) -> None:
-        self.result = RunResult(model=model)
-        self.history = history
-        self.session = session
-        self.events: asyncio.Queue = asyncio.Queue()
-        # Set by astream_events, whose caller takes the events as they come.
-        self.paced = False
-        self.steering: List[str] = []
-        self.started = False
-        self.cancelled = False
-
-    def emit(self, event: Event) -> None:
-        self.events.put_nowait(event)
-
-    async def taken(self) -> None:
-        """When paced, wait until the caller has taken every event emitted so far."""
-        if self.paced:
-            await self.events.join()
 
 
 class RunHandle:
