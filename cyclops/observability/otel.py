@@ -108,7 +108,12 @@ class TelemetryHooks(AgentHooks):
     # ── Span stack ────────────────────────────────────────────────────────────
 
     def _push(
-        self, name: str, kind: SpanKind, attributes: dict[str, Any], run: bool = False
+        self,
+        name: str,
+        kind: SpanKind,
+        attributes: dict[str, Any],
+        run: bool = False,
+        attach: bool = False,
     ) -> None:
         parent = _frame.get()
         # A run's parent is the current OTel span: the caller's, or a tool span for a nested run.
@@ -116,8 +121,9 @@ class TelemetryHooks(AgentHooks):
         span = self._tracer.start_span(
             name, context=ctx, kind=kind, attributes=attributes
         )
-        # LLM and tool spans become current, so spans made while they run nest under them.
-        token = None if run else otel_context.attach(trace.set_span_in_context(span))
+        # Only tool spans become current. A chat span may be a stream, whose
+        # generator runs in the consumer's context and may never be closed.
+        token = otel_context.attach(trace.set_span_in_context(span)) if attach else None
         _frame.set(_Frame(span, parent, token, run))
 
     def _pop(self) -> _Frame | None:
@@ -132,6 +138,10 @@ class TelemetryHooks(AgentHooks):
     @staticmethod
     def _fail(frame: _Frame | None, error: BaseException) -> None:
         if frame is None:
+            return
+        if isinstance(error, GeneratorExit):
+            # The consumer stopped reading a stream; that is not a failure.
+            frame.span.end()
             return
         frame.span.set_attribute("error.type", type(error).__qualname__)
         frame.span.record_exception(error)
@@ -220,7 +230,9 @@ class TelemetryHooks(AgentHooks):
         call_id = current_tool_call_id()
         if call_id is not None:
             attributes["gen_ai.tool.call.id"] = call_id
-        self._push(f"execute_tool {tool_name}", SpanKind.INTERNAL, attributes)
+        self._push(
+            f"execute_tool {tool_name}", SpanKind.INTERNAL, attributes, attach=True
+        )
         return None
 
     def on_tool_end(self, tool_name: str, args: dict[str, Any], result: str) -> None:

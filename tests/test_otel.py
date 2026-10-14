@@ -318,7 +318,7 @@ def test_sync_stream_closes_its_spans(hooks, exporter):
     _assert_context_clean()
 
 
-async def test_astream_closed_early_ends_the_run(hooks, exporter):
+async def test_astream_closed_early_ends_the_run_without_error(hooks, exporter):
     agent = Agent(AgentConfig(model="gpt-4o-mini", hooks=hooks))
     with patch("litellm.acompletion", new=AsyncMock(return_value=_chunks("a", "b"))):
         async with aclosing(agent.astream("hi")) as stream:
@@ -327,21 +327,28 @@ async def test_astream_closed_early_ends_the_run(hooks, exporter):
 
     spans = exporter.get_finished_spans()
     assert [s.name for s in spans] == ["chat", "invoke_agent"]
-    assert all(s.attributes["error.type"] == "GeneratorExit" for s in spans)
+    for span in spans:
+        assert span.status.status_code == StatusCode.UNSET
+        assert "error.type" not in span.attributes
     _assert_context_clean()
 
 
-async def test_chat_span_is_current_during_the_request(hooks, provider, exporter):
-    async def acompletion(**kwargs):
-        with provider.get_tracer("test").start_as_current_span("http"):
-            return _response(content="ok")
-
+async def test_break_out_of_astream_leaves_later_runs_alone(hooks, exporter):
     agent = Agent(AgentConfig(model="gpt-4o-mini", hooks=hooks))
-    with patch("litellm.acompletion", new=acompletion):
-        await agent.arun("hi")
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_chunks("a", "b"))):
+        # A plain break leaves the generator open until it is garbage collected.
+        stream = agent.astream("hi")
+        async for _ in stream:
+            break
+    assert trace.get_current_span() is trace.INVALID_SPAN
 
-    spans = {s.name: s for s in exporter.get_finished_spans()}
-    assert spans["http"].parent.span_id == spans["chat"].context.span_id
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_response("ok"))):
+        await agent.arun("again")
+    await stream.aclose()
+
+    roots = _roots(exporter.get_finished_spans())
+    assert len(roots) == 2
+    assert all(root.parent is None for root in roots)
 
 
 def test_sync_run_nests_under_caller_and_tool_spans(hooks, provider, exporter):

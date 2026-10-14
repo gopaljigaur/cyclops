@@ -37,7 +37,7 @@ Flushing and shutdown stay with your application.
 
 One `TelemetryHooks` instance can serve many runs at once, from threads or asyncio tasks. Span state is kept in a `ContextVar`, so each run gets its own root span and parallel tool calls in one run each get their own span. A run started while an OpenTelemetry span is current (for example inside a request handler, or an agent called from another agent's tool) becomes a child of that span. This holds for `run()` and `stream()` too: the sync methods carry the caller's context onto the loop that runs them.
 
-A run that raises, is cancelled, or whose stream is closed early ends its span with status `ERROR`, together with any LLM or tool span it cut short. An LLM error the agent recovers from (a model that rejects native tool calls, retried in naive mode) fails only that `chat` span.
+A run that raises or is cancelled ends its span with status `ERROR`, together with any LLM or tool span it cut short. A stream the consumer closes early ends them without an error status. An LLM error the agent recovers from (a model that rejects native tool calls, retried in naive mode) fails only that `chat` span.
 
 ## Span hierarchy
 
@@ -51,7 +51,7 @@ invoke_agent
 └── execute_tool <name>
 ```
 
-Span names and `gen_ai.*` attributes follow the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) in part: the hooks do not receive the request model or the provider, so `gen_ai.request.model` and `gen_ai.provider.name` are not set yet. While an LLM call or a tool runs, its span is the current span, so spans from an instrumented HTTP client or from the tool's own code nest under it.
+Span names and `gen_ai.*` attributes follow the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) in part: the hooks do not receive the request model or the provider, so `gen_ai.request.model` and `gen_ai.provider.name` are not set yet. While a tool runs, its span is the current span, so spans from the tool's own code nest under it.
 
 ## Span attributes
 
@@ -101,10 +101,6 @@ docker run -d --name jaeger \
 ```
 
 Then open [http://localhost:16686](http://localhost:16686) and search for service `cyclops`.
-
-## Known limitation
-
-`on_run_end` is not called for `stream()` / `astream()`, so the root `invoke_agent` span is not closed for streaming runs. Use `run()` or `arun()` if you need complete traces.
 
 ## Full example
 
