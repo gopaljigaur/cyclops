@@ -2077,3 +2077,31 @@ async def test_cancel_during_tool_calls_logs_nothing():
 
     assert result.stop_reason == "cancelled"
     assert reported == []
+
+
+def test_first_failing_tool_call_ends_the_step():
+    import asyncio
+
+    from cyclops.core.middleware import ToolMiddleware
+    from cyclops.toolkit.tool import Tool
+
+    class Broken(ToolMiddleware):
+        async def before_tool(self, call):
+            # The second call fails first.
+            await asyncio.sleep(0.02 if call.tool_name == "one" else 0)
+            raise RuntimeError(f"{call.tool_name} broke")
+
+    async def tool() -> str:
+        return "done"
+
+    agent = Agent(
+        config=_make_config(middleware=[Broken()]),
+        tools=[Tool("one", "One", tool), Tool("two", "Two", tool)],
+    )
+    calls = [_make_tool_call("tc_1", "one", "{}"), _make_tool_call("tc_2", "two", "{}")]
+    response = _make_completion_response(content=None, tool_calls=calls)
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = agent.run_with_response("go")
+
+    assert str(result.error) == "two broke"

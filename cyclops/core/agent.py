@@ -733,15 +733,11 @@ class Agent:
             for tc in msg.tool_calls
         ]
         try:
-            # asyncio.wait leaves the tools running when the run is cancelled,
-            # so they are cancelled once, below, and can clean up.
-            pending = set(tasks)
-            while pending:
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED
-                )
-                for task in done:
-                    task.result()
+            # as_completed leaves the tools running when the run is cancelled,
+            # so they are cancelled once, below, and can clean up. The first
+            # call to fail ends the step.
+            for finished in asyncio.as_completed(tasks):
+                await finished
         except BaseException as e:
             # Cancelled, or middleware raised: stop the other calls too, with
             # the same reason, then answer every call to keep the transcript valid.
