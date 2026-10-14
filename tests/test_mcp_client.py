@@ -159,6 +159,15 @@ class TestAttachDetach:
         await client.aclose()
         assert client.servers == []
 
+    async def test_aclose_waits_for_pending_attach(self):
+        client = MCPClient()
+        attach = asyncio.create_task(client.attach("d", COMMAND))
+        await asyncio.sleep(0)
+        await client.aclose()
+        await attach
+        assert client.servers == []
+        assert _live_sessions() == []
+
     async def test_tool_name_clash_across_servers_raises(self):
         async with MCPClient() as client:
             await client.attach("a", COMMAND, prefix=False)
@@ -248,6 +257,7 @@ def test_bridge_tools_work_from_another_loop():
         assert [t.name for t in bridge.tools(["demo"])] == [t.name for t in tools]
     finally:
         bridge.stop()
+    assert asyncio.run(add.execute(a=1, b=1)).error == "MCPBridge is stopped"
 
 
 def test_to_tool_result_mixed_content():

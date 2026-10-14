@@ -286,8 +286,8 @@ class MCPClient:
         self._tools.pop(name, None)
 
     async def aclose(self) -> None:
-        """Disconnect every server."""
-        await asyncio.gather(*[self.detach(name) for name in self.servers])
+        """Disconnect every server, including ones still attaching."""
+        await asyncio.gather(*[self.detach(name) for name in list(self._locks)])
 
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]:
         """Tools of the given servers, or of every attached server."""

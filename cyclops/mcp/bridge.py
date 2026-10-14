@@ -19,6 +19,8 @@ class _BridgeTool(MCPClientTool):
         super().__init__(tool.client, tool.server, tool.tool, tool.name)
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if self._loop.is_closed():
+            return ToolResult.error_result("MCPBridge is stopped")
         future = asyncio.run_coroutine_threadsafe(super().execute(**kwargs), self._loop)
         return await asyncio.wrap_future(future)
 
