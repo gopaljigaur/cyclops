@@ -91,6 +91,7 @@ class TextDelta(Event):        text: str
 class ReasoningDelta(Event):   text: str
 class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
+class GuardRejected(Event):    feedback: str
 class StepFinished(Event):     step: int; usage: Optional[Usage]
 class RunFinished(Event):      result: RunResult
 ```
@@ -139,7 +140,7 @@ Async middleware around every tool call, set with `AgentConfig.middleware`.
 ```python
 class ToolMiddleware:
     async def before_tool(self, call: ToolCallContext) -> Union[None, Deny, Dict[str, Any]]: ...
-    async def after_tool(self, call: ToolCallContext, result: ToolResult, error: Optional[Exception]) -> Optional[ToolResult]: ...
+    async def after_tool(self, call: ToolCallContext, result: ToolResult, error: Optional[BaseException]) -> Optional[ToolResult]: ...
 
 @dataclass
 class ToolCallContext:

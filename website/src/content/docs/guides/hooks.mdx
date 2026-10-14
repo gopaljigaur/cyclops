@@ -117,7 +117,7 @@ If a tool call is cancelled, `after_tool` runs with the `CancelledError` and its
 
 ## End-of-run guards
 
-A guard runs when the model ends its turn without calling a tool. It is an async function that takes a `GuardContext` (`content`, `messages`, `run_id`, `agent_path`) and returns feedback or `None`. Feedback is added as a user message and the model runs again. Guards run in order and the first one with feedback wins. `max_guard_rounds` (default `3`) caps how many times per run guards may send the model back. If a guard still has feedback after that, the run ends with `stop_reason="guard"` and empty `content`. Each guard round is a step, so it counts against `max_steps` and the token and cost budgets.
+A guard runs when the model ends its turn without calling a tool. It is an async function that takes a `GuardContext` (`content`, `messages`, `run_id`, `agent_path`) and returns feedback or `None`. Feedback is added as a user message and the model runs again. Guards run in order and the first one with feedback wins. `max_guard_rounds` (default `3`) caps how many times per run guards may send the model back. If a guard still has feedback after that, the run ends with `stop_reason="guard"` and empty `content`. Each guard round is a step, so it counts against `max_steps` and the token and cost budgets; if a limit stops the run first, the feedback is not added to the conversation.
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -132,7 +132,7 @@ async def cites_sources(context):
 agent = Agent(AgentConfig(model="gpt-4o-mini", guards=[cites_sources], max_guard_rounds=2))
 ```
 
-Guards also run in streamed runs: the rejected answer has already been streamed, and the next answer streams after it. A rejected answer is never the run's `content` or the value `on_run_end` gets.
+Guards also run in streamed runs: the rejected answer has already been streamed, then a `GuardRejected` [event](/guides/streaming/) marks it, and the next answer streams after it. A rejected answer is never the run's `content` or the value `on_run_end` gets.
 
 ## Observability example
 
