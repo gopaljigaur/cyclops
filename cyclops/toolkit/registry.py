@@ -11,7 +11,9 @@ class ToolRegistry:
         self._tools: Dict[str, BaseTool] = {}
 
     def register(self, tool: BaseTool) -> None:
-        """Register a tool in the registry"""
+        """Register a tool in the registry; names must be unique"""
+        if tool.name in self._tools:
+            raise ValueError(f"Tool '{tool.name}' is already registered")
         self._tools[tool.name] = tool
 
     def register_function(self, name: str, description: str, func) -> None:

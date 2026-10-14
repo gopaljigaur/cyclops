@@ -1,4 +1,4 @@
-"""Tests for cyclops toolkit: @tool decorator, BaseTool, and type annotation handling."""
+"""Tests for cyclops toolkit: @tool decorator, BaseTool, registry."""
 
 import asyncio
 import inspect
@@ -7,13 +7,13 @@ from typing import Optional
 import pytest
 
 from cyclops.toolkit.decorators import tool
+from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import (
     BaseTool,
     Tool,
     _annotation_to_json_type,
 )
 from cyclops.toolkit.types import ToolDefinition
-
 
 # ---------------------------------------------------------------------------
 # _annotation_to_json_type
@@ -297,3 +297,23 @@ class TestFunctionTool:
         assert params["b"].type == "boolean"
         assert params["lst"].type == "array"
         assert params["dct"].type == "object"
+
+
+# ---------------------------------------------------------------------------
+# ToolRegistry
+# ---------------------------------------------------------------------------
+
+
+class TestToolRegistry:
+    def test_duplicate_name_is_rejected(self):
+        registry = ToolRegistry()
+        registry.register(Tool("ping", "Ping", lambda: "pong"))
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register(Tool("ping", "Ping again", lambda: "pong"))
+
+    def test_name_is_free_after_removal(self):
+        registry = ToolRegistry()
+        registry.register(Tool("ping", "Ping", lambda: "pong"))
+        registry.remove_tool("ping")
+        registry.register(Tool("ping", "Ping again", lambda: "pong"))
+        assert registry.get_tool("ping").description == "Ping again"
