@@ -80,7 +80,7 @@ Creates a minimal MCP server with three tools (`add`, `multiply`, `greet`), regi
 
 **Path:** `examples/test_mcp.py`
 
-Client-side counterpart to `mcp_server.py`. Connects to the server via `connect_stdio`, lists the available tools, calls `add` with `a=5, b=3`, and calls `greet` with `name="World"`. A good smoke test to verify your MCP server is working.
+Client-side counterpart to `mcp_server.py`. Attaches the server with `MCPClient.attach`, lists its tools, calls `math__add` with `a=5, b=3`, and calls `math__greet` with `name="World"`. A good smoke test to verify your MCP server is working.
 
 ---
 

@@ -153,17 +153,17 @@ asyncio.run(main())
 
 ## MCP
 
-Connect to any MCP server:
+Connect to MCP servers over stdio, streamable HTTP or SSE and give their tools to an agent:
 
 ```python
 from cyclops.mcp import MCPClient
 
-client = MCPClient()
-await client.connect_stdio(["npx", "-y", "@modelcontextprotocol/server-filesystem", "."])
+async with MCPClient() as mcp:
+    await mcp.attach("files", ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."])
+    await mcp.attach("docs", url="https://example.com/mcp", headers={"Authorization": "Bearer ..."})
 
-tools = await client.list_tools()
-result = await client.call_tool("read_file", {"path": "README.md"})
-await client.disconnect()
+    agent = Agent(config, tools=mcp.tools())  # files__read_file, docs__search, ...
+    response = await agent.arun("Summarize README.md")
 ```
 
 Expose your tools as an MCP server:

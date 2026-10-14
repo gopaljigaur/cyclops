@@ -295,26 +295,62 @@ See [Plugins guide](guide/plugins.md) for full documentation.
 
 ### MCPClient
 
-Connects to an external MCP server over stdio.
+Async client for MCP servers over stdio, streamable HTTP or SSE, running on the caller's event loop.
 
 ```python
 class MCPClient:
-    async def connect_stdio(
-        self, command: List[str], env: Optional[Dict[str, str]] = None
-    ) -> None: ...
-    async def disconnect(self) -> None: ...
-    async def list_tools(self) -> List[Dict[str, Any]]: ...
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> str: ...
+    async def attach(
+        self,
+        name: str,
+        command: Optional[List[str]] = None,
+        *,
+        url: Optional[str] = None,
+        transport: Optional[Literal["stdio", "http", "sse"]] = None,
+        env: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        prefix: Union[str, bool] = True,
+        connect_timeout: float = 30.0,
+        call_timeout: Optional[float] = None,
+    ) -> List[MCPClientTool]: ...
+    async def detach(self, name: str) -> None: ...
+    async def aclose(self) -> None: ...
+    def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
+    async def call_tool(
+        self, server: str, tool: str, arguments: Dict[str, Any]
+    ) -> CallToolResult: ...
 
     @property
-    def is_connected(self) -> bool: ...
+    def servers(self) -> List[str]: ...
+```
+
+`MCPClient` is an async context manager; leaving it calls `aclose()`.
+
+---
+
+### MCPClientTool
+
+A `BaseTool` for one tool on an attached server. `execute()` returns a `ToolResult`: an error result when the server sets `isError` or the call fails, otherwise the text, or a list of content parts when the result has images. `definition.to_json_schema()` returns the server's input schema unchanged.
+
+---
+
+### MCPBridge
+
+Sync wrapper that runs an `MCPClient` on a background event loop.
+
+```python
+class MCPBridge:
+    client: MCPClient
+    def attach(self, name: str, command: Optional[List[str]] = None, **kwargs) -> List[MCPClientTool]: ...
+    def detach(self, name: str) -> None: ...
+    def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
+    def stop(self) -> None: ...
 ```
 
 ---
 
 ### MCPServer
 
-Exposes Cyclops tools as an MCP server over stdio.
+Exposes Cyclops tools as an MCP server over stdio. A tool that raises returns a result with `isError` set.
 
 ```python
 class MCPServer:
