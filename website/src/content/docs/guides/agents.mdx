@@ -8,7 +8,7 @@ import { Code } from '@astrojs/starlight/components';
 
 ## AgentConfig
 
-`AgentConfig` is a Pydantic model that holds all runtime settings. Every field has a sensible default; you only need to set what you care about.
+`AgentConfig` is a Pydantic model that holds all runtime settings for an agent. Every field has a sensible default, so you only need to set what you care about.
 
 ```python
 from cyclops import AgentConfig
@@ -26,26 +26,26 @@ config = AgentConfig(
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model` | `str` | required | LiteLLM model string, e.g. `"gpt-4o-mini"`, `"groq/llama-3.1-8b-instant"`, `"ollama/qwen3:4b"`. |
-| `temperature` | `float \| None` | `None` | Sampling temperature. Lower is more deterministic. `None` uses the model's default. |
-| `max_tokens` | `int` or `None` | `None` | Maximum tokens in the response. `None` uses the model default. |
-| `system_prompt` | `str` or `None` | `None` | System instruction prepended to every conversation turn. |
-| `tool_mode` | `str` | `"auto"` | `"auto"` detects native function-calling support; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
-| `router` | `Router` or `None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
+| `temperature` | `float \| None` | `None` | Sampling temperature. Lower values are more deterministic. `None` uses the model's default. |
+| `max_tokens` | `int \| None` | `None` | Maximum tokens in the response. `None` uses the model's default. |
+| `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
+| `tool_mode` | `str` | `"auto"` | `"auto"` uses native function calling and switches this agent to `"naive"` if LiteLLM reports the model does not support tools; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
+| `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
 | `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds included; at least 1. |
-| `max_total_tokens` | `int` or `None` | `None` | Most tokens one run may use, checked between steps. |
-| `max_cost` | `float` or `None` | `None` | Most USD one run may cost, checked between steps. |
+| `max_total_tokens` | `int \| None` | `None` | Most tokens one run may use, checked between steps. |
+| `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
 | `max_subagent_depth` | `int` | `5` | Most levels of [subagent](/guides/subagents/) runs below one run. |
 | `max_concurrent_subagents` | `int` | `10` | Most subagent runs one run has going at once; more calls wait. |
 | `max_parallel_tool_calls` | `int` | `10` | Most tool calls of one step that run at the same time; at least 1. See [Parallel calls and timeouts](/guides/tools/#parallel-calls-and-timeouts). |
-| `tool_timeout` | `float` or `None` | `None` | Seconds a tool call may run before it is cancelled and returns an error. A tool's own `timeout` wins. |
-| `hooks` | `AgentHooks` or `None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](/guides/hooks/). |
+| `tool_timeout` | `float \| None` | `None` | Seconds a tool call may run before it is cancelled and returns an error. A tool's own `timeout` wins. |
+| `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](/guides/hooks/). |
 | `num_retries` | `int` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. See [Retries and timeouts](#retries-and-timeouts). |
 | `timeout` | `float` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `float` | `120` | Seconds a stream may go without a chunk after its first. |
-| `completion_kwargs` | `dict` | `{}` | Extra LiteLLM completion arguments sent with every call, such as `api_key`, `api_base` or `extra_headers`. |
-| `reasoning_effort` | `str` or `None` | `None` | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, sent to models that take it. See [Reasoning](#reasoning). |
-| `thinking_budget` | `int` or `None` | `None` | Tokens the model may think, sent to models that take a thinking budget; not with `reasoning_effort`. See [Reasoning](#reasoning). |
-| `prompt_caching` | `bool`, `"5m"` or `"1h"` | `True` | Mark cache breakpoints on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
+| `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
+| `reasoning_effort` | `str \| None` | `None` | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, sent to models that take it. See [Reasoning](#reasoning). |
+| `thinking_budget` | `int \| None` | `None` | Tokens the model may think, sent to models that take a thinking budget; not with `reasoning_effort`. See [Reasoning](#reasoning). |
+| `prompt_caching` | `bool \| "5m" \| "1h"` | `True` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
 
 ## Constructing an Agent
 
@@ -68,28 +68,26 @@ agent = Agent(config, tools=[greet])
 
 ## run() and arun()
 
-`run()` is the simplest entry point. It sends a message, handles any tool calls, and returns the final text response as a string.
+`run()` is the simplest entry point. It sends a message, handles any tool calls, and returns the final text response.
 
 ```python
 response = agent.run("Who invented the telephone?")
 print(response)
 ```
 
-`arun()` is the async equivalent. Use it inside coroutines or when running multiple agents concurrently.
+`arun()` is the async equivalent, useful inside coroutines or when running multiple agents concurrently.
 
 ```python
 import asyncio
-
 
 async def main():
     response = await agent.arun("Who invented the telephone?")
     print(response)
 
-
 asyncio.run(main())
 ```
 
-Both methods accept an optional `response_model` parameter for structured output. See [Structured Output](/guides/structured-output/) for details.
+Both methods accept an optional `response_model` parameter for structured output. See [Structured Output](/guides/structured-output/).
 
 ### One event loop per process
 
@@ -107,29 +105,14 @@ def answer(question: str) -> str:  # sync code on another thread, e.g. asyncio.t
     return asyncio.run_coroutine_threadsafe(agent.arun(question), loop).result()
 ```
 
-## Multi-turn conversations
-
-Each run without a session starts from a fresh transcript, so an agent keeps no conversation of its own and can serve many callers at once. To continue a conversation, pass the same [session](/guides/sessions/) to each run:
-
-```python
-from cyclops import Session
-
-session = Session()
-agent.run("My name is Alice.", session=session)
-agent.run("What is my name?", session=session)  # correctly answers "Alice"
-
-for msg in session.messages:
-    print(msg["role"], ":", msg["content"])
-```
-
-Each message in `session.messages` is a plain dict with at least `"role"` and `"content"` keys. Tool messages also include `"tool_call_id"` and `"name"`. A new `Session()` starts a new conversation.
-
 ## run_with_response() and arun_with_response()
 
-When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns a `RunResult` instead of a plain string.
+When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns a `RunResult` instead of a bare string.
 
 ```python
-result = agent.run_with_response("Summarize quantum computing in two sentences.")
+from cyclops import RunResult
+
+result: RunResult = agent.run_with_response("Summarize quantum computing in two sentences.")
 
 print(result.content)
 print(f"Tokens: {result.tokens_used}  Cost: ${result.cost:.6f}")
@@ -140,12 +123,21 @@ See [Cost Tracking](/guides/cost-tracking/) for the full field reference.
 
 ## stream() and astream()
 
-`stream()` yields text tokens as they arrive. For agents without tools this is true token-by-token streaming from the LLM. For agents with tools, the tool loop runs first, then the final answer streams.
+`stream()` yields text tokens as they are produced. Every completion in the run is streamed, including the steps that call tools.
 
 ```python
 for token in agent.stream("Explain black holes briefly."):
     print(token, end="", flush=True)
-print()
+print()  # newline after stream ends
+```
+
+Async streaming works the same way:
+
+```python
+async def main():
+    async for token in agent.astream("Explain black holes briefly."):
+        print(token, end="", flush=True)
+    print()
 ```
 
 See [Streaming](/guides/streaming/) for detailed examples.
@@ -175,6 +167,42 @@ Cancelling the task that awaits a handle (or `arun()`) also cancels the run, but
 
 `start(input, stream=False)` makes the completions without streaming, so each step's text arrives as one `TextDelta`. `arun()`, `arun_with_response()` and `astream()` are shortcuts over `start()`. Iterating a handle doesn't hold the run back the way `astream_events()` does: events wait in the handle until you read them. Until you start iterating, the handle keeps them in short form: consecutive text or reasoning deltas as one event, and no subagent events. A handle you only await holds a few events per step, not one per token.
 
+## Conversations
+
+Each run without a session starts from a fresh transcript, so an agent keeps no conversation of its own and can serve many callers at once. To continue a conversation, pass the same [session](/guides/sessions/) to each run; its `messages` hold the transcript, tool turns included.
+
+```python
+from cyclops import Session
+
+session = Session()
+agent.run("My name is Alice.", session=session)
+agent.run("What is my name?", session=session)
+
+for msg in session.messages:
+    print(msg["role"], ":", msg["content"])
+```
+
+A new `Session()` starts a new conversation.
+
+## Provider options
+
+`completion_kwargs` is passed to every LiteLLM completion call the agent makes, so any argument LiteLLM accepts works per agent: credentials, endpoints, headers and reasoning settings. Keys here win over `temperature`, `max_tokens` and `timeout`. Set retries with `num_retries` (see [Retries and timeouts](#retries-and-timeouts)): LiteLLM's own `num_retries` here would retry on top of it.
+
+```python
+import os
+
+config = AgentConfig(
+    model="anthropic/claude-sonnet-4-5",
+    completion_kwargs={
+        "api_key": os.environ["MY_ANTHROPIC_KEY"],
+        "extra_headers": {"X-Request-Source": "docs"},
+        "max_tokens": 8192,
+    },
+)
+```
+
+For reasoning, use the typed options in [Reasoning](#reasoning). See the [LiteLLM input docs](https://docs.litellm.ai/docs/completion/input) for every argument.
+
 ## Retries and timeouts
 
 A completion that fails with a rate limit, an overloaded or 5xx response, a timeout or a connection error is retried up to `num_retries` times (default `2`) with exponential backoff and jitter: about 0.5s, then 1s, doubling up to 8s, each plus up to 0.75s. When the provider sends a `retry-after` of 60 seconds or less, the retry waits that long instead; a longer `retry-after` falls back to the backoff. These delays are LiteLLM's, set by its `INITIAL_RETRY_DELAY`, `MAX_RETRY_DELAY` and `JITTER` environment variables. Other errors, such as authentication, permission or invalid request errors, are never retried, nor is a spent quota or budget. A streamed completion is retried only while none of its text or reasoning has been emitted; after that the error ends the run. A failed attempt adds nothing to the run's usage, though the provider may still bill for it.
@@ -191,6 +219,17 @@ config = AgentConfig(
 ```
 
 Each attempt fires `on_llm_start`, and `on_llm_error` if it fails. `num_retries=0` turns off the retries of failed requests; a stalled stream is still retried once. With a `router`, the request's retries and timeout are the Router's own (`num_retries`, `retry_policy`, `timeout`, `stream_timeout`), and the stream idle timeout and its one retry still apply.
+
+## Reasoning in history
+
+When a model returns reasoning, the assistant messages in the transcript keep it as `reasoning_content` and, for Anthropic extended thinking, `thinking_blocks` with their signatures. They are sent back on the next call, which Anthropic requires when thinking is combined with tool use: the signed thinking block has to precede the tool call it led to.
+
+```python
+agent.run("What is 17 * 23? Use the calculator.", session=session)
+for msg in session.messages:
+    if "thinking_blocks" in msg:
+        print(msg["thinking_blocks"][0]["thinking"])
+```
 
 ## Reasoning
 
