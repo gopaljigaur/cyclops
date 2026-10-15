@@ -73,10 +73,12 @@ def test_without_deferred_tools_every_tool_is_sent():
 def test_deferred_tools_are_sent_only_once_found():
     agent = Agent(_make_config(), tools=[clock, read_file, send_email])
 
+    session = Session()
     mock = _run(
         agent,
         [_call("search_tools", query="read a file")],
         [_call("read_file", path="a.txt")],
+        session=session,
     )
 
     assert _sent_tools(mock) == [
@@ -84,7 +86,7 @@ def test_deferred_tools_are_sent_only_once_found():
         ["clock", "search_tools", "read_file"],
         ["clock", "search_tools", "read_file"],
     ]
-    results = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    results = [m["content"] for m in session.messages if m["role"] == "tool"]
     assert results == [
         "These tools can now be called:\n- read_file: Read a text file.",
         "text of a.txt",
@@ -182,9 +184,10 @@ def test_search_tools_needs_allowing_under_a_deny_default(allow):
     permissions = ToolPermissions(default="deny", allow=allow)
     agent = Agent(_make_config(middleware=[permissions]), tools=[read_file])
 
-    mock = _run(agent, [_call("search_tools", query="file")])
+    session = Session()
+    mock = _run(agent, [_call("search_tools", query="file")], session=session)
 
-    result = next(m["content"] for m in agent.messages if m["role"] == "tool")
+    result = next(m["content"] for m in session.messages if m["role"] == "tool")
     if "search_tools" in allow:
         assert result.endswith("- read_file: Read a text file.")
         assert _sent_tools(mock)[1] == ["search_tools", "read_file"]
@@ -220,6 +223,7 @@ async def test_mcp_tools_can_be_deferred():
     async with MCPClient() as client:
         tools = await client.attach("demo", COMMAND, defer_loading=True)
         agent = Agent(_make_config(), tools=[clock, *tools])
+        session = Session()
         responses = [
             _make_completion_response(
                 None, tool_calls=[_call("search_tools", query="numbers")]
@@ -229,7 +233,7 @@ async def test_mcp_tools_can_be_deferred():
         ]
         mock = AsyncMock(side_effect=responses)
         with patch("litellm.acompletion", new=mock):
-            assert await agent.arun("go") == "done"
+            assert await agent.arun("go", session=session) == "done"
 
     assert all(t.defer_loading for t in tools)
     assert _sent_tools(mock) == [
@@ -237,7 +241,7 @@ async def test_mcp_tools_can_be_deferred():
         ["clock", "search_tools", "demo__add"],
         ["clock", "search_tools", "demo__add"],
     ]
-    assert agent.messages[-2]["content"] == "5"
+    assert session.messages[-2]["content"] == "5"
 
 
 def test_bridge_keeps_deferred_mcp_tools_deferred():
