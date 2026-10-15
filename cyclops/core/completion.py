@@ -22,10 +22,10 @@ from litellm import _calculate_retry_after, _should_retry
 from cyclops.core.caching import _cache_points
 from cyclops.core.events import Event, ReasoningDelta, TextDelta
 from cyclops.core.providers import (
+    _caches_at_markers,
     _every_deployment,
-    _every_deployment_takes,
-    _marker_caching_supported,
     _native_schema,
+    _takes_param,
 )
 from cyclops.core.types import AgentConfig, Usage
 from cyclops.utils.compat import asyncio_timeout
@@ -47,7 +47,7 @@ def _completion_kwargs(
         kwargs.update(timeout=config.timeout, max_retries=0)
     kwargs.update(config.completion_kwargs)
     # Injection points from completion_kwargs win, as over LiteLLM's own defaults.
-    if config.prompt_caching and _marker_caching_supported(config):
+    if config.prompt_caching and _every_deployment(config, _caches_at_markers):
         kwargs.setdefault(
             "cache_control_injection_points", _cache_points(config.prompt_caching)
         )
@@ -68,9 +68,11 @@ def _completion_kwargs(
 
 def _reasoning_kwargs(config: AgentConfig) -> Dict[str, Any]:
     """LiteLLM's reasoning arguments for the typed options the model takes."""
-    if config.reasoning_effort and _every_deployment_takes(config, "reasoning_effort"):
+    if config.reasoning_effort and _every_deployment(
+        config, _takes_param, "reasoning_effort"
+    ):
         return {"reasoning_effort": config.reasoning_effort}
-    if config.thinking_budget and _every_deployment_takes(config, "thinking"):
+    if config.thinking_budget and _every_deployment(config, _takes_param, "thinking"):
         return {
             "thinking": {"type": "enabled", "budget_tokens": config.thinking_budget}
         }
@@ -265,11 +267,16 @@ def _usage(response) -> Optional[Usage]:
     if usage is None:
         return None
     details = getattr(usage, "prompt_tokens_details", None)
-    try:
-        cost: Optional[float] = litellm.completion_cost(completion_response=response)
-    except Exception:
-        # LiteLLM has no pricing for this model.
-        cost = None
+    # LiteLLM prices the response as it builds it, None if it has no pricing.
+    hidden = response._hidden_params
+    cost: Optional[float]
+    if "response_cost" in hidden:
+        cost = hidden["response_cost"]
+    else:
+        try:
+            cost = litellm.completion_cost(completion_response=response)
+        except Exception:
+            cost = None
     return Usage(
         prompt_tokens=usage.prompt_tokens or 0,
         completion_tokens=usage.completion_tokens or 0,

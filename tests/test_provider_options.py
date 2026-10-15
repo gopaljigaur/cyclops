@@ -22,6 +22,15 @@ import pytest
 from pydantic import BaseModel
 
 from cyclops.core.agent import Agent
+from cyclops.core.providers import (
+    _caches_at_markers,
+    _every_deployment,
+    _holds,
+    _lacks_tools,
+    _native_schema,
+    _takes_param,
+    _takes_tool_message_images,
+)
 from cyclops.core.session import Session
 from cyclops.core.types import AgentConfig, Message as CyclopsMessage
 from cyclops.toolkit import tool
@@ -1068,3 +1077,93 @@ def test_response_model_native_schema_needs_every_router_deployment():
 
     for call in router.acompletion.call_args_list:
         assert "response_format" not in call.kwargs
+
+
+_CHECKS = [
+    (litellm.supports_response_schema,),
+    (_native_schema,),
+    (_takes_param, "reasoning_effort"),
+    (_takes_param, "thinking"),
+    (_lacks_tools,),
+    (_takes_tool_message_images,),
+    (_caches_at_markers,),
+]
+_MODELS = [
+    ("gpt-4o-mini", None),
+    ("anthropic/claude-sonnet-4-5", None),
+    ("claude-sonnet-4-5", "anthropic"),
+    ("bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0", None),
+    ("vertex_ai/gemini-2.5-pro", None),
+    ("vertex_ai/claude-sonnet-4-5", None),
+    ("gemini/gemini-2.5-flash", None),
+    ("ollama/llama3", None),
+]
+
+
+def _router(*deployments):
+    return litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": m}
+                | ({"custom_llm_provider": p} if p else {}),
+            }
+            for m, p in deployments
+        ]
+    )
+
+
+@pytest.mark.parametrize("check", _CHECKS, ids=lambda c: "-".join(map(str, c)))
+def test_every_deployment_decides_as_each_check(check):
+    """The memoized helper decides as the plain check, alone or through a router."""
+    _holds.cache_clear()
+    for model, provider in _MODELS:
+        expected = check[0](model, provider, *check[1:])
+        if provider is None:
+            assert _every_deployment(AgentConfig(model=model), *check) is expected
+        config = AgentConfig(model="smart", router=_router((model, provider)))
+        assert _every_deployment(config, *check) is expected
+    for pair in zip(_MODELS, _MODELS[1:]):
+        expected = all(check[0](m, p, *check[1:]) for m, p in pair)
+        config = AgentConfig(model="smart", router=_router(*pair))
+        assert _every_deployment(config, *check) is expected
+
+
+def test_every_deployment_is_false_without_deployments():
+    config = AgentConfig(model="other", router=_router(("gpt-4o-mini", None)))
+    assert _every_deployment(config, _takes_param, "reasoning_effort") is False
+
+
+def test_every_deployment_asks_litellm_once_per_model_and_provider():
+    _holds.cache_clear()
+    config = AgentConfig(
+        model="smart",
+        router=_router(("gpt-4o-mini", None), ("claude-sonnet-4-5", "anthropic")),
+    )
+    with patch(
+        "litellm.get_supported_openai_params",
+        wraps=litellm.get_supported_openai_params,
+    ) as lookup:
+        for _ in range(3):
+            _every_deployment(config, _takes_param, "tools")
+            _every_deployment(AgentConfig(model="gpt-4o-mini"), _lacks_tools)
+
+    assert lookup.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "model, fallback",
+    [
+        ("anthropic/claude-sonnet-4-5", "gpt-4o-mini"),
+        ("gpt-4o-mini", "anthropic/claude-sonnet-4-5"),
+        ("anthropic/claude-sonnet-4-5", "gemini/gemini-2.5-flash"),
+    ],
+)
+def test_every_deployment_counts_fallback_models_when_asked(model, fallback):
+    config = AgentConfig(model=model, fallback_models=[fallback])
+    check = _takes_tool_message_images
+
+    assert _every_deployment(config, check, fallbacks=True) is (
+        check(model, None) and check(fallback, None)
+    )
+    assert _every_deployment(config, check) is check(model, None)

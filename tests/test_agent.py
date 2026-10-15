@@ -650,6 +650,55 @@ def test_cost_budget_counts_steps_after_one_without_pricing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_cost_follows_the_router_deployment_pricing(stream):
+    """A deployment's model_info.base_model prices its completions."""
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": "openai/my-deployment"},
+                "model_info": {"base_model": "gpt-4o"},
+            }
+        ]
+    )
+    agent = Agent(
+        config=_make_config(
+            "smart", router=router, completion_kwargs={"mock_response": "hello"}
+        )
+    )
+
+    result = await agent.start("hi", stream=stream)
+
+    prompt, completion = litellm.cost_per_token(
+        model="gpt-4o",
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+    )
+    assert result.cost == pytest.approx(prompt + completion)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "openai/unpriced-model"])
+def test_usage_reads_the_cost_litellm_set(stream, model):
+    """The cost LiteLLM set on the response is used, None included, not recomputed."""
+    from cyclops.core.completion import _usage
+
+    messages = [{"role": "user", "content": "hi"}]
+    response = litellm.completion(
+        model=model, messages=messages, mock_response="hello there", stream=stream
+    )
+    if stream:
+        response = litellm.stream_chunk_builder(list(response), messages=messages)
+
+    with patch("litellm.completion_cost", side_effect=AssertionError):
+        usage = _usage(response)
+
+    assert usage.cost == response._hidden_params["response_cost"]
+    assert (usage.cost is None) == (model == "openai/unpriced-model")
+
+
+@pytest.mark.asyncio
 async def test_token_budget_ends_a_streamed_run():
     session = Session()
     agent = Agent(config=_make_config(max_total_tokens=30), tools=[_make_simple_tool()])
@@ -916,11 +965,17 @@ def test_litellm_callbacks_fire_for_sync_runs():
     events = []
 
     class Recorder(CustomLogger):
-        async def async_log_success_event(self, *args, **kwargs):
-            events.append("success")
+        async def async_log_success_event(
+            self, kwargs, response_obj, start_time, end_time
+        ):
+            # Other tests' logging can finish during this one.
+            if response_obj.choices[0].message.content == "sync callbacks reply":
+                events.append("success")
 
     agent = Agent(config=_make_config())
-    acompletion = functools.partial(litellm.acompletion, mock_response="hi")
+    acompletion = functools.partial(
+        litellm.acompletion, mock_response="sync callbacks reply"
+    )
     with (
         patch.object(litellm, "callbacks", [Recorder()]),
         patch("litellm.acompletion", new=acompletion),
@@ -945,8 +1000,12 @@ def test_litellm_callbacks_fire_when_sync_and_async_runs_alternate():
 
     # LiteLLM skips a CustomLogger whose class name it has already seen.
     class AlternationRecorder(CustomLogger):
-        async def async_log_success_event(self, *args, **kwargs):
-            events.append("success")
+        async def async_log_success_event(
+            self, kwargs, response_obj, start_time, end_time
+        ):
+            # Other tests' logging can finish during this one.
+            if response_obj.choices[0].message.content == "alternating callbacks reply":
+                events.append("success")
 
     agent = Agent(config=_make_config())
 
@@ -959,7 +1018,9 @@ def test_litellm_callbacks_fire_when_sync_and_async_runs_alternate():
                 break
             await asyncio.sleep(0.05)
 
-    acompletion = functools.partial(litellm.acompletion, mock_response="hi")
+    acompletion = functools.partial(
+        litellm.acompletion, mock_response="alternating callbacks reply"
+    )
     with (
         patch.object(litellm, "callbacks", [AlternationRecorder()]),
         patch("litellm.acompletion", new=acompletion),

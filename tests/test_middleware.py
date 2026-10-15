@@ -404,6 +404,15 @@ def test_middleware_runs_for_naive_tool_calls():
     assert call.arguments == {"a": 1, "b": 2}
 
 
+def test_a_run_without_guards_copies_no_history_for_them():
+    agent = Agent(config=_make_config())
+
+    with patch("cyclops.core.run.GuardContext", side_effect=AssertionError):
+        result, _ = _run(agent, [_make_completion_response("Paris.")])
+
+    assert result.content == "Paris."
+
+
 def test_guard_sends_the_model_back():
     async def needs_citation(context):
         if "[1]" not in context.content:

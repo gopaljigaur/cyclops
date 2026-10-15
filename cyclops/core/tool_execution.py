@@ -12,7 +12,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 from cyclops.core.events import ToolCallFinished, ToolCallStarted
 from cyclops.core.hooks import AgentHooks, _tool_call_id
 from cyclops.core.middleware import Deny, ToolCallContext, ToolMiddleware
-from cyclops.core.providers import _tool_message_images_supported
+from cyclops.core.providers import _every_deployment, _takes_tool_message_images
 from cyclops.core.run_state import _Run
 from cyclops.core.types import AgentConfig, DeniedToolCall, ToolCall
 from cyclops.toolkit.types import ToolResult
@@ -251,7 +251,10 @@ class _ToolExecutor:
             self._record_denial(tc.id, tc.function.name, args, rendered)
             content = rendered.content
             images = _images(content)
-            if images and not _tool_message_images_supported(self.config):
+            # Fallback models read the same history, so they must take them too.
+            if images and not _every_deployment(
+                self.config, _takes_tool_message_images, fallbacks=True
+            ):
                 label = f"Images returned by {tc.function.name}:"
                 moved_images += [{"type": "text", "text": label}, *images]
                 content = rendered.text
