@@ -12,11 +12,8 @@ from cyclops.core.providers import (
     _native_schema,
 )
 from cyclops.core.run_state import _Run
-from cyclops.core.tool_execution import _build_tools_prompt
 from cyclops.core.types import AgentConfig, Usage
-from cyclops.skills import Skills
 
-_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 # Cache the system prompt (with the tools before it) and the conversation so far.
 _CACHE_POINTS = [
     {"location": "message", "role": "system"},
@@ -48,19 +45,6 @@ def _completion_kwargs(
     if mode == "native":
         kwargs["tools"] = [_tool_to_openai_format(t) for t in tools]
     return kwargs
-
-
-def _system_prompt(
-    config: AgentConfig, skills: Optional[Skills], tools: List[Any], mode: str
-) -> Optional[str]:
-    """The configured system prompt, plus the skills and, in naive mode, the tools."""
-    system_prompt = config.system_prompt
-    if skills:
-        system_prompt = (system_prompt or _DEFAULT_SYSTEM_PROMPT) + skills.prompt()
-    if mode == "naive":
-        tools_prompt = _build_tools_prompt(tools)
-        system_prompt = (system_prompt or _DEFAULT_SYSTEM_PROMPT) + tools_prompt
-    return system_prompt
 
 
 def _tool_to_openai_format(tool) -> Dict[str, Any]:

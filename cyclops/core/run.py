@@ -10,7 +10,6 @@ from cyclops.core.completion import (
     _build_messages,
     _completion_kwargs,
     _streamed_completion,
-    _system_prompt,
     _usage,
 )
 from cyclops.core.events import (
@@ -25,9 +24,15 @@ from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.middleware import GuardContext
 from cyclops.core.providers import _tools_unsupported
 from cyclops.core.run_state import _Run
-from cyclops.core.tool_execution import _parse_naive_tool_call, _ToolExecutor
+from cyclops.core.tool_execution import (
+    _build_tools_prompt,
+    _parse_naive_tool_call,
+    _ToolExecutor,
+)
 from cyclops.core.types import AgentConfig, RunResult
 from cyclops.skills import Skills
+
+_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 
 class RunHandle:
@@ -87,6 +92,19 @@ class RunHandle:
         self._run.cancelled = True
         if self._run.started:
             self._task.cancel(RUN_STOPPED)
+
+
+def _system_prompt(
+    config: AgentConfig, skills: Optional[Skills], tools: List[Any], mode: str
+) -> Optional[str]:
+    """The configured system prompt, plus the skills and, in naive mode, the tools."""
+    system_prompt = config.system_prompt
+    if skills:
+        system_prompt = (system_prompt or _DEFAULT_SYSTEM_PROMPT) + skills.prompt()
+    if mode == "naive":
+        tools_prompt = _build_tools_prompt(tools)
+        system_prompt = (system_prompt or _DEFAULT_SYSTEM_PROMPT) + tools_prompt
+    return system_prompt
 
 
 def _assistant_message(msg, content: Optional[str]) -> Dict[str, Any]:
