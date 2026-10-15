@@ -16,8 +16,8 @@ class ToolCallContext:
     call_id: Optional[str]
     run_id: str
     annotations: ToolAnnotations = field(default_factory=ToolAnnotations)
-    # Names of the agents that made the call, outermost first; empty until
-    # agents can be nested.
+    # Names of the nested agents the call came from, outermost first; empty
+    # for the agent that was run.
     agent_path: Tuple[str, ...] = ()
 
 
@@ -61,7 +61,7 @@ class GuardContext:
     content: str
     messages: List[Dict[str, Any]]
     run_id: str
-    # Empty until agents can be nested.
+    # Names of the nested agents the answer came from, as in ToolCallContext.
     agent_path: Tuple[str, ...] = ()
 
 

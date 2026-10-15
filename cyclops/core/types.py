@@ -31,6 +31,12 @@ class AgentConfig(BaseModel):
     max_cost: Optional[float] = Field(
         default=None, description="Most USD one run may cost, checked between steps"
     )
+    max_subagent_depth: int = Field(
+        default=5, ge=1, description="Most levels of subagent runs below one run"
+    )
+    max_concurrent_subagents: int = Field(
+        default=10, ge=1, description="Most subagent runs one run has going at once"
+    )
     hooks: Optional[AgentHooks] = None
     middleware: List[ToolMiddleware] = Field(default_factory=list)
     guards: List[Guard] = Field(default_factory=list)
@@ -127,7 +133,8 @@ class RunResult(BaseModel):
     steps: int = Field(default=0, description="LLM completions made in the run")
     usage: Optional[Usage] = Field(
         default_factory=Usage,
-        description="Summed over every completion; None if one reported no usage",
+        description="Summed over every completion, nested runs included; None if "
+        "one reported no usage",
     )
     error: Optional[Exception] = Field(
         default=None, exclude=True, description="What ended the run with 'error'"

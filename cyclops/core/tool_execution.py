@@ -284,6 +284,7 @@ class _ToolExecutor:
             call_id=call_id,
             run_id=self.run.result.run_id,
             annotations=tool.annotations,
+            agent_path=self.run.agent_path,
         )
         middleware = list(self.config.middleware)
         if self.config.hooks:

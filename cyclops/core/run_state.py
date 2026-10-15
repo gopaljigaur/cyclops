@@ -1,41 +1,83 @@
 """A run in progress: the state its step loop shares, and the RunHandle its caller holds."""
 
 import asyncio
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple
 
 from cyclops.core.events import Event, RunFinished
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.session import Session
-from cyclops.core.types import RunResult
+from cyclops.core.types import AgentConfig, RunResult, Usage
 
 
 class _Run:
-    """One run in progress: its transcript, result so far, events and steering."""
+    """One run in progress: its transcript, result so far, events and steering.
+
+    A run nested in another (a subagent's) shares the outermost run's events
+    and pacing, and counts its usage in every run above it.
+    """
 
     def __init__(
         self,
-        model: str,
+        config: AgentConfig,
         history: List[Dict[str, Any]],
         session: Optional[Session],
         paced: bool = False,
+        parent: Optional["_Run"] = None,
+        name: str = "",
     ) -> None:
-        self.result = RunResult(model=model)
+        self.config = config
+        self.result = RunResult(model=config.model)
         self.history = history
         self.session = session
-        self.events: asyncio.Queue = asyncio.Queue()
-        # True for astream_events, whose caller takes the events as they come.
-        self.paced = paced
+        self.parent = parent
+        self.agent_path: Tuple[str, ...] = ()
+        self.events: asyncio.Queue
+        if parent is None:
+            self.events = asyncio.Queue()
+            # True for astream_events, whose caller takes the events as they come.
+            self.paced = paced
+        else:
+            self.agent_path = parent.agent_path + (name,)
+            self.events = parent.events
+            self.paced = parent.paced
         self.steering: List[str] = []
         self.started = False
         self.cancelled = False
+        # Budgets count what is known, even once the reported totals are not.
+        self.spent_tokens = 0
+        self.spent_cost = 0.0
 
     def emit(self, event: Event) -> None:
+        if self.agent_path:
+            event = event.model_copy(update={"agent_path": self.agent_path})
         self.events.put_nowait(event)
 
     async def taken(self) -> None:
         """When paced, wait until the caller has taken every event emitted so far."""
         if self.paced:
             await self.events.join()
+
+    def spend(self, usage: Optional[Usage]) -> None:
+        """Count one completion in this run and every run it is nested in."""
+        if usage is not None:
+            self.spent_tokens += usage.total_tokens
+            self.spent_cost += usage.cost or 0.0
+        if self.result.usage is None or usage is None:
+            self.result.usage = None
+        else:
+            self.result.usage += usage
+        if self.parent is not None:
+            self.parent.spend(usage)
+
+    def over_budget(self) -> bool:
+        """True once this run or one it is nested in reached its token or cost limit."""
+        max_tokens = self.config.max_total_tokens
+        if max_tokens is not None and self.spent_tokens >= max_tokens:
+            return True
+        max_cost = self.config.max_cost
+        if max_cost is not None and self.spent_cost >= max_cost:
+            return True
+        return self.parent is not None and self.parent.over_budget()
 
 
 class RunHandle:
@@ -68,7 +110,7 @@ class RunHandle:
                 self._task.result()
             yield event
             events.task_done()
-            if isinstance(event, RunFinished):
+            if isinstance(event, RunFinished) and not event.agent_path:
                 return
 
     def steer(self, message: str) -> None:

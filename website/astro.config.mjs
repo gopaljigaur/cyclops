@@ -34,6 +34,7 @@ export default defineConfig({
           items: [
             { label: 'Agents', slug: 'guides/agents' },
             { label: 'Tools', slug: 'guides/tools' },
+            { label: 'Subagents', slug: 'guides/subagents' },
             { label: 'Streaming', slug: 'guides/streaming' },
             { label: 'Structured Output', slug: 'guides/structured-output' },
             { label: 'Sessions', slug: 'guides/sessions' },

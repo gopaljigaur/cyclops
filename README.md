@@ -64,6 +64,7 @@ print(agent.run("What is Apple's stock price?"))
 | | |
 |---|---|
 | **Tool loop** | Calls tools in a loop until the model stops asking for them, not just one round |
+| **Subagents** | `agent.as_tool()` lets one agent delegate tasks to others, with shared cancellation, events and budgets |
 | **Streaming** | `agent.stream()` and `agent.astream()` for token-by-token output |
 | **Structured output** | `agent.run(..., response_model=MyModel)` returns a Pydantic instance |
 | **Cost tracking** | `agent.run_with_response()` returns tokens used and estimated cost |
@@ -286,6 +287,7 @@ See the [`examples/`](./examples) directory:
 | [`skills_example.py`](examples/skills_example.py) | Skills from `SKILL.md` folders |
 | [`memory_persistence.py`](examples/memory_persistence.py) | FileStorage |
 | [`async_agent.py`](examples/async_agent.py) | `arun()` and concurrent calls |
+| [`subagents.py`](examples/subagents.py) | Agents as tools with `as_tool()` |
 | [`different_llms.py`](examples/different_llms.py) | Groq, Ollama, OpenAI, Together AI |
 | [`router_fallback.py`](examples/router_fallback.py) | Automatic failover |
 | [`mcp_server.py`](examples/mcp_server.py) | Expose tools via MCP |

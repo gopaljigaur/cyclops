@@ -20,6 +20,14 @@ Demonstrates the `@tool` decorator with three tools: `get_time` (no parameters),
 
 ---
 
+## subagents.py
+
+**Path:** `examples/subagents.py`
+
+A lead agent with two subagents as tools, made with `as_tool()`: a researcher with a lookup tool and a writer. Streams the run's events and labels each tool call with the `agent_path` of the agent that made it, then prints the answer and the tokens used by all three agents.
+
+---
+
 ## async_agent.py
 
 **Path:** `examples/async_agent.py`

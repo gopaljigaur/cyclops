@@ -22,11 +22,25 @@ class Agent:
 
 Every run method takes a keyword-only `session: Optional[Session] = None`.
 
-**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `reset`
+**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `as_tool`, `reset`
+
+`as_tool(name, description) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
 
 **Properties:** `messages`
 
 See [Agents guide](guide/agents.md) for full documentation.
+
+---
+
+### AgentTool
+
+`cyclops.core.subagents`: the tool `Agent.as_tool()` returns. See [Subagents](guide/subagents.md).
+
+```python
+class AgentTool(BaseTool):
+    agent: Agent
+    async def execute(self, input: str) -> Any: ...
+```
 
 ---
 
@@ -45,6 +59,8 @@ class AgentConfig(BaseModel):
     max_steps: int = 10
     max_total_tokens: Optional[int] = None
     max_cost: Optional[float] = None   # USD
+    max_subagent_depth: int = 5
+    max_concurrent_subagents: int = 10
     hooks: Optional[AgentHooks] = None
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool = False

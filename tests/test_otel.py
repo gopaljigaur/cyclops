@@ -281,6 +281,29 @@ async def test_naive_fallback_inside_a_tool_keeps_the_trace(hooks, exporter):
     _assert_context_clean()
 
 
+async def test_agent_as_tool_nests_its_spans_under_the_tool(hooks, exporter):
+    inner = Agent(AgentConfig(model="gpt-4o-mini", hooks=hooks))
+    outer = Agent(
+        AgentConfig(model="gpt-4o-mini", hooks=hooks),
+        tools=[inner.as_tool("ask", "Ask the inner agent")],
+    )
+    responses = [
+        _response(tool_calls=[_tool_call("call-1", "ask", '{"input": "q"}')]),
+        _response(content="inner answer"),
+        _response(content="outer answer"),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        assert await outer.arun("go") == "outer answer"
+
+    spans = exporter.get_finished_spans()
+    outer_root, inner_root = sorted(_roots(spans), key=lambda s: s.start_time)
+    (ask_span,) = [s for s in spans if s.name == "execute_tool ask"]
+    assert ask_span.parent.span_id == outer_root.context.span_id
+    assert inner_root.parent.span_id == ask_span.context.span_id
+    assert [s.name for s in _children(spans, inner_root)] == ["chat"]
+    _assert_context_clean()
+
+
 async def test_cancelled_tool_ends_its_span(hooks, exporter):
     started = asyncio.Event()
 

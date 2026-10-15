@@ -1,6 +1,7 @@
 """The step loop of a run: completions, tool calls, guards and limits."""
 
 import asyncio
+from contextvars import ContextVar
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -90,6 +91,8 @@ class _RunLoop:
         """Run one turn and emit its events, ending with RunFinished."""
         run = self.run
         run.started = True
+        # Tools called in this run see it, so a subagent can nest its run in it.
+        token = _current_loop.set(self)
         try:
             if run.cancelled:
                 # Cancelled before the task started: no hooks, no completion.
@@ -102,6 +105,8 @@ class _RunLoop:
         except Exception as e:
             run.result.stop_reason = "error"
             run.result.error = e
+        finally:
+            _current_loop.reset(token)
         session = run.session
         if session is not None:
             # Unknown once any run's usage is unknown, like a run's own total.
@@ -151,15 +156,13 @@ class _RunLoop:
         system_prompt = _system_prompt(self.config, agent.skills, agent.tools, mode)
         executor = _ToolExecutor(self.config, agent._tools_by_name, run)
 
-        # Limits count what is known, even once the reported totals are not.
-        spent_tokens, spent_cost = 0, 0.0
         guard_rounds = 0
         # Guard feedback waiting to be sent once another step is allowed.
         feedback: Optional[str] = None
         limit = self.config.max_steps
         for step in range(limit):
             await run.taken()
-            if step and self._over_budget(spent_tokens, spent_cost):
+            if run.over_budget():
                 result.stop_reason = "budget"
                 return
             if feedback is not None:
@@ -184,13 +187,7 @@ class _RunLoop:
             del run.steering[:steered]
             result.steps += 1
             step_usage = _usage(response)
-            if step_usage is not None:
-                spent_tokens += step_usage.total_tokens
-                spent_cost += step_usage.cost or 0.0
-            if result.usage is None or step_usage is None:
-                result.usage = None
-            else:
-                result.usage += step_usage
+            run.spend(step_usage)
             msg = response.choices[0].message
             content = msg.content or ""
             assistant = _assistant_message(msg, msg.content)
@@ -206,11 +203,7 @@ class _RunLoop:
                 await executor.run_native_tool_calls(msg, assistant)
             elif naive_call:
                 await executor.run_naive_tool_call(naive_call)
-            elif (
-                run.steering
-                and step + 1 < limit
-                and not self._over_budget(spent_tokens, spent_cost)
-            ):
+            elif run.steering and step + 1 < limit and not run.over_budget():
                 # A steer came in while the model answered: answer it in the
                 # next step. Guards judge the answer the run ends on.
                 assistant["content"] = content
@@ -234,22 +227,23 @@ class _RunLoop:
 
         result.stop_reason = "max_steps"
 
-    def _over_budget(self, tokens: int, cost: float) -> bool:
-        """True once tokens or cost reached max_total_tokens or max_cost."""
-        max_tokens = self.config.max_total_tokens
-        if max_tokens is not None and tokens >= max_tokens:
-            return True
-        max_cost = self.config.max_cost
-        return max_cost is not None and cost >= max_cost
-
     async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""
         run = self.run
         context = GuardContext(
-            content=content, messages=list(run.history), run_id=run.result.run_id
+            content=content,
+            messages=list(run.history),
+            run_id=run.result.run_id,
+            agent_path=run.agent_path,
         )
         for guard in self.config.guards:
             feedback = await guard(context)
             if feedback is not None:
                 return feedback
         return None
+
+
+# The loop of the run in progress in this context.
+_current_loop: ContextVar[Optional[_RunLoop]] = ContextVar(
+    "cyclops_current_loop", default=None
+)

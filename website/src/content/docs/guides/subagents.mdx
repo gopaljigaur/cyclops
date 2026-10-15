@@ -1,0 +1,59 @@
+---
+title: Subagents
+description: Let an agent delegate tasks to other agents.
+---
+
+import exampleSrc from '../../../../../examples/subagents.py?raw';
+import { Code } from '@astrojs/starlight/components';
+
+An agent can delegate work to other agents, each with its own system prompt, tools and model. `agent.as_tool(name, description)` turns an agent into a tool (an `AgentTool`) that another agent calls with a task; the tool runs the agent on that task and returns its final answer.
+
+```python
+from cyclops import Agent, AgentConfig
+
+researcher = Agent(
+    AgentConfig(model="gpt-4o-mini", system_prompt="Answer questions about cities."),
+    tools=[lookup_population],
+)
+writer = Agent(
+    AgentConfig(model="gpt-4o", system_prompt="Turn notes into a short paragraph.")
+)
+
+lead = Agent(
+    AgentConfig(model="gpt-4o", system_prompt="Ask the researcher, then the writer."),
+    tools=[
+        researcher.as_tool("researcher", "Answers factual questions about cities"),
+        writer.as_tool("writer", "Writes notes up as a short paragraph"),
+    ],
+)
+
+print(lead.run("Compare the populations of Paris and Berlin."))
+```
+
+The tool takes one string argument, `input`, the task, so the model has to put everything the subagent needs into it: each call is a run of its own with a fresh transcript, and it doesn't see the lead's conversation. A subagent's runs leave its own history (`messages`) untouched.
+
+## Inside the parent's run
+
+A call from another agent's run nests the subagent's run in it:
+
+- **Results.** A run that completes gives its `content` as the tool result. A run that raises gives an error result, as a failing tool does (`researcher failed: ...`); one that stops on `max_steps`, `budget` or `guard` gives `researcher stopped without an answer: <reason>`.
+- **Concurrency.** Several subagent calls in one step run concurrently, like other async tools, including several calls to the same subagent. `AgentConfig.max_concurrent_subagents` (default `10`) caps how many subagent runs one run has going at once; further calls wait for a slot.
+- **Depth.** `AgentConfig.max_subagent_depth` (default `5`) caps how many levels of subagent runs may sit below a run of that agent, which also stops an agent that ends up calling itself. Each run's limit applies to the runs below it; a call past a limit gives an error result and the subagent doesn't run.
+- **Cancellation.** Cancelling the parent run (`RunHandle.cancel()`, or closing its event stream) cancels the subagent's run; its tool calls get a cancelled result and so does the subagent's own call.
+- **Events.** The subagent's events go to the parent's event stream with `agent_path` extended by the tool name: `("researcher",)` for the researcher's events, `("researcher", "checker")` for an agent the researcher calls in turn. Its `RunFinished` is forwarded too, so filter on `agent_path` to find the parent's last event. `astream()` and `stream()` yield only the text of the agent you ran. The subagent's run streams when the parent's does.
+- **Usage and budgets.** The subagent's usage counts in its own `RunResult` and in every run it is nested in, so the parent's `usage` covers all of them and its `max_total_tokens` and `max_cost` apply to all of them. A subagent checks its own limits and those of every run above it before each step, its first included, so it stops with `budget` once the parent's budget is spent, and a call made or waiting for a slot after that makes no completion. `steps` and `StepFinished.usage` count only an agent's own completions. `Usage` has no per-model breakdown yet, so a parent and subagents on different models are summed together.
+- **Middleware and guards.** The subagent's tool calls go through its own `AgentConfig.middleware`, and its answers through its own guards. Their `ToolCallContext.agent_path` and `GuardContext.agent_path` hold the nested path, so middleware shared between agents can tell the calls apart. The parent's middleware sees the subagent call itself, like any other tool call.
+- **Hooks and tracing.** Each agent fires its own hooks. With `TelemetryHooks`, the subagent's `invoke_agent` span is a child of the parent's `execute_tool` span.
+
+```python
+async for event in lead.astream_events("Compare the populations of Paris and Berlin."):
+    who = "/".join(event.agent_path) or "lead"
+    if isinstance(event, ToolCallStarted):
+        print(f"[{who}] calls {event.name}: {event.arguments}")
+```
+
+A subagent tool called outside any run, such as `await tool.execute(input="...")`, runs the agent on its own.
+
+## Full example
+
+<Code code={exampleSrc} lang="python" title="examples/subagents.py" />

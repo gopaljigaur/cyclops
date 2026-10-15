@@ -31,6 +31,7 @@ class Agent:
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
 | `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
 | `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
+| `as_tool` | `as_tool(name: str, description: str) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
 | `reset` | `reset() -> None` | Clear the history of runs without a session. |
 
 **Properties**
@@ -38,6 +39,18 @@ class Agent:
 | Property | Type | Description |
 |---|---|---|
 | `messages` | `List[Dict[str, Any]]` | Shallow copy of the current conversation history. |
+
+---
+
+### AgentTool
+
+`cyclops.core.subagents`: the tool `Agent.as_tool()` returns. See [Subagents](/guides/subagents/).
+
+```python
+class AgentTool(BaseTool):
+    agent: Agent
+    async def execute(self, input: str) -> Any: ...
+```
 
 ---
 
@@ -56,6 +69,8 @@ class AgentConfig(BaseModel):
     max_steps: int = 10
     max_total_tokens: Optional[int] = None
     max_cost: Optional[float] = None   # USD
+    max_subagent_depth: int = 5
+    max_concurrent_subagents: int = 10
     hooks: Optional[AgentHooks] = None
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
@@ -73,6 +88,8 @@ class AgentConfig(BaseModel):
 | `max_steps` | `10` | Most LLM completions per run. |
 | `max_total_tokens` | `None` | Most tokens per run, checked between steps. |
 | `max_cost` | `None` | Most USD per run, checked between steps. |
+| `max_subagent_depth` | `5` | Most levels of subagent runs below one run. |
+| `max_concurrent_subagents` | `10` | Most subagent runs one run has going at once. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |

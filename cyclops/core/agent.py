@@ -8,6 +8,7 @@ from cyclops.core.events import Event, RunFinished, TextDelta
 from cyclops.core.run import _RunLoop
 from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Session
+from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.types import AgentConfig, RunResult
 from cyclops.skills import Skills
@@ -136,6 +137,8 @@ class Agent:
             self.astream_events(input_message, session=session)
         ) as events:
             async for event in events:
+                if event.agent_path:
+                    continue
                 if isinstance(event, TextDelta):
                     yield event.text
                 elif isinstance(event, RunFinished) and event.result.error is not None:
@@ -172,6 +175,13 @@ class Agent:
             handle.cancel()
             await asyncio.wait([task])
 
+    def as_tool(self, name: str, description: str) -> AgentTool:
+        """This agent as a tool that runs it on an input and returns its answer.
+
+        See AgentTool for how its runs nest in the calling agent's run.
+        """
+        return AgentTool(self, name, description)
+
     def _start(
         self,
         input_message: str,
@@ -183,7 +193,7 @@ class Agent:
     ) -> Tuple[_Run, "asyncio.Task[RunResult]"]:
         """Create a run and start its task on the running event loop."""
         history = self._history if session is None else session.messages
-        run = _Run(self.config.model, history, session, paced)
+        run = _Run(self.config, history, session, paced)
         task = asyncio.get_running_loop().create_task(
             _RunLoop(self, run, stream, response_model).execute(input_message)
         )
