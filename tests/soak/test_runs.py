@@ -94,7 +94,8 @@ async def failure():
 
 
 _store = InMemorySessionStore()
-_session_agent = agent()
+# Saves each session to the store as it runs, by default in the background.
+_session_agent = Agent(AgentConfig(model=MODEL), tools=[add], session_store=_store)
 _turns = itertools.count()
 
 
@@ -102,9 +103,8 @@ async def sessions():
     # One long lived agent; the caller keeps 50 conversations and trims them.
     session_id = f"s{next(_turns) % 50}"
     session = await _store.load(session_id) or Session(id=session_id)
-    await _session_agent.arun("hi", session=session)
     session.messages = session.messages[-20:]
-    await _store.save(session)
+    await _session_agent.arun("hi", session=session)
 
 
 _exporter = InMemorySpanExporter()
@@ -133,13 +133,7 @@ SUCCEEDING = [
     tools,
     streaming,
     early_close,
-    pytest.param(
-        abandoned_generator,
-        id="abandoned_generator",
-        marks=pytest.mark.xfail(
-            strict=True, reason="#103: an abandoned stream leaves a worker thread"
-        ),
-    ),
+    abandoned_generator,
     cancel_mid_tool,
     sessions,
     telemetry,
