@@ -22,6 +22,7 @@ from cyclops.core.types import (
     ToolCall,
     Usage,
 )
+from cyclops.core.tool_results import InMemoryToolResultStore, ToolResultStore
 from cyclops.core.session import (
     FileSessionStore,
     InMemorySessionStore,
@@ -50,6 +51,8 @@ __all__ = [
     "StreamIdleTimeout",
     "InMemorySessionStore",
     "FileSessionStore",
+    "ToolResultStore",
+    "InMemoryToolResultStore",
     "RunResult",
     "ToolCall",
     "Usage",

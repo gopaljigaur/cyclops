@@ -13,6 +13,12 @@ from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
+from cyclops.core.tool_results import (
+    READ_TOOL_NAME,
+    ToolResultStore,
+    _limits_output,
+    _ToolResults,
+)
 from cyclops.core.tool_search import SEARCH_TOOL_NAME, _ToolSearch
 from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage, _added
 from cyclops.skills import Skills
@@ -30,11 +36,14 @@ class Agent:
         *,
         session_store: Optional[SessionStore] = None,
         durability: Durability = "async",
+        tool_result_store: Optional[ToolResultStore] = None,
     ):
         self.config = config
         # Runs with a session save it here as durability says.
         self.session_store = session_store
         self.durability = durability
+        # Runs keep tool results past their limit here; None keeps them in memory.
+        self.tool_result_store = tool_result_store
         self.tools = (tools or []) + ([skills.tool] if skills else [])
         self.skills = skills
         self._tools_by_name: Dict[str, Any] = {}
@@ -46,6 +55,8 @@ class Agent:
             t.defer_loading for t in self.tools
         ):
             raise ValueError(f"'{SEARCH_TOOL_NAME}' is taken by the search tool")
+        if READ_TOOL_NAME in self._tools_by_name and _limits_output(config, self.tools):
+            raise ValueError(f"'{READ_TOOL_NAME}' is taken by the tool result reader")
         # Set to "naive" once this agent's model rejects native tool calling.
         self._detected_tool_mode: Optional[str] = None
 
@@ -210,7 +221,7 @@ class Agent:
 
         mode = self._get_tool_mode()
         # The tools a run starts with: deferred ones only once found.
-        loaded = _ToolSearch(self.tools, self._tools_by_name).loaded
+        loaded = self._run_tools(_ToolResults(None)).loaded
         compaction = self.config.compaction or Compaction()
         window = _compaction_window(self.config, compaction, spend)
         tools = None
@@ -251,6 +262,14 @@ class Agent:
             _RunLoop(self, run, stream, response_model).execute(content)
         )
         return run, task
+
+    def _run_tools(self, results: _ToolResults) -> _ToolSearch:
+        """The tools of a run: the agent's, and the reader when output is limited."""
+        tools, by_name = self.tools, self._tools_by_name
+        if _limits_output(self.config, tools):
+            tools = [*tools, results.tool]
+            by_name = {**by_name, READ_TOOL_NAME: results.tool}
+        return _ToolSearch(tools, by_name)
 
     def _get_tool_mode(self) -> str:
         if not self.tools:
