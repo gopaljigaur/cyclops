@@ -135,7 +135,7 @@ async for event in agent.astream_events("What is 2 + 3?"):
 
 Every event has `agent_path`, the names of the nested agents it came from, outermost first. It is empty for events of the agent you ran; events of a [subagent](subagents.md) carry its tool name, and its `RunFinished` comes before the outer run's.
 
-A failed run doesn't raise from `astream_events()`: it ends with `RunFinished` whose result has `stop_reason="error"`. `astream()` and `stream()` yield only the text of the agent you ran and raise its error. The run waits for you to take each event before it goes on, so a loop you `break` out of holds the run where it is. Closing the iterator (or leaving an `aclosing()` block) cancels the run; tool calls in progress get a cancelled result so the conversation stays valid. If a tool or hook raises `CancelledError`, the iterator raises it too.
+A failed run doesn't raise from `astream_events()`: it ends with `RunFinished` whose result has `stop_reason="error"`. `astream()` and `stream()` yield only the text of the agent you ran and raise its error. The run waits for you to take its events: within a completion it gets at most 16 text or reasoning deltas ahead of you, and it starts no tool call or completion until you have taken every event before it, so a loop you `break` out of holds the run. Closing the iterator (or leaving an `aclosing()` block) cancels the run; tool calls in progress get a cancelled result so the conversation stays valid. If a tool or hook raises `CancelledError`, the iterator raises it too.
 
 ## Building a streaming HTTP endpoint
 

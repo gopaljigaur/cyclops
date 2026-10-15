@@ -189,6 +189,10 @@ async def _astream_completion(
         await response.aclose()
 
 
+# Deltas a paced run emits before it waits for the caller to take them.
+_READ_AHEAD = 16
+
+
 async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run):
     """Stream a completion, emitting its deltas, and build the whole response.
 
@@ -214,7 +218,7 @@ async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run)
                     if delta and delta.content:
                         emitted = True
                         run.emit(TextDelta(text=delta.content))
-                    await run.taken()
+                    await run.taken(ahead=_READ_AHEAD)
         except StreamIdleTimeout:
             if emitted or stalled:
                 raise
@@ -226,6 +230,8 @@ async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run)
             retries += 1
             await asyncio.sleep(delay)
         else:
+            # The step's tool calls and the next completion wait for the caller.
+            await run.taken()
             return litellm.stream_chunk_builder(chunks, messages=messages)
 
 

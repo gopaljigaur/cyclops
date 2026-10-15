@@ -89,6 +89,26 @@ def test_answer_is_the_tool_result():
     assert child.messages == []
 
 
+@pytest.mark.asyncio
+async def test_awaited_run_keeps_no_subagent_events():
+    lead, _ = _agents()
+    calls = [_call("researcher", f"find {i}", id=f"tc_{i}") for i in range(20)]
+    acompletion, _ = _scripted(
+        {
+            "lead": [_asks(*calls), _make_completion("done")],
+            "child": [_make_completion(f"found {i}") for i in range(20)],
+        }
+    )
+    with patch("litellm.acompletion", new=acompletion):
+        handle = lead.start("find them all", stream=False)
+        await handle
+        events = [e async for e in handle]
+
+    assert not any(e.agent_path for e in events)
+    # A start and a finish per call, then two steps, the answer and RunFinished.
+    assert len(events) == 2 * 20 + 4
+
+
 def test_failed_run_gives_an_error_result():
     lead, _ = _agents()
     error = litellm.BadRequestError(
