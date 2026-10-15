@@ -209,12 +209,14 @@ class TelemetryHooks(AgentHooks):
         if reasons:
             span.set_attribute("gen_ai.response.finish_reasons", reasons)
         usage = getattr(response, "usage", None)
-        details = getattr(usage, "prompt_tokens_details", None)
+        prompt = getattr(usage, "prompt_tokens_details", None)
+        completion = getattr(usage, "completion_tokens_details", None)
         for attr, source, field in (
             ("gen_ai.usage.input_tokens", usage, "prompt_tokens"),
             ("gen_ai.usage.output_tokens", usage, "completion_tokens"),
-            ("gen_ai.usage.cache_read.input_tokens", details, "cached_tokens"),
-            ("gen_ai.usage.cache_creation.input_tokens", details, "cache_write_tokens"),
+            ("gen_ai.usage.cache_read.input_tokens", prompt, "cached_tokens"),
+            ("gen_ai.usage.cache_write.input_tokens", prompt, "cache_write_tokens"),
+            ("gen_ai.usage.reasoning.output_tokens", completion, "reasoning_tokens"),
         ):
             value = getattr(source, field, None)
             if isinstance(value, int):

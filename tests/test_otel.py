@@ -207,12 +207,13 @@ def test_llm_attributes_follow_genai_conventions(hooks, exporter):
     assert "gen_ai.usage.cache_read.input_tokens" not in chat.attributes
 
 
-def test_llm_span_has_cache_tokens(hooks, exporter):
+def test_llm_span_has_cache_and_reasoning_tokens(hooks, exporter):
     response = litellm.ModelResponse(
         usage=litellm.Usage(
             prompt_tokens=1600,
             completion_tokens=20,
             total_tokens=1620,
+            reasoning_tokens=15,
             cache_creation_input_tokens=1000,
             cache_read_input_tokens=500,
         )
@@ -224,8 +225,9 @@ def test_llm_span_has_cache_tokens(hooks, exporter):
 
     chat = next(s for s in exporter.get_finished_spans() if s.name == "chat")
     assert chat.attributes["gen_ai.usage.input_tokens"] == 1600
-    assert chat.attributes["gen_ai.usage.cache_creation.input_tokens"] == 1000
+    assert chat.attributes["gen_ai.usage.cache_write.input_tokens"] == 1000
     assert chat.attributes["gen_ai.usage.cache_read.input_tokens"] == 500
+    assert chat.attributes["gen_ai.usage.reasoning.output_tokens"] == 15
 
 
 def _assert_context_clean():
