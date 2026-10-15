@@ -11,9 +11,9 @@ import time
 import weakref
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
-from mcp import types as mt
+from mcp import Client, types as mt
 from mcp.client.session import ClientSession
 
 from cyclops.mcp import (
@@ -88,7 +88,7 @@ class TestStdio:
     async def test_input_schema_is_passed_through(self, mcp):
         tool = _tool(mcp, "demo__distance")
         schema = tool.definition.to_json_schema()
-        assert schema == tool.tool.inputSchema
+        assert schema == tool.tool.input_schema
         assert "$defs" in schema
         result = await tool.execute(points=[{"x": 0, "y": 0}, {"x": 3, "y": 4}])
         assert result.to_message_content() == "5.0"
@@ -110,7 +110,7 @@ class TestStdio:
             await client.attach("demo", COMMAND, call_timeout=0.5)
             result = await _tool(client, "demo__slow").execute(seconds=5)
         assert result.success is False
-        assert "Timed out" in result.error
+        assert "timed out" in result.error
 
     async def test_reconnects_after_server_exits_mid_call(self, mcp):
         first = (await _tool(mcp, "demo__pid").execute()).to_message_content()
@@ -148,9 +148,17 @@ class TestResilience:
             await client.attach("demo", COMMAND, call_timeout=2)
             slow = await _tool(client, "demo__slow").execute(seconds=10)
             add = await _tool(client, "demo__add").execute(a=1, b=2)
-            assert "Timed out" in slow.error
+            assert "timed out" in slow.error
             assert add.to_message_content() == "3"
             assert client.status("demo").state == "connected"
+
+    async def test_timed_out_call_stops_the_server_tool(self):
+        async with MCPClient() as client:
+            await client.attach("demo", COMMAND, call_timeout=0.3)
+            await _tool(client, "demo__slow").execute(seconds=1)
+            await asyncio.sleep(1.5)
+            finished = await _tool(client, "demo__slow_finished").execute()
+            assert finished.to_message_content() == "0"
 
     async def test_idle_session_closes_and_reopens_on_next_call(self):
         async with MCPClient() as client:
@@ -253,6 +261,22 @@ async def test_restarted_http_server_gets_a_new_session():
             add = await _tool(client, "remote__add").execute(a=1, b=1)
             assert add.to_message_content() == "2"
             assert client.status("remote") == ServerStatus("connected")
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+async def test_timed_out_call_is_not_retried_after_another_404():
+    port = _free_port()
+    proc = _start("no-get", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach("remote", url=_url("no-get", port), call_timeout=1)
+            slow = await _tool(client, "remote__slow").execute(seconds=2)
+            await asyncio.sleep(0.5)
+            started = await _tool(client, "remote__slow_started").execute()
+        assert "timed out" in slow.error
+        assert started.to_message_content() == "1"
     finally:
         proc.kill()
         proc.wait()
@@ -586,7 +610,7 @@ async def test_http_transports_send_headers(http_server):
     assert header.to_message_content() == "hi"
 
 
-class _Bearer(httpx.Auth):
+class _Bearer(httpx2.Auth):
     def auth_flow(self, request):
         request.headers["Authorization"] = "Bearer token"
         yield request
@@ -628,7 +652,7 @@ def test_to_tool_result_mixed_content():
         mt.CallToolResult(
             content=[
                 mt.TextContent(type="text", text="see"),
-                mt.ImageContent(type="image", data="AAAA", mimeType="image/png"),
+                mt.ImageContent(type="image", data="AAAA", mime_type="image/png"),
             ]
         )
     )
@@ -641,7 +665,7 @@ def test_to_tool_result_mixed_content():
 def test_to_tool_result_error_keeps_text():
     result = to_tool_result(
         mt.CallToolResult(
-            content=[mt.TextContent(type="text", text="bad input")], isError=True
+            content=[mt.TextContent(type="text", text="bad input")], is_error=True
         )
     )
     assert result == ToolResult.error_result("bad input")
@@ -702,7 +726,7 @@ class TestMCPSchemaToParams:
 
 
 def test_to_tool_result_structured_only():
-    result = to_tool_result(mt.CallToolResult(content=[], structuredContent={"a": 1}))
+    result = to_tool_result(mt.CallToolResult(content=[], structured_content={"a": 1}))
     assert result.result == {"a": 1}
     assert result.to_message_content() == '{"a": 1}'
 
@@ -730,20 +754,18 @@ async def test_server_serves_tool_results():
     )
     server.add_function_tool("data", "A dict", lambda: {"a": 1})
 
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    async with create_connected_server_and_client_session(server.server) as session:
-        failed = await session.call_tool("explode", {})
-        ok = await session.call_tool("echo", {"text": "hi"})
-        refused = await session.call_tool("refuse", {})
-        photo = await session.call_tool("photo", {})
-        data = await session.call_tool("data", {})
-    assert failed.isError is True
+    async with Client(server.server) as client:
+        failed = await client.call_tool("explode", {})
+        ok = await client.call_tool("echo", {"text": "hi"})
+        refused = await client.call_tool("refuse", {})
+        photo = await client.call_tool("photo", {})
+        data = await client.call_tool("data", {})
+    assert failed.is_error is True
     assert "nope" in failed.content[0].text
-    assert ok.isError is False
+    assert ok.is_error is False
     assert ok.content[0].text == "hi"
-    assert refused.isError is True
+    assert refused.is_error is True
     assert refused.content[0].text == "denied"
     assert [c.type for c in photo.content] == ["text", "image"]
-    assert photo.content[1].mimeType == "image/png"
+    assert photo.content[1].mime_type == "image/png"
     assert data.content[0].text == '{"a": 1}'

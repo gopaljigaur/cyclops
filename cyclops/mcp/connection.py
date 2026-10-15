@@ -5,23 +5,32 @@ import contextlib
 import logging
 import random
 import sys
+from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+)
 
 import anyio
-import httpx
-from mcp import McpError
+import httpx2
+from mcp import MCPError
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
+from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp.types import (
     CONNECTION_CLOSED,
     CallToolResult,
-    ErrorData,
-    ServerNotification,
+    PaginatedRequestParams,
     Tool,
     ToolListChangedNotification,
 )
@@ -38,10 +47,6 @@ State = Literal["connecting", "connected", "disconnected", "failed"]
 
 # The TypeScript SDK's default request timeout.
 DEFAULT_CALL_TIMEOUT = 60.0
-
-# What the SDK's streamable HTTP client reports when the server no longer knows
-# the session id, as after a restart; the request was not run.
-SESSION_TERMINATED = 32600
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,43 @@ def _cause(error: BaseException) -> BaseException:
     return error
 
 
+@dataclass
+class _Attempt:
+    """One attempt at a call; ``refused`` once the server answers it 404."""
+
+    refused: bool = False
+
+
+# The call attempt of the running task; its requests carry this context.
+_attempt: ContextVar[Optional[_Attempt]] = ContextVar("_attempt", default=None)
+
+
+async def _flag_refused(response: httpx2.Response) -> None:
+    # The spec's sign that the server no longer knows the session, as after a
+    # restart: a 404 to a request that carried its id. That request was not run.
+    attempt = _attempt.get()
+    if (
+        attempt is not None
+        and response.status_code == 404
+        and "mcp-session-id" in response.request.headers
+    ):
+        attempt.refused = True
+
+
+class _Dispatcher(JSONRPCDispatcher):
+    """Calls ``on_end`` once the transport's read stream ends."""
+
+    def __init__(self, read: Any, write: Any, on_end: Callable[[], None]) -> None:
+        super().__init__(read, write)
+        self.on_end = on_end
+
+    async def run(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            await super().run(*args, **kwargs)
+        finally:
+            self.on_end()
+
+
 class _Connection:
     """One server session, owned by a background task on the client's loop.
 
@@ -100,7 +142,7 @@ class _Connection:
         url: Optional[str],
         env: Optional[Dict[str, str]],
         headers: Optional[Dict[str, str]],
-        auth: Optional[httpx.Auth],
+        auth: Optional[httpx2.Auth],
         connect_timeout: float,
         call_timeout: Optional[float],
         idle_timeout: Optional[float],
@@ -141,17 +183,14 @@ class _Connection:
         elif self.transport == "http":
             assert self.url
             # A call holds its POST open until the result; call_timeout bounds it.
-            timeout = httpx.Timeout(self.connect_timeout, read=None)
+            timeout = httpx2.Timeout(self.connect_timeout, read=None)
             http = create_mcp_http_client(
                 headers=self.headers, timeout=timeout, auth=self.auth
             )
+            http.event_hooks["response"].append(_flag_refused)
             async with (
                 http,
-                streamable_http_client(self.url, http_client=http) as (
-                    read,
-                    write,
-                    _,
-                ),
+                streamable_http_client(self.url, http_client=http) as (read, write),
             ):
                 yield read, write
         else:
@@ -167,22 +206,27 @@ class _Connection:
     async def _run(
         self, ready: "asyncio.Future[ClientSession]", closing: asyncio.Event
     ) -> None:
+        def ended() -> None:
+            # The server exited or dropped the connection.
+            if not closing.is_set():
+                self._lost(session, MCPError(CONNECTION_CLOSED, "Connection closed"))
+
         async def on_message(message: Any) -> None:
-            if isinstance(message, ServerNotification) and isinstance(
-                message.root, ToolListChangedNotification
-            ):
-                # In a task: the handler must return before the response is read.
-                tg.start_soon(self._refresh_tools, session)
+            # The session runs each notification in its own task, cancelled on close.
+            if isinstance(message, ToolListChangedNotification):
+                await self._refresh_tools(session)
 
         try:
             async with self._streams() as (read, write):
-                session = ClientSession(read, write, message_handler=on_message)
-                async with session, anyio.create_task_group() as tg:
+                session = ClientSession(
+                    dispatcher=_Dispatcher(read, write, ended),
+                    message_handler=on_message,
+                )
+                async with session:
                     await session.initialize()
                     if not ready.done():
                         ready.set_result(session)
                     await self._serve(closing)
-                    tg.cancel_scope.cancel()
         except Exception as group:
             e = _cause(group)
             if not ready.done():
@@ -275,9 +319,11 @@ class _Connection:
         cursor: Optional[str] = None
         with self._use():
             while True:
-                page = await session.list_tools(cursor=cursor)
+                page = await session.list_tools(
+                    params=PaginatedRequestParams(cursor=cursor)
+                )
                 tools.extend(page.tools)
-                cursor = page.nextCursor
+                cursor = page.next_cursor
                 if not cursor:
                     return tools
 
@@ -332,28 +378,27 @@ class _Connection:
     async def call_tool(self, tool: str, arguments: Dict[str, Any]) -> CallToolResult:
         with self._use():
             session = self.session or await self._session(None)
+            attempt = _Attempt()
+            token = _attempt.set(attempt)
             try:
                 return await self._call(session, tool, arguments)
-            except McpError as e:
+            except MCPError as e:
                 # Dropped mid call: the tool may have run, so never retry it.
-                if e.error.code == CONNECTION_CLOSED:
+                if e.code == CONNECTION_CLOSED:
                     self._lost(session, e)
-                if e.error.code != SESSION_TERMINATED:
+                if not attempt.refused:
                     raise
-            except (anyio.ClosedResourceError, anyio.BrokenResourceError):
-                pass
-            # Not sent, or refused unrun: safe to retry once on a new session.
+            finally:
+                _attempt.reset(token)
+            # Refused unrun: safe to retry once on a new session.
             session = await self._session(session)
             return await self._call(session, tool, arguments)
 
     async def _call(
         self, session: ClientSession, tool: str, arguments: Dict[str, Any]
     ) -> CallToolResult:
-        timeout = (
-            None if self.call_timeout is None else timedelta(seconds=self.call_timeout)
-        )
         call = asyncio.create_task(
-            session.call_tool(tool, arguments, read_timeout_seconds=timeout)
+            session.call_tool(tool, arguments, read_timeout_seconds=self.call_timeout)
         )
         # A failed transport leaves its calls waiting, so also stop with the owner.
         # Through a future of this call: asyncio.wait on the owner itself keeps
@@ -376,7 +421,5 @@ class _Connection:
                 call.cancel()
                 await asyncio.gather(call, return_exceptions=True)
         if call.cancelled():
-            raise McpError(
-                ErrorData(code=CONNECTION_CLOSED, message="Connection closed")
-            )
+            raise MCPError(CONNECTION_CLOSED, "Connection closed")
         return call.result()
