@@ -158,6 +158,22 @@ async def test_a_fallback_run_splits_its_usage_by_model():
     assert by_model["gpt-4o-mini"] + by_model["gpt-4o"] == result.usage
 
 
+async def test_a_refusal_without_usage_makes_its_model_and_the_total_unknown():
+    refused = _response("gpt-4o-mini", "content_filter")
+    refused.usage = None
+    answer = _response(
+        "gpt-4o", prompt_tokens=1000, completion_tokens=100, total_tokens=1100
+    )
+    config = AgentConfig(model="gpt-4o-mini", fallback_models=["gpt-4o"])
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=[refused, answer])):
+        result = await Agent(config).arun_with_response("hi")
+
+    assert result.content == "ok"
+    assert result.usage is None
+    assert result.usage_by_model["gpt-4o-mini"] is None
+    assert result.usage_by_model["gpt-4o"].total_tokens == 1100
+
+
 def _replies(*replies):
     """Patch litellm.acompletion to answer each call with the next mock reply."""
     real = litellm.acompletion
