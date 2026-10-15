@@ -1,0 +1,104 @@
+# Images and Files
+
+## Content parts as input
+
+Every run method (`run`, `arun`, `start`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`) takes text or a list of content parts in the OpenAI chat format. LiteLLM turns the parts into each provider's own format.
+
+```python
+from cyclops import Agent, AgentConfig
+
+agent = Agent(AgentConfig(model="anthropic/claude-sonnet-4-5"))
+
+answer = agent.run(
+    [
+        {"type": "text", "text": "What is in this picture?"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}},
+    ]
+)
+```
+
+Local files go in as base64 data URLs:
+
+```python
+import base64
+from pathlib import Path
+
+def data_url(path: str, media_type: str) -> str:
+    data = base64.b64encode(Path(path).read_bytes()).decode()
+    return f"data:{media_type};base64,{data}"
+
+answer = agent.run(
+    [
+        {"type": "text", "text": "Summarize the report and describe the chart."},
+        {"type": "file", "file": {"file_data": data_url("report.pdf", "application/pdf"), "filename": "report.pdf"}},
+        {"type": "image_url", "image_url": {"url": data_url("chart.png", "image/png")}},
+    ]
+)
+```
+
+| Part | Shape |
+| --- | --- |
+| Text | `{"type": "text", "text": "..."}` |
+| Image | `{"type": "image_url", "image_url": {"url": "https://... or data:image/png;base64,..."}}`; OpenAI also takes `"detail"` |
+| File, such as a PDF | `{"type": "file", "file": {"file_data": "data:application/pdf;base64,...", "filename": "..."}}`, or `{"file_id": "..."}` for a file uploaded to the provider |
+| Audio | `{"type": "input_audio", "input_audio": {"data": "<base64>", "format": "wav"}}` |
+
+The types are LiteLLM's: `cyclops.ContentPart` is one part and `cyclops.UserContent` is text or a list of parts. A part of any other shape, such as Anthropic's own `{"type": "image", "source": ...}` or the OpenAI Responses API's `input_image`, raises `ValueError` before the run starts.
+
+As LiteLLM 1.105 sends them: Anthropic gets `image` and `document` blocks, with a URL image as a URL source; Gemini gets `inline_data`; Bedrock gets image and document bytes. For Gemini and Bedrock, LiteLLM downloads an image URL and sends its bytes.
+
+## Models that can't take the input
+
+Before the run starts, Cyclops checks LiteLLM's model map for every image (`supports_vision`), PDF (`supports_pdf_input`) and audio part (`supports_audio_input`), for every deployment of the model behind a `router`. A model the map lists without that support raises `ValueError`, so nothing is sent and no part is dropped:
+
+```text
+gpt-3.5-turbo takes no image input according to LiteLLM's model map; if it does, register that with litellm.register_model
+```
+
+A model LiteLLM doesn't map, such as one on a custom OpenAI compatible endpoint, gets the parts and its provider decides. If the map is wrong about a model, register it:
+
+```python
+import litellm
+
+litellm.register_model({"ollama/llava": {"litellm_provider": "ollama", "mode": "chat", "supports_vision": True}})
+```
+
+A file whose media type is unknown (a `file_id` without `format`) is not checked.
+
+## Steering, sessions and guards
+
+`RunHandle.steer()` takes the same input and checks it the same way:
+
+```python
+handle = agent.start("Describe this diagram.", stream=False)
+handle.steer([{"type": "text", "text": "Compare it with this one."}, {"type": "image_url", "image_url": {"url": url}}])
+result = await handle
+```
+
+The parts are the user message's `content` in the transcript, so a session keeps them, stores save them as JSON, and every later completion sends them again. Base64 data makes each saved session and each request that large: for big or many files, prefer URLs or provider file ids. `GuardContext.messages`, `AgentHooks.on_run_start` and `Message.content` see the list as it is.
+
+`TelemetryHooks` records the length of the input's text only, never the parts' data.
+
+## Size limits
+
+Cyclops sends images as given: it doesn't resize, re-encode or drop them, and neither do other agent libraries such as Pydantic AI, the OpenAI Agents SDK or the Vercel AI SDK. LiteLLM's model map has no image limits to check against. Anthropic and OpenAI downscale large images themselves; what providers reject is a request over their count or size limits, which at the time of writing are:
+
+| Provider | Images per request | Size |
+| --- | --- | --- |
+| [Anthropic](https://docs.anthropic.com/en/docs/build-with-claude/vision#image-limits-and-costs) | 600 (100 on 200k context models); over 20, each at most 2000 px a side | 8000 px a side; 10 MB per image (5 MB on Bedrock and Vertex AI); 32 MB per request |
+| [OpenAI](https://developers.openai.com/api/docs/guides/images-vision) | 1,500 | 512 MB per request |
+| [Gemini](https://ai.google.dev/gemini-api/docs/image-understanding) | 3,600 | 20 MB of inline data per request; larger files go through the Files API |
+
+A long session that keeps adding images reaches these counts across turns. To shrink an image before sending it, as with [Pillow](https://pillow.readthedocs.io):
+
+```python
+import io
+from PIL import Image
+
+def downscaled(path: str, longest_side: int = 1568) -> bytes:
+    image = Image.open(path)
+    image.thumbnail((longest_side, longest_side))
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG", quality=85)
+    return buffer.getvalue()
+```

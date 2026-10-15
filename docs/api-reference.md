@@ -27,6 +27,8 @@ With a `session_store`, every run with a session saves it there as `durability` 
 
 Every run method takes a keyword-only `session: Optional[Session] = None`.
 
+Every run method takes `input_message: UserContent`: text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or that LiteLLM's model map says the model can't take, raise `ValueError` before the run starts. See [Images and Files](guide/multimodal.md).
+
 **Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `compact`, `acompact`, `as_tool`
 
 `as_tool(name, description, *, annotations=None, timeout=None) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
@@ -134,7 +136,7 @@ Returned by `Agent.start(input_message, *, stream=True, response_model=None, ses
 class RunHandle:
     def __await__(self): ...            # await handle -> RunResult
     def __aiter__(self): ...            # async for event in handle (once)
-    def steer(self, message: str) -> None: ...
+    def steer(self, message: UserContent) -> None: ...
     def cancel(self) -> None: ...
 ```
 
@@ -227,7 +229,7 @@ Lifecycle callback base class. Subclass and override any methods you need.
 
 ```python
 class AgentHooks:
-    def on_run_start(self, input_message: str) -> None: ...
+    def on_run_start(self, input_message: Union[str, List[Dict[str, Any]]]) -> None: ...
     def on_run_end(self, content: str) -> None: ...
     def on_run_error(self, error: BaseException) -> None: ...
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
@@ -293,7 +295,7 @@ Represents a single conversation turn. Covers all LiteLLM message types.
 ```python
 class Message(BaseModel):
     role: str
-    content: Optional[str] = None
+    content: Optional[Union[str, List[Dict[str, Any]]]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None

@@ -28,17 +28,19 @@ With a `session_store`, every run with a session saves it there as `durability` 
 
 | Method | Signature | Description |
 |---|---|---|
-| `start` | `start(input_message: str, *, stream: bool = True, response_model: Optional[Type] = None, session: Optional[Session] = None) -> RunHandle` | Start a run on the running event loop; await, iterate, steer or cancel it. |
-| `run` | `run(input_message: str, response_model: Optional[Type] = None) -> Any` | Run synchronously. Returns `str` or a Pydantic model instance. |
-| `arun` | `arun(input_message: str, response_model: Optional[Type] = None) -> Any` | Run asynchronously. |
-| `run_with_response` | `run_with_response(input_message: str) -> RunResult` | Run synchronously; return the result, stop reason, usage and cost. |
-| `arun_with_response` | `arun_with_response(input_message: str) -> RunResult` | Run asynchronously; return the result, stop reason, usage and cost. |
-| `stream` | `stream(input_message: str) -> Iterator[str]` | Sync token stream of every completion in the run, including steps that call tools. |
-| `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
-| `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
-| `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
+| `start` | `start(input_message: UserContent, *, stream: bool = True, response_model: Optional[Type] = None, session: Optional[Session] = None) -> RunHandle` | Start a run on the running event loop; await, iterate, steer or cancel it. |
+| `run` | `run(input_message: UserContent, response_model: Optional[Type] = None) -> Any` | Run synchronously. Returns `str` or a Pydantic model instance. |
+| `arun` | `arun(input_message: UserContent, response_model: Optional[Type] = None) -> Any` | Run asynchronously. |
+| `run_with_response` | `run_with_response(input_message: UserContent) -> RunResult` | Run synchronously; return the result, stop reason, usage and cost. |
+| `arun_with_response` | `arun_with_response(input_message: UserContent) -> RunResult` | Run asynchronously; return the result, stop reason, usage and cost. |
+| `stream` | `stream(input_message: UserContent) -> Iterator[str]` | Sync token stream of every completion in the run, including steps that call tools. |
+| `astream` | `astream(input_message: UserContent) -> AsyncIterator[str]` | Async token stream. |
+| `stream_events` | `stream_events(input_message: UserContent) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
+| `astream_events` | `astream_events(input_message: UserContent) -> AsyncIterator[Event]` | Async stream of typed run events. |
 | `compact` | `compact(session: Session) -> bool` | Summarize the session's older messages now; `acompact` is the async form. See [Context window](/guides/agents/#context-window). |
 | `as_tool` | `as_tool(name: str, description: str, *, annotations: Optional[ToolAnnotations] = None, timeout: Optional[float] = None) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
+
+`UserContent` is text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or that LiteLLM's model map says the model can't take, raise `ValueError` before the run starts. See [Images and Files](/guides/multimodal/).
 
 ---
 
@@ -170,7 +172,7 @@ Returned by `Agent.start(input_message, *, stream=True, response_model=None, ses
 class RunHandle:
     def __await__(self): ...            # await handle -> RunResult
     def __aiter__(self): ...            # async for event in handle (once)
-    def steer(self, message: str) -> None: ...
+    def steer(self, message: UserContent) -> None: ...
     def cancel(self) -> None: ...
 ```
 
@@ -270,7 +272,7 @@ Lifecycle callback base class. Subclass and override any methods you need.
 
 ```python
 class AgentHooks:
-    def on_run_start(self, input_message: str) -> None: ...
+    def on_run_start(self, input_message: Union[str, List[Dict[str, Any]]]) -> None: ...
     def on_run_end(self, content: str) -> None: ...
     def on_run_error(self, error: BaseException) -> None: ...
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
@@ -284,7 +286,7 @@ class AgentHooks:
 
 | Method | When it fires | Return value |
 |---|---|---|
-| `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
+| `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()`, with the input text or its list of content parts | `None` |
 | `on_run_end` | When a run finishes, streamed or not | `None` |
 | `on_run_error` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. | `None` |
 | `on_llm_start` | Before each LiteLLM completion call | `None` |
@@ -349,7 +351,7 @@ Represents a single conversation turn. Covers all LiteLLM message types.
 ```python
 class Message(BaseModel):
     role: str
-    content: Optional[str] = None
+    content: Optional[Union[str, List[Dict[str, Any]]]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None

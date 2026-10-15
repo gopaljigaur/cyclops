@@ -40,6 +40,8 @@ A `SessionStore` keeps sessions between runs or processes. It has four async met
 
 Keep one writer per session: a store doesn't lock, so two processes saving the same session can interleave one's `save` with the other's `add_messages` and store a mix of both transcripts.
 
+Images and files in a run's input are saved as they were sent, base64 data included, so they make each saved session that much larger. See [Images and Files](multimodal.md#steering-sessions-and-guards).
+
 ```python
 from cyclops import FileSessionStore, Session
 
