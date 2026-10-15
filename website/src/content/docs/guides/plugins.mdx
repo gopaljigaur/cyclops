@@ -146,7 +146,7 @@ The key (`weather`) becomes the plugin name reported by `get_plugin_names()`. Th
 After installing the package (`pip install my-weather-package`), calling `manager.load_plugins()` will find and instantiate `WeatherToolkit` automatically.
 
 :::note
-The entry point value should point to the class or factory, not an instance. `PluginManager` calls `entry_point.load()`, calls the result with no arguments, and registers the `Toolkit` it returns. A plugin that fails to import or instantiate raises `RuntimeError` naming the entry point, and one that returns anything other than a `Toolkit` raises `TypeError`, so a broken install is never silently skipped.
+The entry point value should point to the class or factory, not an instance. `PluginManager` calls `entry_point.load()`, calls the result with no arguments, and registers the `Toolkit` it returns. A plugin that fails to import or instantiate raises `RuntimeError` naming the entry point, and one that returns anything other than a `Toolkit` raises `TypeError`. Two distributions that use the same entry-point name raise `ValueError`. A broken install is never silently skipped.
 :::
 
 ## Example toolkit package layout

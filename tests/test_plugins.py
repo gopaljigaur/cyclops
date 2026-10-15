@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from cyclops.toolkit.plugins import PluginManager
+from cyclops.toolkit.plugins import PluginManager, Toolkit
 
 PLUGIN_MODULE = '''
 from cyclops.toolkit import tool
@@ -123,3 +123,21 @@ def test_duplicate_tool_names_keep_the_first(install_plugin, caplog):
     assert sorted(manager.registry.list_tools()) == ["add", "multiply", "subtract"]
     assert manager.registry.get_tool("add").description == "Add two numbers."
     assert "Skipped tool from other: Tool 'add' is already registered" in caplog.text
+
+
+def test_duplicate_plugin_name_across_distributions_raises(install_plugin):
+    install_plugin("first_dist", "math = first_dist:MathToolkit")
+    install_plugin("second_dist", "math = second_dist:OtherMathToolkit")
+    manager = PluginManager()
+
+    with pytest.raises(ValueError, match="'math' is used by first_dist, second_dist"):
+        manager.load_plugins()
+    assert manager.get_plugin_names() == []
+
+
+def test_duplicate_plugin_name_raises_on_register():
+    manager = PluginManager()
+    manager.register(Toolkit(), name="math")
+
+    with pytest.raises(ValueError, match="Plugin name already registered: math"):
+        manager.register(Toolkit(), name="math")
