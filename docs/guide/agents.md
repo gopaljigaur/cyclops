@@ -37,7 +37,7 @@ config = AgentConfig(
 | `timeout` | `float` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `float` | `120` | Seconds a stream may go without a chunk after its first. |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
-| `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |
+| `prompt_caching` | `bool \| "5m" \| "1h"` | `True` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
 
 ## Constructing an Agent
 
@@ -220,22 +220,24 @@ for msg in agent.messages:
 
 ## Prompt caching
 
-`prompt_caching=True` asks LiteLLM to mark two cache breakpoints on every call: the system prompt, which caches the tool definitions before it too, and the latest message, which caches the conversation so far. Each tool round then reads the earlier prefix from the cache.
+Prompt caching is on by default. Every call marks two cache breakpoints: the system prompt, which caches the tool definitions before it too, and the latest message, which caches the conversation so far. Each step then reads the earlier prefix from the cache. LiteLLM places the breakpoints on a copy of the messages, so the history never keeps them, and it skips any past the four a request may carry, counting breakpoints already in the history.
 
 The markers are sent only to providers that cache at them (Anthropic, Bedrock, and Anthropic models on Vertex AI), and only for models that LiteLLM lists with prompt caching (`supports_prompt_caching`). Through a `router`, every deployment of the model has to qualify. Every other model gets no markers: OpenAI caches long prefixes without them, Gemini would turn them into billed explicit cache resources, and Bedrock models that LiteLLM lists without prompt caching (such as Llama) get none. A model missing from LiteLLM's model map gets no markers either.
+
+`True` caches for the provider's default time, five minutes on Anthropic models. `"5m"` or `"1h"` sets the time to live; a one hour cache costs more to write. Bedrock honours `"1h"` only for the models that support it.
 
 ```python
 config = AgentConfig(
     model="anthropic/claude-sonnet-4-5",
     system_prompt=LONG_INSTRUCTIONS,
-    prompt_caching=True,
+    prompt_caching="1h",
 )
 agent = Agent(config)
 response = agent.run_with_response("Summarise the report.")
 print(response.cached_tokens)
 ```
 
-Providers only cache a prefix above a minimum length (1024 tokens for most Anthropic models). To place breakpoints yourself, leave `prompt_caching` off and pass LiteLLM's `cache_control_injection_points` in `completion_kwargs`.
+A provider caches a prefix only above a minimum length that depends on the model, from 512 to 4096 tokens on Anthropic models; below it the marker is ignored and costs nothing (see Anthropic's [prompt caching docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)). Writing to the cache costs more than a plain input token, and later reads cost much less, so a run of several steps gains while a single call that is not repeated within the time to live pays the write for nothing. `prompt_caching=False` sends no markers. To place breakpoints yourself, pass LiteLLM's `cache_control_injection_points` in `completion_kwargs`; they replace the default ones.
 
 ## Step and budget limits
 

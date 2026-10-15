@@ -1,6 +1,6 @@
 """Tests for completion kwargs, reasoning history, prompt caching and response schemas"""
 
-from json import loads
+from json import dumps, loads
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -22,6 +22,7 @@ import pytest
 from pydantic import BaseModel
 
 from cyclops.core.agent import Agent
+from cyclops.core.session import Session
 from cyclops.core.types import AgentConfig, Message as CyclopsMessage
 from cyclops.toolkit import tool
 
@@ -296,25 +297,52 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
 # Prompt caching
 # ---------------------------------------------------------------------------
 
+MARKER_MODELS = [
+    "anthropic/claude-sonnet-4-5",
+    "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "vertex_ai/claude-sonnet-4-5",
+]
 
-@pytest.mark.parametrize(
-    "model",
-    [
-        "anthropic/claude-sonnet-4-5",
-        "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        "vertex_ai/claude-sonnet-4-5",
-    ],
-)
-def test_prompt_caching_marks_system_prompt_and_latest_message(model):
-    agent = Agent(AgentConfig(model=model, prompt_caching=True))
+
+def _cached_kwargs(model, **config):
     mock = AsyncMock(return_value=_response("hi"))
     with patch("litellm.acompletion", new=mock):
-        agent.run("hello")
+        Agent(AgentConfig(model=model, **config), tools=[add]).run("hello")
+    return mock.call_args.kwargs
 
-    assert mock.call_args.kwargs["cache_control_injection_points"] == [
-        {"location": "message", "role": "system"},
-        {"location": "message", "index": -1},
+
+@pytest.mark.parametrize("model", MARKER_MODELS)
+def test_prompt_caching_is_on_by_default(model):
+    kwargs = _cached_kwargs(model)
+
+    control = {"type": "ephemeral"}
+    # The system marker covers the tools before it.
+    assert "cache_control" not in kwargs["tools"][-1]
+    assert kwargs["cache_control_injection_points"] == [
+        {"location": "message", "role": "system", "control": control},
+        {"location": "message", "index": -1, "control": control},
     ]
+
+
+def test_prompt_caching_sets_the_time_to_live():
+    kwargs = _cached_kwargs("anthropic/claude-sonnet-4-5", prompt_caching="1h")
+
+    control = {"type": "ephemeral", "ttl": "1h"}
+    assert all(
+        p["control"] == control for p in kwargs["cache_control_injection_points"]
+    )
+
+
+def test_prompt_caching_can_be_turned_off():
+    kwargs = _cached_kwargs("anthropic/claude-sonnet-4-5", prompt_caching=False)
+
+    assert "cache_control_injection_points" not in kwargs
+    assert "cache_control" not in kwargs["tools"][-1]
+
+
+def test_prompt_caching_rejects_an_unknown_time_to_live():
+    with pytest.raises(ValueError):
+        AgentConfig(model="anthropic/claude-sonnet-4-5", prompt_caching="10m")
 
 
 @pytest.mark.parametrize(
@@ -330,11 +358,10 @@ def test_prompt_caching_marks_system_prompt_and_latest_message(model):
 def test_prompt_caching_sends_no_markers_where_they_do_not_cache(model):
     """Gemini would create a billed cache resource, OpenAI caches without markers
     and LiteLLM lists these Bedrock models without prompt caching."""
-    mock = AsyncMock(return_value=_response("hi"))
-    with patch("litellm.acompletion", new=mock):
-        Agent(AgentConfig(model=model, prompt_caching=True)).run("hello")
+    kwargs = _cached_kwargs(model)
 
-    assert "cache_control_injection_points" not in mock.call_args.kwargs
+    assert "cache_control_injection_points" not in kwargs
+    assert "cache_control" not in kwargs["tools"][-1]
 
 
 def test_prompt_caching_needs_every_router_deployment():
@@ -351,17 +378,142 @@ def test_prompt_caching_needs_every_router_deployment():
         ]
     )
     router.acompletion = AsyncMock(return_value=_response("hi"))
-    Agent(AgentConfig(model="smart", router=router, prompt_caching=True)).run("hello")
+    Agent(AgentConfig(model="smart", router=router)).run("hello")
 
     assert "cache_control_injection_points" not in router.acompletion.call_args.kwargs
 
 
-def test_prompt_caching_is_off_by_default():
-    mock = AsyncMock(return_value=_response("hi"))
-    with patch("litellm.acompletion", new=mock):
-        Agent(AgentConfig(model="anthropic/claude-sonnet-4-5")).run("hello")
+def _cache_markers(body):
+    return dumps(body).count('"cache_control"') + dumps(body).count('"cachePoint"')
 
-    assert "cache_control_injection_points" not in mock.call_args.kwargs
+
+def test_anthropic_request_marks_system_prompt_and_latest_message():
+    """End to end through LiteLLM's Anthropic request builder, over two steps."""
+    replies = [
+        {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "add",
+                    "input": {"a": 1, "b": 2},
+                }
+            ],
+            "stop_reason": "tool_use",
+        },
+        {"content": [{"type": "text", "text": "3"}], "stop_reason": "end_turn"},
+    ]
+    bodies = []
+
+    async def post(self, url, data=None, json=None, **kwargs):
+        bodies.append(loads(data) if data else json)
+        reply = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            **replies[len(bodies) - 1],
+        }
+        return httpx.Response(200, json=reply, request=httpx.Request("POST", url))
+
+    config = AgentConfig(
+        model="anthropic/claude-sonnet-4-5",
+        system_prompt="Be brief.",
+        prompt_caching="1h",
+        completion_kwargs={"api_key": "sk-test"},
+    )
+    agent = Agent(config, tools=[add])
+    with patch.object(AsyncHTTPHandler, "post", post):
+        assert agent.run("1 + 2?") == "3"
+
+    control = {"type": "ephemeral", "ttl": "1h"}
+    for body in bodies:
+        assert "cache_control" not in body["tools"][-1]
+        assert body["system"][-1]["cache_control"] == control
+        assert body["messages"][-1]["content"][-1]["cache_control"] == control
+        # The tail marker moves on; earlier ones are not kept in the history.
+        assert _cache_markers(body) == 2
+    assert bodies[1]["messages"][-1]["content"][-1]["type"] == "tool_result"
+    assert "cache_control" not in dumps(agent.messages)
+
+
+def test_bedrock_request_marks_system_prompt_and_latest_message(monkeypatch):
+    """End to end through LiteLLM's Bedrock Converse request builder."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AWS_REGION_NAME", "us-east-1")
+    bodies = []
+
+    async def post(self, url, data=None, json=None, **kwargs):
+        bodies.append(loads(data) if data else json)
+        reply = {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        }
+        return httpx.Response(200, json=reply, request=httpx.Request("POST", url))
+
+    config = AgentConfig(
+        model="bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        system_prompt="Be brief.",
+        prompt_caching="1h",
+    )
+    with patch.object(AsyncHTTPHandler, "post", post):
+        assert Agent(config, tools=[add]).run("hello") == "hi"
+
+    (body,) = bodies
+    point = {"cachePoint": {"type": "default", "ttl": "1h"}}
+    assert "cachePoint" not in body["toolConfig"]["tools"][-1]
+    assert body["system"][-1] == point
+    assert body["messages"][-1]["content"][-1] == point
+    assert _cache_markers(body) == 2
+
+
+def test_prompt_caching_keeps_the_callers_injection_points():
+    points = [{"location": "message", "index": 0}]
+    kwargs = _cached_kwargs(
+        "anthropic/claude-sonnet-4-5",
+        completion_kwargs={"cache_control_injection_points": points},
+    )
+
+    assert kwargs["cache_control_injection_points"] == points
+
+
+def test_anthropic_request_keeps_four_caller_markers_at_four():
+    """Anthropic rejects a fifth breakpoint; LiteLLM skips ours past the limit."""
+    bodies = []
+
+    async def post(self, url, data=None, json=None, **kwargs):
+        bodies.append(loads(data) if data else json)
+        reply = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "text", "text": "hi"}],
+            "stop_reason": "end_turn",
+        }
+        return httpx.Response(200, json=reply, request=httpx.Request("POST", url))
+
+    marked = [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}]
+    session = Session(
+        messages=[
+            {"role": role, "content": marked}
+            for role in ("user", "assistant", "user", "assistant")
+        ]
+    )
+    config = AgentConfig(
+        model="anthropic/claude-sonnet-4-5",
+        system_prompt="Be brief.",
+        completion_kwargs={"api_key": "sk-test"},
+    )
+    with patch.object(AsyncHTTPHandler, "post", post):
+        assert Agent(config, tools=[add]).run("hello", session=session) == "hi"
+
+    (body,) = bodies
+    assert _cache_markers(body) == 4
 
 
 # ---------------------------------------------------------------------------

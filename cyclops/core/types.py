@@ -4,6 +4,7 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
+from cyclops.core.caching import PromptCaching
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import Guard, ToolMiddleware
 
@@ -74,9 +75,9 @@ class AgentConfig(BaseModel):
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
     # api_base, extra_headers, reasoning_effort, thinking.
     completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
-    # Mark the system prompt and the latest message as cache breakpoints, for
-    # providers that cache at cache_control markers.
-    prompt_caching: bool = False
+    # Mark cache breakpoints for providers that cache at cache_control markers:
+    # True, or a time to live of "5m" or "1h"; False sends none.
+    prompt_caching: PromptCaching = True
 
 
 class Message(BaseModel):
