@@ -650,6 +650,46 @@ def test_cost_budget_counts_steps_after_one_without_pricing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_cost_is_litellm_completion_cost(stream):
+    import functools
+
+    responses = []
+
+    class Recorder(AgentHooks):
+        def on_llm_end(self, response):
+            responses.append(response)
+
+    agent = Agent(config=_make_config("gpt-4o-mini", hooks=Recorder()))
+    acompletion = functools.partial(litellm.acompletion, mock_response="hello there")
+    with patch("litellm.acompletion", new=acompletion):
+        result = await agent.start("hi", stream=stream)
+
+    assert result.cost
+    assert result.cost == litellm.completion_cost(completion_response=responses[0])
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "openai/unpriced-model"])
+def test_usage_reads_the_cost_litellm_set(stream, model):
+    """The cost LiteLLM set on the response is used, None included, not recomputed."""
+    from cyclops.core.completion import _usage
+
+    messages = [{"role": "user", "content": "hi"}]
+    response = litellm.completion(
+        model=model, messages=messages, mock_response="hello there", stream=stream
+    )
+    if stream:
+        response = litellm.stream_chunk_builder(list(response), messages=messages)
+
+    with patch("litellm.completion_cost", side_effect=AssertionError):
+        usage = _usage(response)
+
+    assert usage.cost == response._hidden_params["response_cost"]
+    assert (usage.cost is None) == (model == "openai/unpriced-model")
+
+
+@pytest.mark.asyncio
 async def test_token_budget_ends_a_streamed_run():
     session = Session()
     agent = Agent(config=_make_config(max_total_tokens=30), tools=[_make_simple_tool()])

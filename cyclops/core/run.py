@@ -30,7 +30,7 @@ from cyclops.core.events import (
 from cyclops.core.fallback import _complete_with_fallbacks, _Request, _requests
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.middleware import GuardContext
-from cyclops.core.providers import _tools_unsupported
+from cyclops.core.providers import _every_deployment, _lacks_tools
 from cyclops.core.run_state import _Run
 from cyclops.core.session import _SessionSaver
 from cyclops.core.tool_execution import (
@@ -174,7 +174,7 @@ class _RunLoop:
             except litellm.UnsupportedParamsError:
                 if mode != "native" or self.config.tool_mode != "auto":
                     raise
-                if not _tools_unsupported(self.config):
+                if not _every_deployment(self.config, _lacks_tools):
                     raise
                 self.agent._detected_tool_mode = "naive"
                 run.history[:] = before
@@ -374,6 +374,8 @@ class _RunLoop:
 
     async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""
+        if not self.config.guards:
+            return None
         run = self.run
         context = GuardContext(
             content=content,
