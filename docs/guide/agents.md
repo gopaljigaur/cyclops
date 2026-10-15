@@ -83,7 +83,7 @@ Both methods accept an optional `response_model` parameter for structured output
 
 ### One event loop per process
 
-LiteLLM runs async success callbacks on one background worker per process, and that worker serves one event loop at a time. When a call comes from another loop, LiteLLM moves the worker and logs `LoggingWorker: event loop changed; carried N pending and revived N dequeued logging task(s) onto the new loop` at WARNING, and asyncio then logs "Task exception was never retrieved" and "Task was destroyed but it is pending!" for the tasks left on the old loop. Some callbacks may not run until the process exits.
+LiteLLM runs async success callbacks on one background worker per process, and that worker serves one event loop at a time. When a call comes from another loop, LiteLLM moves the worker, logging `LoggingWorker: event loop changed; carried N pending and revived N dequeued logging task(s) onto the new loop` at WARNING when tasks were waiting, and asyncio logs "Task exception was never retrieved" and "Task was destroyed but it is pending!" for the tasks left on the old loop. Some callbacks run only when the process exits, and with loops in several threads some never run at all.
 
 Any process with more than one event loop calling LiteLLM hits this, async-only code included, for example `asyncio.run` in two threads. The sync methods bring a loop of their own: they run on one shared loop in a background thread, while the async methods run on the caller's loop, so a process that calls both has two.
 
