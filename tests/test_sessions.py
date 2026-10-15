@@ -170,13 +170,6 @@ async def test_file_store_rejects_ids_that_leave_its_directory(tmp_path):
         await store.save(Session(id="a/b"))
 
 
-def test_agent_no_longer_takes_memory():
-    from cyclops import InMemoryStorage
-
-    with pytest.raises(TypeError):
-        Agent(config=_make_config(), memory=InMemoryStorage())  # type: ignore[call-arg]
-
-
 @pytest.mark.asyncio
 async def test_file_store_takes_concurrent_saves(tmp_path):
     store = FileSessionStore(tmp_path)

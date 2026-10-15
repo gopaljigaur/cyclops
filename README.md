@@ -22,7 +22,7 @@
 
 ---
 
-Cyclops is a thin wrapper around [LiteLLM](https://github.com/BerriAI/litellm) that gives you agents, tool calling, streaming, structured output, memory, and MCP in one clean API. It works with every model LiteLLM supports. It doesn't hide the underlying calls from you.
+Cyclops is a thin wrapper around [LiteLLM](https://github.com/BerriAI/litellm) that gives you agents, tool calling, streaming, structured output, sessions, and MCP in one clean API. It works with every model LiteLLM supports. It doesn't hide the underlying calls from you.
 
 ## Install
 
@@ -70,7 +70,6 @@ print(agent.run("What is Apple's stock price?"))
 | **Cost tracking** | `agent.run_with_response()` returns tokens used and estimated cost |
 | **Skills** | Load instructions from `SKILL.md` folders only when the task needs them |
 | **Sessions** | `Session` transcripts with usage, saved and loaded through a `SessionStore` (in memory or files) |
-| **Memory** | `InMemoryStorage` and `FileStorage` for persistent key-value context |
 | **MCP** | Connect to any MCP server as a tool source, or expose your tools as an MCP server |
 | **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically |
 | **Any LLM** | OpenAI, Anthropic, Groq, Gemini, Ollama, Together AI, Bedrock, and 100+ more via LiteLLM |
@@ -146,24 +145,6 @@ store = FileSessionStore("./sessions")
 session = await store.load("alice") or Session(id="alice")
 await agent.arun("Where do I work?", session=session)
 await store.save(session)
-```
-
-## Memory
-
-```python
-import asyncio
-from cyclops import Agent, AgentConfig, FileStorage
-
-memory = FileStorage("./memory.json")  # persists across restarts
-
-async def main():
-    await memory.store("user_name", "Alice")
-    await memory.store("language", "Python")
-
-    name = await memory.retrieve("user_name")
-    print(f"Hello, {name}")
-
-asyncio.run(main())
 ```
 
 ## MCP
@@ -285,7 +266,6 @@ See the [`examples/`](./examples) directory:
 | [`multi_turn_agent.py`](examples/multi_turn_agent.py) | Conversation history |
 | [`tool_loop_demo.py`](examples/tool_loop_demo.py) | Multi-step tool chains |
 | [`skills_example.py`](examples/skills_example.py) | Skills from `SKILL.md` folders |
-| [`memory_persistence.py`](examples/memory_persistence.py) | FileStorage |
 | [`async_agent.py`](examples/async_agent.py) | `arun()` and concurrent calls |
 | [`subagents.py`](examples/subagents.py) | Agents as tools with `as_tool()` |
 | [`different_llms.py`](examples/different_llms.py) | Groq, Ollama, OpenAI, Together AI |

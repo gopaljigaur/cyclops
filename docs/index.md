@@ -2,7 +2,7 @@
 
 # Cyclops
 
-Cyclops is a lightweight Python agent framework that lets you build LLM-powered agents with tools, memory, structured output, and multi-provider support: all in a few lines of code. It sits on top of [LiteLLM](https://github.com/BerriAI/litellm), so any model that LiteLLM supports (OpenAI, Anthropic, Groq, Ollama, Together AI, and 100+ more) works without changing your code.
+Cyclops is a lightweight Python agent framework that lets you build LLM-powered agents with tools, sessions, structured output, and multi-provider support: all in a few lines of code. It sits on top of [LiteLLM](https://github.com/BerriAI/litellm), so any model that LiteLLM supports (OpenAI, Anthropic, Groq, Ollama, Together AI, and 100+ more) works without changing your code.
 
 ## Key features
 
@@ -10,7 +10,7 @@ Cyclops is a lightweight Python agent framework that lets you build LLM-powered 
 - **Tool use**: Decorate a plain Python function with `@tool` and pass it to the agent. Supports both sync and async tools.
 - **Structured output**: Pass a Pydantic model as `response_model` and get a typed object back instead of a string.
 - **Streaming**: True token-by-token streaming for every completion, including runs that call tools.
-- **Memory**: `InMemoryStorage` for ephemeral state and `FileStorage` for JSON-backed persistence across restarts.
+- **Sessions**: Keep a conversation in a `Session` and save it with `InMemorySessionStore` or `FileSessionStore`.
 - **Cost & token tracking**: `run_with_response()` returns a `RunResult` with the stop reason, prompt tokens, completion tokens, and estimated cost; runs can be capped by steps, tokens or cost.
 - **MCP support**: Expose Cyclops tools as an MCP server or consume any MCP server as a tool source.
 - **Plugin system**: Package tools as `Toolkit` classes and distribute them as Python packages with entry-point auto-discovery.

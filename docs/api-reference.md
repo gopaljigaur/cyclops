@@ -275,46 +275,6 @@ class Message(BaseModel):
 
 ---
 
-## cyclops.core.memory
-
-### Memory
-
-Abstract base class for all memory backends.
-
-```python
-class Memory(ABC):
-    async def store(self, key: str, value: Any, metadata: Optional[Dict] = None) -> None: ...
-    async def retrieve(self, key: str) -> Optional[Any]: ...
-    async def list_keys(self) -> List[str]: ...
-    async def clear(self) -> None: ...
-```
-
----
-
-### InMemoryStorage
-
-In-process dict-backed storage. Data is lost on process exit.
-
-```python
-class InMemoryStorage(Memory):
-    def __init__(self): ...
-```
-
----
-
-### FileStorage
-
-JSON-file-backed persistent storage.
-
-```python
-class FileStorage(Memory):
-    def __init__(self, path: str): ...
-```
-
-See [Memory guide](guide/memory.md) for examples.
-
----
-
 ## cyclops.skills
 
 ### Skills

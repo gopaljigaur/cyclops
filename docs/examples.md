@@ -44,14 +44,6 @@ Discovers the `release-notes` skill in `examples/skills/` and asks for release n
 
 ---
 
-## memory_persistence.py
-
-**Path:** `examples/memory_persistence.py`
-
-Uses `InMemoryStorage` to store user context (name, preferences, last topic) and then retrieves it to build a context-aware prompt. Illustrates the store/retrieve/list_keys lifecycle and how to inject memory into an agent's first message.
-
----
-
 ## different_llms.py
 
 **Path:** `examples/different_llms.py`
