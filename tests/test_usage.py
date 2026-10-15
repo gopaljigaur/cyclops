@@ -37,8 +37,8 @@ def _anthropic_reply(stream: bool) -> bytes:
     }
     if not stream:
         return dumps(message).encode()
-    start = {**message, "content": [], "stop_reason": None}
-    start["usage"] = {**ANTHROPIC_USAGE, "output_tokens": 1}
+    usage = {**ANTHROPIC_USAGE, "output_tokens": 1}
+    start = {**message, "content": [], "stop_reason": None, "usage": usage}
     return _sse(
         {"type": "message_start", "message": start},
         {
