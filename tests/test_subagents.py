@@ -629,9 +629,11 @@ async def test_timeout_cancels_the_nested_run():
         return _asks(_call("researcher", "find x"))
 
     with patch("litellm.acompletion", new=acompletion):
-        await lead.arun("x?")
+        events = [e async for e in lead.start("x?", stream=False)]
 
     assert cancelled == [True]
+    nested = [e for e in events if isinstance(e, RunFinished) and e.agent_path]
+    assert [e.result.stop_reason for e in nested] == ["cancelled"]
     assert [m["content"] for m in lead.messages if m["role"] == "tool"] == [
         "Error: researcher timed out after 0.02 seconds"
     ]

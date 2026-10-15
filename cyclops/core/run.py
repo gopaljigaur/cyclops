@@ -93,6 +93,7 @@ class _RunLoop:
         run.started = True
         # Tools called in this run see it, so a subagent can nest its run in it.
         token = _current_loop.set(self)
+        interrupted: Optional[asyncio.CancelledError] = None
         try:
             if run.cancelled:
                 # Cancelled before the task started: no hooks, no completion.
@@ -100,7 +101,11 @@ class _RunLoop:
             await self._loop(input_message)
         except asyncio.CancelledError as e:
             if e.args != (RUN_STOPPED,):
-                raise
+                if run.parent is None:
+                    raise
+                # A nested run cancelled otherwise, as by its call timing out,
+                # still finishes before the cancellation goes on.
+                interrupted = e
             run.result.stop_reason = "cancelled"
         except Exception as e:
             run.result.stop_reason = "error"
@@ -115,6 +120,8 @@ class _RunLoop:
             else:
                 session.usage += run.result.usage
         run.emit(RunFinished(result=run.result))
+        if interrupted is not None:
+            raise interrupted
         return run.result
 
     async def _loop(self, input_message: str) -> None:
