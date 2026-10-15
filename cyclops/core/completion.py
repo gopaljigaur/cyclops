@@ -222,7 +222,11 @@ async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run)
                     if delta and delta.content:
                         emitted = True
                         run.emit(TextDelta(text=delta.content))
-                    await run.taken(ahead=_READ_AHEAD)
+                    # LiteLLM ends the stream in an AnyIO worker thread, and AnyIO
+                    # keeps a worker whose job is cancelled before it starts, so
+                    # a run cancelled there leaks one (#103). Wait here instead.
+                    finished = chunk.choices and chunk.choices[0].finish_reason
+                    await run.taken(ahead=0 if finished else _READ_AHEAD)
         except StreamIdleTimeout:
             if emitted or stalled:
                 raise

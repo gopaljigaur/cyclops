@@ -1794,6 +1794,36 @@ async def test_run_ending_without_run_finished_raises_from_the_stream():
 
 
 @pytest.mark.asyncio
+async def test_dropped_event_stream_leaves_no_thread_or_task():
+    """A stream dropped without aclose() is closed by the loop and cleans up."""
+    import asyncio
+    import functools
+    import gc
+    import threading
+
+    from cyclops.core.events import TextDelta
+
+    def workers():
+        return sum(t.name == "AnyIO worker thread" for t in threading.enumerate())
+
+    before = workers()
+    acompletion = functools.partial(litellm.acompletion, mock_response="a b c d")
+    with patch("litellm.acompletion", new=acompletion):
+        for _ in range(20):
+            events = Agent(config=_make_config()).astream_events("hi")
+            async for event in events:
+                if isinstance(event, TextDelta):
+                    break
+            del events
+            gc.collect()
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+    assert asyncio.all_tasks() == {asyncio.current_task()}
+    assert workers() <= max(before, 1)
+
+
+@pytest.mark.asyncio
 async def test_run_waits_for_the_stream_consumer():
     """A consumer that stops reading without closing holds the run where it is."""
     import asyncio
