@@ -1,4 +1,4 @@
-"""User message content: text, or OpenAI chat content parts that LiteLLM maps per provider."""
+"""User message content: text, or OpenAI chat content parts that LiteLLM maps."""
 
 from typing import Any, Dict, List, Optional, Sequence, Union, cast
 
@@ -11,7 +11,7 @@ from litellm.types.llms.openai import (
 from pydantic import ConfigDict, Field, TypeAdapter
 from typing_extensions import Annotated
 
-from cyclops.core.providers import _INPUT_SUPPORT, _input_unsupported
+from cyclops.core.providers import _INPUT_SUPPORT, _every_deployment, _takes_input
 from cyclops.core.types import AgentConfig
 
 # An OpenAI chat content part, as LiteLLM types it.
@@ -69,12 +69,13 @@ def _user_content(config: AgentConfig, content: UserContent) -> _Content:
     if not parts:
         raise ValueError("Message content has no parts")
     for kind in dict.fromkeys(filter(None, map(_input_kind, parts))):
-        model = _input_unsupported(config, kind)
-        if model is not None:
+        flag = _INPUT_SUPPORT[kind]
+        # Fallback models read the same history.
+        if not _every_deployment(config, _takes_input, flag, fallbacks=True):
             raise ValueError(
-                f"{model} takes no {kind} input: LiteLLM's model map sets "
-                f"{_INPUT_SUPPORT[kind]} to false for it; if the model does take "
-                "it, correct the entry with litellm.register_model"
+                f"{config.model} can't take {kind} input: LiteLLM's model map sets "
+                f"{flag} to false for it, a deployment or a fallback model; if "
+                "that is wrong, correct the entry with litellm.register_model"
             )
     return parts
 

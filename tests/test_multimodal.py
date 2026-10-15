@@ -149,7 +149,7 @@ def test_unsupported_input_raises_before_any_completion(model, part, kind):
     mock = AsyncMock()
     with patch("litellm.acompletion", new=mock), pytest.raises(ValueError) as error:
         _agent(model).run([TEXT, part])
-    assert str(error.value).startswith(f"{model} takes no {kind} input")
+    assert str(error.value).startswith(f"{model} can't take {kind} input")
     assert "litellm.register_model" in str(error.value)
     mock.assert_not_called()
 
@@ -161,7 +161,7 @@ def test_unsupported_input_checks_every_router_deployment():
             {"model_name": "chat", "litellm_params": {"model": NO_VISION}},
         ]
     )
-    with pytest.raises(ValueError, match=f"{NO_VISION} takes no image input"):
+    with pytest.raises(ValueError, match="chat can't take image input"):
         _agent("chat", router=router).run([TEXT, IMAGE_DATA])
 
 
@@ -169,7 +169,7 @@ def test_unsupported_input_checks_every_fallback_model():
     mock = AsyncMock()
     agent = _agent("gpt-4o", fallback_models=[NO_VISION])
     with patch("litellm.acompletion", new=mock):
-        with pytest.raises(ValueError, match=f"{NO_VISION} takes no image input"):
+        with pytest.raises(ValueError, match="gpt-4o can't take image input"):
             agent.run([TEXT, IMAGE_DATA])
     mock.assert_not_called()
 
@@ -181,7 +181,7 @@ def test_steer_checks_every_fallback_model():
             handle = _agent("gpt-4o", fallback_models=[NO_VISION]).start(
                 "hello", stream=False
             )
-            with pytest.raises(ValueError, match=f"{NO_VISION} takes no image input"):
+            with pytest.raises(ValueError, match="gpt-4o can't take image input"):
                 handle.steer([IMAGE_DATA])
             return await handle
 
@@ -298,7 +298,7 @@ def test_steer_with_an_image_the_model_cannot_take_raises():
         mock = AsyncMock(return_value=_make_completion_response("Hi."))
         with patch("litellm.acompletion", new=mock):
             handle = _agent(NO_VISION).start("hello", stream=False)
-            with pytest.raises(ValueError, match="takes no image input"):
+            with pytest.raises(ValueError, match="can't take image input"):
                 handle.steer([IMAGE_DATA])
             return await handle
 

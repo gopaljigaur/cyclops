@@ -75,24 +75,17 @@ def _lacks_tools(model: str, custom_llm_provider: Optional[str]) -> bool:
     return supported is not None and "tools" not in supported
 
 
-def _input_unsupported(config: AgentConfig, kind: str) -> Optional[str]:
-    """The first model LiteLLM's model map marks as not taking this input.
+def _takes_input(model: str, custom_llm_provider: Optional[str], flag: str) -> bool:
+    """False only if LiteLLM's model map sets `flag` to false for the model.
 
-    Checks every deployment of the model and every fallback model. Only an explicit false counts: most entries leave the flags out. The entry
-    is read from litellm.model_cost under provider/model, else model, and not
-    from get_model_info, which asks some providers (Ollama) over the network.
+    Most entries leave the flags out. The entry is read from litellm.model_cost
+    under provider/model, else model: get_model_info asks some providers
+    (Ollama) over the network.
     """
-    flag = _INPUT_SUPPORT[kind]
-    # Fallback models read the same history.
-    for p in _deployments(config) + [{"model": m} for m in config.fallback_models]:
-        model, provider = litellm.get_llm_provider(
-            p["model"], custom_llm_provider=p.get("custom_llm_provider")
-        )[:2]
-        costs = litellm.model_cost
-        info = costs.get(f"{provider}/{model}") or costs.get(model) or {}
-        if info.get(flag) is False:
-            return p["model"]
-    return None
+    model, provider = litellm.get_llm_provider(model, custom_llm_provider)[:2]
+    costs = litellm.model_cost
+    info = costs.get(f"{provider}/{model}") or costs.get(model) or {}
+    return info.get(flag) is not False
 
 
 def _deployments(config: AgentConfig) -> List[Dict[str, Any]]:
