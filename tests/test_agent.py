@@ -15,8 +15,9 @@ from litellm.types.utils import (
     StreamingChoices,
 )
 
-from cyclops.core.agent import Agent, _run_coroutine_sync
+from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.sync import _run_coroutine_sync
 from cyclops.core.types import AgentConfig
 
 # ---------------------------------------------------------------------------
