@@ -294,7 +294,7 @@ The run reads each completion's `finish_reason`, as LiteLLM normalizes it across
 
 ## Context window
 
-A long conversation, or a large tool result, eventually outgrows the model's context window. Two settings keep requests within it: compaction summarizes older messages, and `max_tool_output_chars` caps each tool result. Both are off by default, as in other agent libraries, since compaction makes an extra completion and replaces what the model saw with a summary.
+A long conversation, or a large tool result, eventually outgrows the model's context window. Two settings keep requests within it: compaction summarizes older messages, and `max_tool_output_chars` caps each tool result. A request that still overflows is retried with what fits. Both are off by default, as in other agent libraries, since compaction makes an extra completion and replaces what the model saw with a summary.
 
 ### Compaction
 
@@ -326,6 +326,12 @@ Compaction changes the start of the conversation, so with [prompt caching](#prom
 To compact a session now, as between runs, call `agent.compact(session)` or `await agent.acompact(session)`. It uses `config.compaction`, or the `Compaction()` defaults when that is `None`, adds the summary's usage to the session, and returns `False` without changing anything when nothing but an earlier summary would be summarized. Like `session.truncate()`, it does not save: the next run's first save stores the whole session.
 
 Anthropic models also offer server-side context management. LiteLLM passes `context_management` through, so its `clear_tool_uses_20250919` edit works from `completion_kwargs`; its compaction edit returns a block that has to be sent back in later requests, which the agent's transcript does not keep.
+
+### Context overflow
+
+When the provider rejects a request as too long for the context window (LiteLLM's `ContextWindowExceededError`), the run counts the request and tries each remedy at most once: first a lower `max_tokens`, the room the input leaves, when that is below `max_tokens` (or below the model's output limit when `max_tokens` is unset) and above a thinking budget, which `max_tokens` has to exceed (with `reasoning_effort`, above the largest budget LiteLLM makes of an effort, 16384 tokens by default); then, on another overflow or when lowering doesn't fit, compaction when `compaction` is set. An overflow with no remedy left ends the run with the error, so the run never loops; `num_retries` does not cover it. A model LiteLLM has no limits for is not retried.
+
+Once the run has counted its transcript, from the start with `compaction` set or after its first overflow otherwise, every later request gets that lower `max_tokens` up front, so the steps that follow don't overflow first. An answer the lowered limit cuts ends the run with `stop_reason="max_tokens"`, as in [Output limit and filtering](#output-limit-and-filtering).
 
 ### Tool output limit
 

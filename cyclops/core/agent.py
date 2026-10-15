@@ -4,7 +4,7 @@ import asyncio
 from contextlib import aclosing
 from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple, Type
 
-from cyclops.core.compaction import _ContextWindow
+from cyclops.core.compaction import _compaction_window
 from cyclops.core.completion import _tool_to_openai_format
 from cyclops.core.events import Event, RunFinished, TextDelta
 from cyclops.core.run import _RunLoop, _system_prompt
@@ -201,14 +201,13 @@ class Agent:
         mode = self._get_tool_mode()
         # The tools a run starts with: deferred ones only once found.
         loaded = _ToolSearch(self.tools, self._tools_by_name).loaded
-        window = _ContextWindow(
-            self.config, self.config.compaction or Compaction(), spend
-        )
+        compaction = self.config.compaction or Compaction()
+        window = _compaction_window(self.config, compaction, spend)
         tools = None
         if mode == "native":
             tools = [_tool_to_openai_format(t) for t in loaded]
         window.request(_system_prompt(self.config, self.skills, loaded, mode), tools)
-        return await window.compact(session.messages) is not None
+        return await window.compact(session.messages, compaction) is not None
 
     def as_tool(
         self,

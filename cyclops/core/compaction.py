@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
+from litellm.constants import DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET
 
 from cyclops.core.completion import _acompletion, _completion_kwargs, _usage
 from cyclops.core.events import Compacted
@@ -110,32 +111,28 @@ class _ContextWindow:
     def __init__(
         self,
         config: AgentConfig,
-        compaction: Compaction,
+        limits: _Limits,
         spend: Callable[[Optional[Usage]], None],
     ) -> None:
         self.config = config
-        self.compaction = compaction
+        self.model, self.max_input_tokens, self.max_output_tokens = limits
         # Where the summaries' usage goes.
         self.spend = spend
-        self.model, self.max_input_tokens, _ = _known_window(config)
-        self._summary_config = config
-        if compaction.model is not None:
-            self._summary_config = config.model_copy(update={"model": compaction.model})
-        self._summary_window = _known_window(self._summary_config)
-        self._fixed = 0
+        # The system prompt and tools, and their tokens once counted.
+        self._request: Tuple[Optional[str], Optional[List[Any]]] = (None, None)
+        self._fixed: Optional[int] = None
         # Tokens of each counted message, in transcript order.
         self._counts: List[int] = []
         self._total = 0
+        # Set once tokens() counted the transcript.
+        self.counting = False
         # Set once a compaction left the request past the threshold.
         self._stuck = False
 
     def request(self, system_prompt: Optional[str], tools: Optional[List[Any]]) -> None:
-        """Count the system prompt and tools the requests now carry."""
-        system = [{"role": "system", "content": system_prompt}] if system_prompt else []
-        # Also the tokens that prime the reply.
-        self._fixed = litellm.token_counter(
-            model=self.model, messages=system, tools=tools
-        )
+        """Note the system prompt and tools the requests now carry."""
+        self._request = (system_prompt, tools)
+        self._fixed = None
 
     def _count(self, message: Dict[str, Any]) -> int:
         return litellm.token_counter(
@@ -147,24 +144,51 @@ class _ContextWindow:
 
     def tokens(self, history: List[Dict[str, Any]]) -> int:
         """Tokens of a request with this transcript."""
+        self.counting = True
+        if self._fixed is None:
+            system_prompt, tools = self._request
+            system = [{"role": "system", "content": system_prompt}]
+            # Also the tokens that prime the reply.
+            self._fixed = litellm.token_counter(
+                model=self.model, messages=system if system_prompt else [], tools=tools
+            )
         for message in history[len(self._counts) :]:
             count = self._count(message)
             self._counts.append(count)
             self._total += count
         return self._fixed + self._total
 
-    def _threshold(self) -> float:
-        return self.compaction.threshold * self.max_input_tokens
+    def fitting_max_tokens(
+        self, history: List[Dict[str, Any]], kwargs: Dict[str, Any]
+    ) -> Optional[int]:
+        """The room the request leaves for output, if a lower max_tokens fits it.
+
+        That is when the room is below max_tokens (or else the model's output
+        limit) and above a thinking budget, which max_tokens has to exceed.
+        """
+        room = self.max_input_tokens - self.tokens(history)
+        limit = kwargs.get("max_tokens") or self.max_output_tokens
+        budget = (kwargs.get("thinking") or {}).get("budget_tokens") or 0
+        if kwargs.get("reasoning_effort") not in (None, "none"):
+            # LiteLLM turns an effort into a thinking budget for some
+            # providers; this is the largest it uses.
+            budget = max(budget, DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET)
+        if budget < room and (limit is None or room < limit):
+            return room
+        return None
 
     async def compact_if_needed(
-        self, history: List[Dict[str, Any]]
+        self, history: List[Dict[str, Any]], compaction: Compaction
     ) -> Optional[Compacted]:
         """Compact once the request reaches the compaction threshold."""
-        if self._stuck or self.tokens(history) < self._threshold():
+        threshold = compaction.threshold * self.max_input_tokens
+        if self._stuck or self.tokens(history) < threshold:
             return None
-        return await self.compact(history)
+        return await self.compact(history, compaction)
 
-    async def compact(self, history: List[Dict[str, Any]]) -> Optional[Compacted]:
+    async def compact(
+        self, history: List[Dict[str, Any]], compaction: Compaction
+    ) -> Optional[Compacted]:
         """Replace the messages older than the kept ones with a summary of them.
 
         Returns the Compacted event, or None if nothing but the latest summary
@@ -172,22 +196,23 @@ class _ContextWindow:
         was, when the summary is empty or cut.
         """
         before = self.tokens(history)
-        cut = self._cut(history)
+        cut = self._cut(history, compaction.keep)
         if cut == 0 or (cut == 1 and _is_summary(history[0])):
             return None
-        summary = await self._summarize(history[:cut], self._counts[:cut])
+        summary = await self._summarize(compaction, history[:cut], self._counts[:cut])
         message = {"role": "user", "content": _SUMMARY_PREFIX + summary}
         history[:cut] = [message]
         self._counts[:cut] = [self._count(message)]
         self._total = sum(self._counts)
         after = self.tokens(history)
-        if after >= self._threshold():
+        threshold = compaction.threshold * self.max_input_tokens
+        if after >= threshold:
             self._stuck = True
             logger.warning(
                 "Compaction left the request at %d tokens, past the threshold of "
                 "%d; it is not compacted again in this run",
                 after,
-                self._threshold(),
+                threshold,
             )
         if self.config.hooks:
             self.config.hooks.on_compaction(summary, before, after)
@@ -198,7 +223,7 @@ class _ContextWindow:
             tokens_after=after,
         )
 
-    def _cut(self, history: List[Dict[str, Any]]) -> int:
+    def _cut(self, history: List[Dict[str, Any]], keep: float) -> int:
         """Index of the first kept message: the most recent ones within keep.
 
         The last message is always kept. A tool result is never the first kept
@@ -207,7 +232,7 @@ class _ContextWindow:
         """
         if not history:
             return 0
-        budget = self.compaction.keep * self.max_input_tokens
+        budget = keep * self.max_input_tokens
         cut = len(history) - 1
         kept = self._counts[cut]
         while cut > 0 and kept + self._counts[cut - 1] <= budget:
@@ -218,24 +243,27 @@ class _ContextWindow:
         return cut
 
     async def _summarize(
-        self, messages: List[Dict[str, Any]], counts: List[int]
+        self,
+        compaction: Compaction,
+        messages: List[Dict[str, Any]],
+        counts: List[int],
     ) -> str:
         """A summary of messages, written by the compaction model.
 
         The newest messages that fit the summarizing model's window are sent.
         """
-        config = self._summary_config
+        config = _summary_config(self.config, compaction)
         kwargs = _completion_kwargs(config, [], "none", None)
         # A one-off request gains nothing from a cache write, and its
         # max_tokens below could fall under a thinking budget.
         for key in ("cache_control_injection_points", "thinking", "reasoning_effort"):
             kwargs.pop(key, None)
-        model, max_input, max_output = self._summary_window
+        model, max_input, max_output = _known_window(config)
         # As long as the kept messages at most, so the summary leaves room.
-        kwargs["max_tokens"] = int(self.compaction.keep * self.max_input_tokens)
+        kwargs["max_tokens"] = int(compaction.keep * self.max_input_tokens)
         if max_output is not None:
             kwargs["max_tokens"] = min(kwargs["max_tokens"], max_output)
-        head = f"{self.compaction.prompt}\n\n<conversation>\n"
+        head = f"{compaction.prompt}\n\n<conversation>\n"
         tail = "\n</conversation>"
         budget = (
             max_input
@@ -263,3 +291,33 @@ class _ContextWindow:
                 f"{choice.finish_reason!r}); the transcript is unchanged"
             )
         return summary
+
+
+def _summary_config(config: AgentConfig, compaction: Compaction) -> AgentConfig:
+    if compaction.model is None:
+        return config
+    return config.model_copy(update={"model": compaction.model})
+
+
+def _compaction_window(
+    config: AgentConfig,
+    compaction: Compaction,
+    spend: Callable[[Optional[Usage]], None],
+) -> _ContextWindow:
+    """A context window that compacts; raises ValueError when LiteLLM knows no
+    input limit for the model or the summarizing model."""
+    _known_window(_summary_config(config, compaction))
+    return _ContextWindow(config, _known_window(config), spend)
+
+
+def _context_window(
+    config: AgentConfig,
+    compaction: Optional[Compaction],
+    spend: Callable[[Optional[Usage]], None],
+) -> Optional[_ContextWindow]:
+    """A context window for the config's model; without compaction, None when
+    LiteLLM knows no input limit for it."""
+    if compaction is not None:
+        return _compaction_window(config, compaction, spend)
+    limits = _window(config)
+    return None if limits is None else _ContextWindow(config, limits, spend)
