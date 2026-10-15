@@ -42,8 +42,9 @@ async def test_attach_detach_cycles():
     # Each cycle starts a server process, so fewer runs.
     result = await soak(cycle, runs=50, warmup=5)
     await mcp.aclose()
-    # Traced memory is left out: each cycle leaves a few hundred bytes in
-    # anyio's memory streams that no reachable object holds.
+    # Bytes are left out: anyio's memory streams keep up to about 27 KB over
+    # the first few hundred cycles, more warmup than a process per cycle allows.
+    # Cyclic garbage too: closing an MCP session leaves cycles the collector frees.
     assert not result.grown_types, result
     assert result.after.within(result.before), result
 
