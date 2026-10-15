@@ -11,8 +11,10 @@ from cyclops.core.middleware import (
     ToolCallContext,
     ToolMiddleware,
 )
+from cyclops.core.permissions import ToolPermissions
 from cyclops.core.types import (
     AgentConfig,
+    DeniedToolCall,
     Message,
     RunResult,
     ToolCall,
@@ -31,11 +33,13 @@ __all__ = [
     "AgentConfig",
     "AgentHooks",
     "AgentTool",
+    "DeniedToolCall",
     "Deny",
     "Guard",
     "GuardContext",
     "ToolCallContext",
     "ToolMiddleware",
+    "ToolPermissions",
     "Message",
     "RunHandle",
     "Session",

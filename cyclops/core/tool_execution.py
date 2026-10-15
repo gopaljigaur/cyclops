@@ -14,7 +14,7 @@ from cyclops.core.hooks import AgentHooks, _tool_call_id
 from cyclops.core.middleware import Deny, ToolCallContext, ToolMiddleware
 from cyclops.core.providers import _tool_message_images_supported
 from cyclops.core.run_state import _Run
-from cyclops.core.types import AgentConfig, ToolCall
+from cyclops.core.types import AgentConfig, DeniedToolCall, ToolCall
 from cyclops.toolkit.types import ToolResult
 from cyclops.utils.compat import asyncio_timeout
 
@@ -342,6 +342,14 @@ class _ToolExecutor:
             for m in middleware:
                 decision = await m.before_tool(call)
                 if isinstance(decision, Deny):
+                    self.run.result.denied_tool_calls.append(
+                        DeniedToolCall(
+                            id=call_id,
+                            name=name,
+                            arguments=call.arguments,
+                            reason=decision.reason,
+                        )
+                    )
                     result = ToolResult.error_result(decision.reason)
                     break
                 if decision is not None:

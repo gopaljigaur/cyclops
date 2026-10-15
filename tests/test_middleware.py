@@ -67,6 +67,7 @@ def test_deny_sends_the_reason_and_skips_the_tool():
     assert ran == []
     assert _tool_message(agent) == "Error: adding is disabled today"
     assert result.tool_calls[0].result == "Error: adding is disabled today"
+    assert [d.reason for d in result.denied_tool_calls] == ["adding is disabled today"]
 
 
 def test_before_tool_can_replace_the_arguments():

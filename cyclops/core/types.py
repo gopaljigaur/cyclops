@@ -113,6 +113,15 @@ class ToolCall(BaseModel):
     )
 
 
+class DeniedToolCall(BaseModel):
+    """A tool call that middleware denied"""
+
+    id: Optional[str] = Field(description="The call's id; None in naive tool mode")
+    name: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field(description="What the model was told")
+
+
 class Usage(BaseModel):
     """Tokens and cost of one or more LLM completions."""
 
@@ -160,6 +169,9 @@ class RunResult(BaseModel):
     )
     tool_calls: List[ToolCall] = Field(
         default_factory=list, description="Tools called during the run"
+    )
+    denied_tool_calls: List[DeniedToolCall] = Field(
+        default_factory=list, description="Tool calls that middleware denied"
     )
     model: str = Field(description="Model used for generation")
     run_id: str = Field(
