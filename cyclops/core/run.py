@@ -20,7 +20,7 @@ import litellm
 from pydantic import TypeAdapter, ValidationError
 
 from cyclops.core.compaction import _context_window, _ContextWindow
-from cyclops.core.completion import _build_messages
+from cyclops.core.completion import _build_messages, _response_headers
 from cyclops.core.events import (
     Compacted,
     GuardRejected,
@@ -43,7 +43,14 @@ from cyclops.core.tool_execution import (
     _ToolExecutor,
 )
 from cyclops.core.tool_search import _ToolSearch
-from cyclops.core.types import AgentConfig, RunResult, StopReason, Usage, _added
+from cyclops.core.types import (
+    AgentConfig,
+    RateLimit,
+    RunResult,
+    StopReason,
+    Usage,
+    _added,
+)
 from cyclops.skills import Skills
 
 if TYPE_CHECKING:
@@ -319,12 +326,15 @@ class _RunLoop:
                 else:
                     result.stop_reason = "guard"
                     done = True
+            headers = _response_headers(response)
             run.emit(
                 StepFinished(
                     step=result.steps,
                     model=model,
                     usage=step_usage,
                     finish_reason=choice.finish_reason,
+                    headers=headers,
+                    rate_limit=RateLimit.from_headers(headers),
                 )
             )
             if done:
