@@ -1,4 +1,7 @@
-"""Run a step's tool calls: parsing, middleware, parallel execution and cancellation."""
+"""Run a step's tool calls: parsing, middleware, parallel execution and cancellation.
+
+Also holds the naive tool call format: the prompt that asks for it and its parser.
+"""
 
 import asyncio
 import inspect
@@ -39,6 +42,25 @@ def _unfinished_text(task: asyncio.Future) -> str:
     if error is not None:
         return _failed_text(error)
     return _split_images(task.result()[1].to_message_content())[0]
+
+
+def _build_tools_prompt(tools: List[Any]) -> str:
+    if not tools:
+        return ""
+
+    tools_desc = "\n\nYou have access to the following tools:\n\n"
+    for tool in tools:
+        tools_desc += f"- {tool.name}: {tool.description}\n"
+        if tool.definition.parameters:
+            tools_desc += "  Parameters:\n"
+            for param in tool.definition.parameters.values():
+                tools_desc += f"    - {param.name} ({param.type}): {param.description or 'No description'}\n"
+
+    tools_desc += (
+        '\nTo use a tool, respond with JSON: {"tool": "tool_name", "args": {...}}\n'
+    )
+    tools_desc += "After using a tool, you'll receive the result and can provide a final answer.\n"
+    return tools_desc
 
 
 def _parse_naive_tool_call(content: str):

@@ -12,6 +12,7 @@ from cyclops.core.providers import (
     _native_schema,
 )
 from cyclops.core.run_state import _Run
+from cyclops.core.tool_execution import _build_tools_prompt
 from cyclops.core.types import AgentConfig, Usage
 from cyclops.skills import Skills
 
@@ -72,25 +73,6 @@ def _tool_to_openai_format(tool) -> Dict[str, Any]:
             "parameters": tool.definition.to_json_schema(),
         },
     }
-
-
-def _build_tools_prompt(tools: List[Any]) -> str:
-    if not tools:
-        return ""
-
-    tools_desc = "\n\nYou have access to the following tools:\n\n"
-    for tool in tools:
-        tools_desc += f"- {tool.name}: {tool.description}\n"
-        if tool.definition.parameters:
-            tools_desc += "  Parameters:\n"
-            for param in tool.definition.parameters.values():
-                tools_desc += f"    - {param.name} ({param.type}): {param.description or 'No description'}\n"
-
-    tools_desc += (
-        '\nTo use a tool, respond with JSON: {"tool": "tool_name", "args": {...}}\n'
-    )
-    tools_desc += "After using a tool, you'll receive the result and can provide a final answer.\n"
-    return tools_desc
 
 
 def _build_messages(
