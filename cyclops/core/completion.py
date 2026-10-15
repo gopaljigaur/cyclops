@@ -28,6 +28,7 @@ from cyclops.core.providers import (
     _response_schema,
     _takes_param,
 )
+from cyclops.core.hooks import _call_hook
 from cyclops.core.types import AgentConfig, Usage
 from cyclops.utils.compat import asyncio_timeout
 
@@ -140,15 +141,13 @@ def _retry_delay(
 
 
 async def _attempt(config: AgentConfig, /, **kwargs):
-    if config.hooks:
-        config.hooks.on_llm_start(kwargs.get("messages", []))
+    await _call_hook(config, "on_llm_start", kwargs.get("messages", []))
     try:
         if config.router:
             return await config.router.acompletion(model=config.model, **kwargs)
         return await litellm.acompletion(model=config.model, **kwargs)
     except Exception as e:
-        if config.hooks:
-            config.hooks.on_llm_error(e)
+        await _call_hook(config, "on_llm_error", e)
         raise
 
 
@@ -199,8 +198,7 @@ async def _astream_completion(
             yield chunk
             idle_timeout = config.stream_idle_timeout
     except Exception as e:
-        if config.hooks:
-            config.hooks.on_llm_error(e)
+        await _call_hook(config, "on_llm_error", e)
         raise
     finally:
         await response.aclose()

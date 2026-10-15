@@ -1,6 +1,6 @@
 # Hooks
 
-`AgentHooks` is a lifecycle callback system that lets you observe and control every stage of an agent run: from the initial call, through each LLM request, to every tool execution. Subclass `AgentHooks`, override the methods you need, and pass an instance to `AgentConfig`.
+`AgentHooks` is a lifecycle callback system that lets you observe and control every stage of an agent run: from the initial call, through each LLM request, to every tool execution. Subclass `AgentHooks`, override the methods you need, and pass an instance to `AgentConfig`. Each method may be a plain method or an `async def` one; an async one is awaited.
 
 ## Quick example
 
@@ -33,9 +33,11 @@ agent.run("What is the weather in London?")
 
 | Method | When it fires | Return value |
 |---|---|---|
-| `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()`, with the input text or its list of content parts | `None` |
+| `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()`, with the input text or its list of content parts | Text or content parts to replace the input, or `None` to keep it |
 | `on_run_end(content)` | When a run finishes, streamed or not | `None` |
 | `on_run_error(error)` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (`handle.cancel()`, or a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. A handle cancelled before its run started fires no hooks at all; its events still end with `RunFinished`. | `None` |
+| `on_subagent_start(agent_path, input_message)` | Before a [subagent](subagents.md) run nested in this agent's run starts. `agent_path` names the nested agents down to it, outermost first, as in events. | `None` |
+| `on_subagent_end(agent_path, result)` | When that subagent run ends, with its `RunResult`, whether it completed, failed or was cancelled | `None` |
 | `on_llm_start(messages)` | Before each LiteLLM completion call | `None` |
 | `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
@@ -48,9 +50,49 @@ All methods are no-ops by default. Override only the ones you need.
 
 In the tool hooks, `cyclops.core.hooks.current_tool_call_id()` returns the id of the native tool call being run (`None` in naive mode). Each native call runs in its own asyncio task, so the id is exact when calls run in parallel.
 
+## Rewriting the input with on_run_start
+
+`on_run_start` may return text or a list of content parts to use in place of the run's input, for instance to add context the model should see with the message. `None` keeps the input. The replacement is checked as run input is, so content the model can't take fails the run with `ValueError`, and it is what the model and the session get.
+
+```python
+from datetime import date
+
+from cyclops import AgentConfig, AgentHooks
+
+
+class AddDate(AgentHooks):
+    def on_run_start(self, input_message):
+        today = f"Today is {date.today()}."
+        if isinstance(input_message, str):
+            return f"{today}\n\n{input_message}"
+        return [{"type": "text", "text": today}, *input_message]
+
+
+config = AgentConfig(model="gpt-4o-mini", hooks=AddDate())
+```
+
+## Subagent runs
+
+A subagent run fires its own agent's hooks, from `on_run_start` to `on_run_end`. The calling agent's hooks see it as one tool call, and also get `on_subagent_start` and `on_subagent_end` around it. Only the direct caller's hooks get them: for a subagent of a subagent, give the middle agent the same hooks to see it from the top.
+
+```python
+class SubagentLog(AgentHooks):
+    def on_subagent_start(self, agent_path, input_message):
+        print(f"[{'/'.join(agent_path)}] started: {input_message}")
+
+    def on_subagent_end(self, agent_path, result):
+        print(f"[{'/'.join(agent_path)}] {result.stop_reason}: {result.content}")
+```
+
+## Hook timeouts
+
+`AgentConfig.hook_timeout` caps how many seconds each hook call may run. A hook that takes longer raises `TimeoutError`, and the run treats it as a hook that raised: in `on_tool_start` it fails the run, as middleware that raises does, so a slow approval never lets a call through. Without `hook_timeout`, hooks run as long as they take.
+
+An async hook is cancelled on timeout. A plain hook runs in a worker thread when `hook_timeout` is set, since that is the only way to stop waiting for it; the thread runs on after a timeout, and context variables the hook sets do not reach the run. `TelemetryHooks` keeps its spans in context variables, so leave `hook_timeout` unset with it.
+
 ## Tool approval with on_tool_start
 
-`on_tool_start` is the only hook with side effects: returning the string `"deny"` blocks the tool call. Any other return value (including `None`) allows it. The agent receives `"Error: Tool '<name>' was not approved"` as the tool result and continues.
+`on_tool_start` controls execution: returning the string `"deny"` blocks the tool call. Any other return value (including `None`) allows it. The agent receives `"Error: Tool '<name>' was not approved"` as the tool result and continues.
 
 ```python
 from cyclops import Agent, AgentConfig, AgentHooks
@@ -220,4 +262,4 @@ class ErrorHooks(AgentHooks):
 
 ## Default behaviour
 
-The default `AgentHooks` base class implements `on_tool_start` to return `"allow"` and all other methods as no-ops. You do not need to call `super()` in your overrides.
+The default `AgentHooks` base class implements `on_tool_start` to return `"allow"`, `on_run_start` to return `None`, and all other methods as no-ops. You do not need to call `super()` in your overrides.

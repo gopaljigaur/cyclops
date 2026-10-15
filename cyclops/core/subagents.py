@@ -4,7 +4,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 from weakref import WeakKeyDictionary
 
-from cyclops.core.hooks import RUN_STOPPED
+from cyclops.core.hooks import RUN_STOPPED, _call_hook
 from cyclops.core.run import _current_loop, _RunLoop
 from cyclops.core.run_state import _Run
 from cyclops.core.types import RunResult
@@ -32,8 +32,9 @@ class AgentTool(BaseTool):
     transcript. Called by another agent, the run is nested in that agent's
     run: it is cancelled with it, streams when it streams, its events go to
     that run's events with agent_path extended by the tool name, and its
-    usage counts in that run's usage and budgets. A run that fails or stops
-    without an answer gives an error result.
+    usage counts in that run's usage and budgets, and that agent's
+    on_subagent_start and on_subagent_end hooks see it start and end. A run
+    that fails or stops without an answer gives an error result.
     """
 
     def __init__(
@@ -82,7 +83,14 @@ class AgentTool(BaseTool):
             _slots[parent] = asyncio.Semaphore(parent.config.max_concurrent_subagents)
         async with _slots[parent]:
             run = _Run(config, [], None, parent=parent, name=self.name)
-            return await _RunLoop(self.agent, run, caller.stream).execute(input_message)
+            path = run.agent_path
+            await _call_hook(parent.config, "on_subagent_start", path, input_message)
+            try:
+                return await _RunLoop(self.agent, run, caller.stream).execute(
+                    input_message
+                )
+            finally:
+                await _call_hook(parent.config, "on_subagent_end", path, run.result)
 
 
 __all__ = ["AgentTool"]
