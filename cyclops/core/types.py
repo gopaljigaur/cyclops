@@ -232,7 +232,8 @@ class Usage(BaseModel):
     )
     api_duration: float = Field(
         default=0.0,
-        description="Seconds from each request to its whole response, retries included",
+        description="Seconds from each request to its whole response, retries "
+        "included; on a paced stream, also the caller's time reading it",
     )
 
     def __add__(self, other: "Usage") -> "Usage":
