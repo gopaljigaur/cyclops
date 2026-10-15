@@ -66,6 +66,9 @@ Span names and `gen_ai.*` attributes follow the [OpenTelemetry GenAI semantic co
 | `chat` | `gen_ai.response.finish_reasons` | Finish reason of each choice |
 | `chat` | `gen_ai.usage.input_tokens` | Prompt token count |
 | `chat` | `gen_ai.usage.output_tokens` | Completion token count |
+| `chat` | `gen_ai.usage.cache_read.input_tokens` | Prompt tokens read from the provider's cache, when reported |
+| `chat` | `gen_ai.usage.cache_write.input_tokens` | Prompt tokens written to the provider's cache, when reported |
+| `chat` | `gen_ai.usage.reasoning.output_tokens` | Completion tokens spent reasoning, when reported |
 | `execute_tool <name>` | `gen_ai.tool.name` | Tool name |
 | `execute_tool <name>` | `gen_ai.tool.call.id` | Tool call id (native tool calls only) |
 | `execute_tool <name>` | `cyclops.tool.args_count` | Number of arguments passed |

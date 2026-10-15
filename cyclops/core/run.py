@@ -1,6 +1,7 @@
 """The step loop of a run: completions, tool calls, guards and limits."""
 
 import asyncio
+import time
 import traceback
 import weakref
 from contextvars import ContextVar
@@ -19,7 +20,7 @@ import litellm
 from pydantic import TypeAdapter, ValidationError
 
 from cyclops.core.compaction import _context_window, _ContextWindow
-from cyclops.core.completion import _build_messages, _usage
+from cyclops.core.completion import _build_messages
 from cyclops.core.events import (
     Compacted,
     GuardRejected,
@@ -42,7 +43,7 @@ from cyclops.core.tool_execution import (
     _ToolExecutor,
 )
 from cyclops.core.tool_search import _ToolSearch
-from cyclops.core.types import AgentConfig, RunResult, StopReason
+from cyclops.core.types import AgentConfig, RunResult, StopReason, Usage, _added
 from cyclops.skills import Skills
 
 if TYPE_CHECKING:
@@ -124,6 +125,7 @@ class _RunLoop:
         """Run one turn and emit its events, ending with RunFinished."""
         run = self.run
         run.started = True
+        start = time.perf_counter()
         # Tools called in this run see it, so a subagent can nest its run in it.
         token = _current_loop.set(weakref.ref(self))
         interrupted: Optional[asyncio.CancelledError] = None
@@ -147,6 +149,7 @@ class _RunLoop:
             asyncio.get_running_loop().call_soon(_clear_frames, e.__traceback__)
         finally:
             _current_loop.reset(token)
+            run.result.duration = time.perf_counter() - start
         run.emit(RunFinished(result=run.result))
         if interrupted is not None:
             raise interrupted
@@ -158,10 +161,7 @@ class _RunLoop:
         if session is None:
             return
         # Unknown once any run's usage is unknown, like a run's own total.
-        if session.usage is None or usage is None:
-            session.usage = None
-        else:
-            session.usage += usage
+        session.usage = _added(session.usage, usage)
         if self.saver is not None:
             await self.saver.end(failed)
 
@@ -255,13 +255,12 @@ class _RunLoop:
                 del run.steering[:steered]
                 result.stop_reason = "budget"
                 return
-            model, response = answer
+            model, response, step_usage = answer
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
             del run.steering[:steered]
             result.steps += 1
-            step_usage = _usage(response)
-            run.spend(step_usage)
+            run.spend(model, step_usage)
             choice = response.choices[0]
             msg = choice.message
             result.finish_reason = choice.finish_reason
@@ -341,8 +340,8 @@ class _RunLoop:
         system_prompt: Optional[str],
         requests: List[_Request],
         streamed: bool,
-    ) -> Optional[Tuple[str, Any]]:
-        """The model that answered a step, and its completion, kept within the
+    ) -> Optional[Tuple[str, Any, Optional[Usage]]]:
+        """The model that answered a step, its completion and usage, kept within the
         context window of the configured model; None if a refusal spent the
         run's budget before the next model.
 

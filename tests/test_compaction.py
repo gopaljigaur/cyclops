@@ -303,9 +303,13 @@ def test_the_summary_model_can_differ():
     agent = Agent(AgentConfig(model=MODEL, compaction=Compaction(model="gpt-4o-mini")))
 
     with _replies("Summary.", "Done.") as mock:
-        agent.run("Go on.", session=_long_session())
+        result = agent.run_with_response("Go on.", session=_long_session())
 
     assert [c.kwargs["model"] for c in mock.call_args_list] == ["gpt-4o-mini", MODEL]
+    # The summary's usage counts under the model that wrote it.
+    by_model = result.usage_by_model
+    assert set(by_model) == {"gpt-4o-mini", MODEL}
+    assert by_model["gpt-4o-mini"].total_tokens == by_model[MODEL].total_tokens == 30
 
 
 def test_a_router_uses_its_smallest_deployment_window():

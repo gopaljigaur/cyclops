@@ -52,6 +52,8 @@ asyncio.run(main())
 | `finish_reason` | `str \| None` | The last completion's finish reason as LiteLLM normalizes it: `"stop"`, `"length"`, `"tool_calls"` or `"content_filter"`. `None` if the run made none. |
 | `steps` | `int` | LLM completions made in the run. |
 | `usage` | `Usage \| None` | Tokens and cost summed over every completion in the run, including those of [subagents](/guides/subagents/) it called. `None` if any completion reported no usage. |
+| `usage_by_model` | `Dict[str, Usage \| None]` | `usage` split by the model, as configured, that made each completion: [fallback models](/guides/agents/#fallback-models), [subagents](/guides/subagents/) on other models and a compaction model each get their own entry. A model's entry is `None` if one of its completions reported no usage. |
+| `duration` | `float` | Wall-clock seconds the run took, tool calls and waits included. |
 | `error` | `Exception \| None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |
 | `tokens_used` | `int \| None` | Total tokens (prompt + completion), from `usage`. |
 | `prompt_tokens` | `int \| None` | Tokens in the prompt/context sent to the model, from `usage`. |
@@ -60,6 +62,28 @@ asyncio.run(main())
 | `cost` | `float \| None` | Estimated USD cost LiteLLM computed for each completion, with the pricing of the deployment that served it. `None` if LiteLLM can't price a completion of the run. |
 
 `tokens_used`, `prompt_tokens`, `completion_tokens`, `cached_tokens` and `cost` are read-only properties over `usage`.
+
+## Usage fields
+
+`RunResult.usage`, each entry of `usage_by_model`, `StepFinished.usage` and `session.usage` are `Usage` objects, and two of them add up with `+`. The token counts are those LiteLLM normalizes from each provider's response.
+
+| Field | Type | Description |
+|---|---|---|
+| `prompt_tokens` | `int` | Input tokens, the cached and cache-written ones included. |
+| `completion_tokens` | `int` | Output tokens, the reasoning ones included. |
+| `cached_tokens` | `int` | Prompt tokens read from the provider's cache. |
+| `cache_write_tokens` | `int` | Prompt tokens written to the provider's cache. Anthropic and Bedrock report them; OpenAI and Gemini cache without reporting writes. |
+| `reasoning_tokens` | `int` | Completion tokens the model spent reasoning, for models that report them. |
+| `total_tokens` | `int` | Prompt plus completion tokens. |
+| `cost` | `float \| None` | Estimated USD cost. `None` if LiteLLM can't price a completion. |
+| `api_duration` | `float` | Seconds from each completion's request to its whole response, retries included. A paced stream (`stream()`, `astream()`, `stream_events()` or `astream_events()`) reads only a few chunks ahead of the caller, so the time the caller takes to read it counts too. Completions of subagents run in parallel add up, so this can exceed the run's `duration`. |
+
+```python
+result = agent.run_with_response("Summarise the report.")
+for model, usage in result.usage_by_model.items():
+    print(f"{model}: {usage.total_tokens} tokens, ${usage.cost:.6f}")
+print(f"{result.duration:.1f}s in all, {result.usage.api_duration:.1f}s in completions")
+```
 
 Each `ToolCall` in `tool_calls` has:
 

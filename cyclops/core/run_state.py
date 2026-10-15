@@ -9,7 +9,7 @@ from cyclops.core.content import UserContent, _Content, _user_content
 from cyclops.core.events import Event, ReasoningDelta, RunFinished, TextDelta
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.session import Session
-from cyclops.core.types import AgentConfig, RunResult, Usage
+from cyclops.core.types import AgentConfig, RunResult, Usage, _added
 
 
 class _Events(asyncio.Queue):
@@ -100,17 +100,17 @@ class _Run:
         if self.paced and self.events.qsize() > ahead:
             await self.events.join()
 
-    def spend(self, usage: Optional[Usage]) -> None:
-        """Count one completion in this run and every run it is nested in."""
+    def spend(self, model: str, usage: Optional[Usage]) -> None:
+        """Count one completion of model in this run and every run it is nested in."""
         if usage is not None:
             self.spent_tokens += usage.total_tokens
             self.spent_cost += usage.cost or 0.0
-        if self.result.usage is None or usage is None:
-            self.result.usage = None
-        else:
-            self.result.usage += usage
+        result = self.result
+        result.usage = _added(result.usage, usage)
+        by_model = result.usage_by_model
+        by_model[model] = _added(by_model.get(model, Usage()), usage)
         if self.parent is not None:
-            self.parent.spend(usage)
+            self.parent.spend(model, usage)
 
     def over_budget(self) -> bool:
         """True once this run or one it is nested in reached its token or cost limit."""

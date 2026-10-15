@@ -161,6 +161,8 @@ class RunResult(BaseModel):
     finish_reason: Optional[str]
     steps: int
     usage: Optional[Usage]
+    usage_by_model: Dict[str, Optional[Usage]]  # keyed by the configured model
+    duration: float  # wall-clock seconds
     error: Optional[Exception]
     # Read-only properties over usage:
     tokens_used, cost, prompt_tokens, completion_tokens, cached_tokens
@@ -169,9 +171,12 @@ class RunResult(BaseModel):
 class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
-    cached_tokens: int
+    cached_tokens: int       # read from the provider's cache, in prompt_tokens
+    cache_write_tokens: int  # written to the provider's cache, in prompt_tokens
+    reasoning_tokens: int    # spent reasoning, in completion_tokens
     total_tokens: int
     cost: Optional[float]  # None when LiteLLM can't price a completion
+    api_duration: float    # seconds spent in completions, retries included
 ```
 
 ---

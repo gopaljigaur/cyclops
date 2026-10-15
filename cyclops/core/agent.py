@@ -14,7 +14,7 @@ from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.tool_search import SEARCH_TOOL_NAME, _ToolSearch
-from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage
+from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage, _added
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolAnnotations
 
@@ -205,11 +205,8 @@ class Agent:
         Raises ValueError when LiteLLM knows no input limit for the model.
         """
 
-        def spend(usage: Optional[Usage]) -> None:
-            if session.usage is None or usage is None:
-                session.usage = None
-            else:
-                session.usage += usage
+        def spend(model: str, usage: Optional[Usage]) -> None:
+            session.usage = _added(session.usage, usage)
 
         mode = self._get_tool_mode()
         # The tools a run starts with: deferred ones only once found.

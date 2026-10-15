@@ -1,6 +1,7 @@
 """Keep a run's requests within the model's context window by summarizing older messages."""
 
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
@@ -19,6 +20,9 @@ _SUMMARY_PREFIX = "Here is a summary of the conversation to date:\n\n"
 
 # A model to count tokens for, its max input tokens and max output tokens.
 _Limits = Tuple[str, int, Optional[int]]
+
+# Counts a completion's usage under the model that made it.
+_Spend = Callable[[str, Optional[Usage]], None]
 
 
 def _window(config: AgentConfig) -> Optional[_Limits]:
@@ -124,7 +128,7 @@ class _ContextWindow:
         self,
         config: AgentConfig,
         limits: _Limits,
-        spend: Callable[[Optional[Usage]], None],
+        spend: _Spend,
     ) -> None:
         self.config = config
         self.model, self.max_input_tokens, self.max_output_tokens = limits
@@ -297,12 +301,14 @@ class _ContextWindow:
                 f"summarizing model's window of {max_input} tokens"
             )
         prompt = head + "\n\n".join(lines) + tail
+        start = time.perf_counter()
         response = await _acompletion(
             config, messages=[{"role": "user", "content": prompt}], **kwargs
         )
+        api_duration = time.perf_counter() - start
         if config.hooks:
             config.hooks.on_llm_end(response)
-        self.spend(_usage(response))
+        self.spend(config.model, _usage(response, api_duration))
         choice = response.choices[0]
         summary = choice.message.content
         if not summary or choice.finish_reason in ("length", "content_filter"):
@@ -322,7 +328,7 @@ def _summary_config(config: AgentConfig, compaction: Compaction) -> AgentConfig:
 def _compaction_window(
     config: AgentConfig,
     compaction: Compaction,
-    spend: Callable[[Optional[Usage]], None],
+    spend: _Spend,
 ) -> _ContextWindow:
     """A context window that compacts; raises ValueError when LiteLLM knows no
     input limit for the model or the summarizing model."""
@@ -333,7 +339,7 @@ def _compaction_window(
 def _context_window(
     config: AgentConfig,
     compaction: Optional[Compaction],
-    spend: Callable[[Optional[Usage]], None],
+    spend: _Spend,
 ) -> Optional[_ContextWindow]:
     """A context window for the config's model; without compaction, None when
     LiteLLM knows no input limit for it."""

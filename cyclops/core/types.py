@@ -213,14 +213,27 @@ class DeniedToolCall(BaseModel):
 
 
 class Usage(BaseModel):
-    """Tokens and cost of one or more LLM completions."""
+    """Tokens, cost and API time of one or more LLM completions."""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    cached_tokens: int = 0
+    cached_tokens: int = Field(
+        default=0, description="Prompt tokens read from the provider's cache"
+    )
+    cache_write_tokens: int = Field(
+        default=0, description="Prompt tokens written to the provider's cache"
+    )
+    reasoning_tokens: int = Field(
+        default=0, description="Completion tokens the model spent reasoning"
+    )
     total_tokens: int = 0
     cost: Optional[float] = Field(
         default=0.0, description="USD; None when LiteLLM can't price a completion"
+    )
+    api_duration: float = Field(
+        default=0.0,
+        description="Seconds from each request to its whole response, retries "
+        "included; on a paced stream, also the caller's time reading it",
     )
 
     def __add__(self, other: "Usage") -> "Usage":
@@ -231,9 +244,19 @@ class Usage(BaseModel):
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
             cost=cost,
+            api_duration=self.api_duration + other.api_duration,
         )
+
+
+def _added(total: Optional[Usage], usage: Optional[Usage]) -> Optional[Usage]:
+    """The sum of two usages; None once either is unknown."""
+    if total is None or usage is None:
+        return None
+    return total + usage
 
 
 StopReason = Literal[
@@ -284,6 +307,12 @@ class RunResult(BaseModel):
         description="Summed over every completion, nested runs included; None if "
         "one reported no usage",
     )
+    usage_by_model: Dict[str, Optional[Usage]] = Field(
+        default_factory=dict,
+        description="Usage split by the model, as configured, that made each "
+        "completion; a model's is None if one of its completions reported none",
+    )
+    duration: float = Field(default=0.0, description="Wall-clock seconds of the run")
     error: Optional[Exception] = Field(
         default=None, exclude=True, description="What ended the run with 'error'"
     )
