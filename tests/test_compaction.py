@@ -457,6 +457,54 @@ def test_the_summary_input_fits_the_summarizing_model():
     assert litellm.token_counter(model="cyclops-tinier-window", messages=sent) <= 150
 
 
+def test_a_model_whose_output_limit_equals_its_input_limit_gets_the_transcript():
+    model = "cyclops-even-window"
+    litellm.register_model(
+        {
+            model: {
+                "max_input_tokens": 400,
+                "max_output_tokens": 400,
+                "litellm_provider": "openai",
+                "mode": "chat",
+            }
+        }
+    )
+    agent = Agent(AgentConfig(model=model, compaction=Compaction()))
+
+    with _replies("Summary.", "Done.") as mock:
+        agent.run("Go on.", session=_long_session())
+
+    summary = mock.call_args_list[0].kwargs
+    # The summary gets keep of the window, and the transcript the rest.
+    assert summary["max_tokens"] == 80
+    assert "user: word word" in summary["messages"][0]["content"]
+
+
+def test_a_summarizing_window_without_room_for_the_conversation_raises():
+    litellm.register_model(
+        {
+            "cyclops-no-room": {
+                "max_input_tokens": 60,
+                "max_output_tokens": 10,
+                "litellm_provider": "openai",
+                "mode": "chat",
+            }
+        }
+    )
+    agent = Agent(
+        AgentConfig(model=MODEL, compaction=Compaction(model="cyclops-no-room"))
+    )
+    session = _long_session()
+    earlier = list(session.messages)
+
+    with _replies() as mock:
+        result = agent.run_with_response("Go on.", session=session)
+
+    mock.assert_not_called()
+    assert isinstance(result.error, RuntimeError)
+    assert session.messages == earlier + [{"role": "user", "content": "Go on."}]
+
+
 def test_a_failing_summary_leaves_the_transcript_as_it_was():
     agent = Agent(AgentConfig(model=MODEL, compaction=Compaction(), num_retries=0))
     session = _long_session()

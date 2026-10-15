@@ -80,17 +80,20 @@ def _text(message: Dict[str, Any]) -> str:
 def _trimmed(lines: List[str], counts: List[int], budget: int) -> List[str]:
     """The newest lines within budget tokens, with a note of the oldest left out.
 
-    A newest line longer than the budget keeps its end.
+    A newest line longer than the budget keeps its end. Empty if nothing fits.
     """
     kept: List[str] = []
     total = 0
     for line, count in zip(reversed(lines), reversed(counts)):
         if total + count > budget:
-            if not kept:
-                kept.append(line[len(line) - len(line) * max(budget, 0) // count :])
+            end = line[len(line) - len(line) * max(budget, 0) // count :]
+            if not kept and end:
+                kept.append(end)
             break
         kept.append(line)
         total += count
+    if not kept:
+        return []
     omitted = len(lines) - len(kept)
     if omitted:
         kept.append(f"[{omitted} earlier messages omitted]")
@@ -226,14 +229,23 @@ class _ContextWindow:
         # A one-off request gains nothing from a cache write.
         kwargs.pop("cache_control_injection_points", None)
         model, max_input, max_output = self._summary_window
+        # As long as the kept messages at most, so the summary leaves room.
+        kwargs["max_tokens"] = int(self.compaction.keep * self.max_input_tokens)
+        if max_output is not None:
+            kwargs["max_tokens"] = min(kwargs["max_tokens"], max_output)
         head = f"{self.compaction.prompt}\n\n<conversation>\n"
         tail = "\n</conversation>"
         budget = (
             max_input
-            - (kwargs.get("max_tokens") or max_output or 0)
+            - kwargs["max_tokens"]
             - litellm.token_counter(model=model, text=head + tail)
         )
         lines = _trimmed([_text(m) for m in messages], counts, budget)
+        if not lines:
+            raise RuntimeError(
+                "Compaction found no room for the conversation in the "
+                f"summarizing model's window of {max_input} tokens"
+            )
         prompt = head + "\n\n".join(lines) + tail
         response = await _acompletion(
             config, messages=[{"role": "user", "content": prompt}], **kwargs
