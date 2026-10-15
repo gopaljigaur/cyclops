@@ -2,7 +2,16 @@
 
 import asyncio
 from contextlib import aclosing
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Type
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Type,
+)
 
 import litellm
 
@@ -11,14 +20,13 @@ import litellm
 from litellm import _calculate_retry_after, _should_retry
 
 from cyclops.core.caching import _cache_points
-from cyclops.core.events import ReasoningDelta, TextDelta
+from cyclops.core.events import Event, ReasoningDelta, TextDelta
 from cyclops.core.providers import (
     _every_deployment,
     _every_deployment_takes,
     _marker_caching_supported,
     _native_schema,
 )
-from cyclops.core.run_state import _Run
 from cyclops.core.types import AgentConfig, Usage
 from cyclops.utils.compat import asyncio_timeout
 
@@ -197,7 +205,15 @@ async def _astream_completion(
 _READ_AHEAD = 16
 
 
-async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run):
+class _Output(Protocol):
+    """Where a streamed completion's deltas go: a run, as _Run implements it."""
+
+    def emit(self, event: Event) -> None: ...
+
+    async def taken(self, ahead: int = 0) -> None: ...
+
+
+async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Output):
     """Stream a completion, emitting its deltas, and build the whole response.
 
     Until a delta is emitted, a transient error is retried as in _acompletion

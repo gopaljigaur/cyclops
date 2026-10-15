@@ -26,6 +26,7 @@ config = AgentConfig(
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model` | `str` | required | LiteLLM model string, e.g. `"gpt-4o-mini"`, `"groq/llama-3.1-8b-instant"`, `"ollama/qwen3:4b"`. |
+| `fallback_models` | `list[str]` | `[]` | Models a step's completion goes to in turn when the model is still overloaded or down after its retries, or refuses. See [Fallback models](#fallback-models). |
 | `temperature` | `float \| None` | `None` | Sampling temperature. Lower values are more deterministic. `None` uses the model's default. |
 | `max_tokens` | `int \| None` | `None` | Maximum tokens in the response. `None` uses the model's default. |
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
@@ -221,6 +222,33 @@ config = AgentConfig(
 ```
 
 Each attempt fires `on_llm_start`, and `on_llm_error` if it fails. `num_retries=0` turns off the retries of failed requests; a stalled stream is still retried once. With a `router`, the request's retries and timeout are the Router's own (`num_retries`, `retry_policy`, `timeout`, `stream_timeout`), and the stream idle timeout and its one retry still apply.
+
+## Fallback models
+
+`fallback_models` lists the models a step's completion goes to, in order, when the model can't answer it:
+
+- it is still overloaded or unavailable after its [retries](#retries-and-timeouts): a rate limit, an overloaded or 5xx response, a timeout or a connection error, or a spent quota, which is not retried;
+- the provider blocks the request for its content (`litellm.ContentPolicyViolationError`), or the model refuses: its completion's `finish_reason` is `content_filter`.
+
+```python
+config = AgentConfig(
+    model="anthropic/claude-sonnet-4-5",
+    fallback_models=["gpt-4.1", "gemini/gemini-2.5-pro"],
+    num_retries=1,
+)
+```
+
+Each model gets its own retries before the next one is tried, and each request is built for the model it goes to: reasoning options, prompt caching markers and structured output go only to the models that take them. The models share one conversation, so what shapes it follows `model` or the whole list: images a tool returns stay in its tool message only when every model takes them there, and the tool mode is the one `model` gets, so give every fallback model tool calling when `model` has it. `completion_kwargs` go to every model, so give a fallback model on another provider its credentials through the environment. Other errors, such as authentication or invalid request errors, end the run as before, and so does the last model's error or refusal. A streamed completion falls back only while none of its text or reasoning has been emitted, as with retries.
+
+The [context window](#context-window) follows `model`: requests are counted, compacted and given a lower `max_tokens` against its limits, and that `max_tokens` goes to every model. A fallback model with a smaller window may overflow; its overflow doesn't fall back but gets the same remedies as one of `model`, and the step then starts again with `model`. The compaction summary goes to `Compaction.model`, or else `model`, without fallbacks: when that model is down, the failed summary ends the run, so set `Compaction.model` to another provider's model if compaction has to work through an outage.
+
+A refusal whose usage reaches `max_total_tokens` or `max_cost` ends the run with `stop_reason="budget"` instead of going to the next model.
+
+Every step starts with `model` again, as LiteLLM's fallbacks start every request with the first model: a run returns to the model as soon as it recovers, at the cost of its retries on each step while it is down. Lower `num_retries` to switch sooner.
+
+Each switch emits a [`ModelFallback`](/guides/streaming/#run-events) event with the `model` that failed, the `fallback_model` tried next, and the `error` it raised; for a refusal, `error` is `None` and `usage` holds the refused completion's usage, which counts in the run's usage and cost since the provider bills it. `StepFinished.model` names the model that answered each step, and that step's `usage` and cost are its own; `RunResult.model` stays the configured model. Every attempt fires `on_llm_start`, then `on_llm_error`, or `on_llm_end` for a refusal, so [`TelemetryHooks`](/guides/observability/) records each as a `chat` span, and `gen_ai.response.model` on the answering one names the model that answered.
+
+LiteLLM's own `fallbacks` argument is not used: it moves to the next model on every error, raises a plain `Exception` with only the last message once all fail, doesn't act on a refusal, and for a stream covers only its opening. With a `router`, set fallbacks on the Router instead (`fallbacks`, `content_policy_fallbacks`); `fallback_models` and `router` can't both be set.
 
 ## Reasoning in history
 

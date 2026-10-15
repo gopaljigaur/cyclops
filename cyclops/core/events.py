@@ -52,10 +52,28 @@ class GuardRejected(Event):
     feedback: str
 
 
+class ModelFallback(Event):
+    """A model failed or refused, so the step's completion goes to the next model."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    model: str = Field(description="The model that failed or refused")
+    fallback_model: str = Field(description="The model tried next")
+    error: Optional[Exception] = Field(
+        default=None, exclude=True, description="What it raised; None if it refused"
+    )
+    usage: Optional[Usage] = Field(
+        default=None, description="The refused completion's usage, counted in the run"
+    )
+
+
 class StepFinished(Event):
     """One LLM completion and the tool calls it asked for are done."""
 
     step: int = Field(description="1 for the first step of the run")
+    model: Optional[str] = Field(
+        default=None, description="The model that answered, as configured"
+    )
     usage: Optional[Usage] = Field(description="None if the completion had none")
     finish_reason: Optional[str] = Field(
         default=None,
@@ -85,6 +103,7 @@ __all__ = [
     "ToolCallStarted",
     "ToolCallFinished",
     "GuardRejected",
+    "ModelFallback",
     "StepFinished",
     "Compacted",
     "RunFinished",

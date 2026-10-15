@@ -57,6 +57,12 @@ class AgentConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     model: str
+    fallback_models: List[str] = Field(
+        default_factory=list,
+        description="Models a step's completion goes to in turn when the model "
+        "is still overloaded or down after its retries, or refuses; every step "
+        "starts with model",
+    )
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
@@ -147,6 +153,12 @@ class AgentConfig(BaseModel):
         # LiteLLM maps each onto the same provider setting.
         if self.reasoning_effort is not None and self.thinking_budget is not None:
             raise ValueError("set reasoning_effort or thinking_budget, not both")
+        return self
+
+    @model_validator(mode="after")
+    def _one_fallback_option(self) -> "AgentConfig":
+        if self.router is not None and self.fallback_models:
+            raise ValueError("set fallbacks on the router, not fallback_models")
         return self
 
 
