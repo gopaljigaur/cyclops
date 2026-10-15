@@ -349,7 +349,7 @@ litellm.register_model(
 )
 ```
 
-Registering it also stops LiteLLM's own `/api/show` requests: for an Ollama model its map lacks, LiteLLM prices each completion by asking the server, four or five requests per completion, sent to `OLLAMA_API_BASE` or localhost even when the model has its own `api_base`.
+Registering it also stops LiteLLM's own `/api/show` requests: for an Ollama model its map lacks, LiteLLM prices each completion by asking the server, four or five requests per completion, sent mostly to `OLLAMA_API_BASE` or localhost even when the model has its own `api_base`.
 
 ### Compaction
 
