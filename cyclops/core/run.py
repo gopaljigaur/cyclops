@@ -299,13 +299,11 @@ class _RunLoop:
             else:
                 assistant["content"] = content
                 run.history.append(assistant)
+                # Whether a step is left to send the answer back in.
+                retry = step + 1 < limit and not run.over_budget()
                 feedback = self._validation_feedback(content)
                 if feedback is not None:
-                    if (
-                        output_retries < self.config.output_retries
-                        and step + 1 < limit
-                        and not run.over_budget()
-                    ):
+                    if retry and output_retries < self.config.output_retries:
                         output_retries += 1
                         run.emit(OutputRejected(feedback=feedback))
                     else:
@@ -316,12 +314,12 @@ class _RunLoop:
                 elif (feedback := await self._guard_feedback(content)) is None:
                     result.content = content
                     done = True
-                elif guard_rounds == self.config.max_guard_rounds:
-                    result.stop_reason = "guard"
-                    done = True
-                else:
+                elif retry and guard_rounds < self.config.max_guard_rounds:
                     guard_rounds += 1
                     run.emit(GuardRejected(feedback=feedback))
+                else:
+                    result.stop_reason = "guard"
+                    done = True
             run.emit(
                 StepFinished(
                     step=result.steps,

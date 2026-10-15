@@ -157,7 +157,7 @@ for denied in result.denied_tool_calls:
 
 ## End-of-run guards
 
-A guard runs when the model ends its turn without calling a tool. It is an async function that takes a `GuardContext` (`content`, `messages`, `run_id`, `agent_path`) and returns feedback or `None`. Feedback is added as a user message and the model runs again. Guards run in order and the first one with feedback wins. `max_guard_rounds` (default `3`) caps how many times per run guards may send the model back. If a guard still has feedback after that, the run ends with `stop_reason="guard"` and empty `content`. Each guard round is a step, so it counts against `max_steps` and the token and cost budgets; if a limit stops the run first, the feedback is not added to the conversation.
+A guard runs when the model ends its turn without calling a tool. It is an async function that takes a `GuardContext` (`content`, `messages`, `run_id`, `agent_path`) and returns feedback or `None`. Feedback is added as a user message and the model runs again. Guards run in order and the first one with feedback wins. `max_guard_rounds` (default `3`) caps how many times per run guards may send the model back. If a guard still has feedback after that, the run ends with `stop_reason="guard"` and empty `content`. Each guard round is a step, so it counts against `max_steps` and the token and cost budgets. When no step or budget is left for another round, a guard with feedback ends the run with `stop_reason="guard"` the same way, and the feedback is not added to the conversation.
 
 ```python
 from cyclops import Agent, AgentConfig

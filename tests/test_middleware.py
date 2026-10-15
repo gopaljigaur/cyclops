@@ -476,7 +476,8 @@ def test_guard_rounds_count_as_steps():
 
     assert mock.call_count == 2
     assert result.steps == 2
-    assert result.stop_reason == "max_steps"
+    # No step is left for another round, so the guard ends the run.
+    assert result.stop_reason == "guard"
     # A rejected answer is never the result.
     assert result.content == ""
     # Feedback no step answers is not left in the history.
@@ -493,9 +494,26 @@ def test_guard_rounds_are_under_the_budget():
     result, mock = _run(agent, responses, session=session)
 
     assert mock.call_count == 1
-    assert result.stop_reason == "budget"
+    assert result.stop_reason == "guard"
     assert result.content == ""
     assert session.messages[-1] == {"role": "assistant", "content": "answer 0"}
+
+
+async def test_a_guard_rejection_without_a_step_left_emits_no_guard_rejected():
+    async def never_happy(context):
+        return "Try again."
+
+    agent = Agent(config=_make_config(guards=[never_happy], max_steps=1))
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("answer")),
+    ):
+        events = [e async for e in agent.start("go", stream=False)]
+
+    kinds = [type(e).__name__ for e in events]
+    assert "GuardRejected" not in kinds
+    assert events[-1].result.stop_reason == "guard"
+    assert events[-1].result.content == ""
 
 
 def test_first_guard_with_feedback_wins():
