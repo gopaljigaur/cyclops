@@ -36,6 +36,8 @@ config = AgentConfig(
 | `max_cost` | `float` or `None` | `None` | Most USD one run may cost, checked between steps. |
 | `max_subagent_depth` | `int` | `5` | Most levels of [subagent](/guides/subagents/) runs below one run. |
 | `max_concurrent_subagents` | `int` | `10` | Most subagent runs one run has going at once; more calls wait. |
+| `max_parallel_tool_calls` | `int` | `10` | Most tool calls of one step that run at the same time; at least 1. See [Parallel calls and timeouts](/guides/tools/#parallel-calls-and-timeouts). |
+| `tool_timeout` | `float` or `None` | `None` | Seconds a tool call may run before it is cancelled and returns an error. A tool's own `timeout` wins. |
 | `hooks` | `AgentHooks` or `None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](/guides/hooks/). |
 
 ## Constructing an Agent

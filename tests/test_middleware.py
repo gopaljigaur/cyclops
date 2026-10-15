@@ -620,7 +620,7 @@ def test_denied_call_still_starts_and_finishes():
 
 
 def test_every_started_call_finishes_when_middleware_raises():
-    @tool
+    @tool(annotations=ToolAnnotations(read_only=True))
     async def slow() -> str:
         """Slow."""
         await asyncio.sleep(5)

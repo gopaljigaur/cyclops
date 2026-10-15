@@ -37,6 +37,16 @@ class AgentConfig(BaseModel):
     max_concurrent_subagents: int = Field(
         default=10, ge=1, description="Most subagent runs one run has going at once"
     )
+    max_parallel_tool_calls: int = Field(
+        default=10,
+        ge=1,
+        description="Most tool calls of one step that run at the same time",
+    )
+    tool_timeout: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Seconds a tool call may run; a tool's own timeout wins",
+    )
     hooks: Optional[AgentHooks] = None
     middleware: List[ToolMiddleware] = Field(default_factory=list)
     guards: List[Guard] = Field(default_factory=list)

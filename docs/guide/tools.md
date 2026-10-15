@@ -146,7 +146,7 @@ Hooks (`on_tool_end`) and `RunResult.tool_calls` receive the text of the result.
 
 ## Annotations
 
-Tools can carry behaviour hints that mirror MCP tool annotations. They are not enforced; hooks and other code can read them from `tool.annotations`.
+Tools can carry behaviour hints that mirror MCP tool annotations. The agent reads `read_only` to decide which calls may run in parallel (see below); the others are not enforced, and hooks and other code can read all of them from `tool.annotations`.
 
 ```python
 from cyclops.toolkit import ToolAnnotations
@@ -159,6 +159,24 @@ def fetch_page(url: str) -> str:
 ```
 
 `BaseTool` subclasses pass `annotations=` to `super().__init__()`. The fields are `read_only`, `destructive`, `idempotent` and `open_world`; each defaults to `None` (unknown).
+
+## Parallel calls and timeouts
+
+When the model asks for several tools in one step, calls to tools marked `read_only=True` run at the same time. Every other call may change something, so those run one at a time in the order the model gave them, alongside the read-only ones. `AgentConfig.max_parallel_tool_calls` (default `10`) caps how many calls of a step run at once. A call waiting for its turn has not started: it gets no `ToolCallStarted` event until it runs. If middleware raises, that call ends the step: the calls still running are cancelled, and a call that has not started by then never starts and gets `Tool call cancelled.`
+
+`AgentConfig.tool_timeout` sets how many seconds any call may run, and a tool's own `timeout` overrides it:
+
+```python
+agent = Agent(config=AgentConfig(model="gpt-4o-mini", tool_timeout=30), tools=[...])
+
+
+@tool(timeout=120)
+def build_report(month: str) -> str:
+    """Build the monthly report."""
+    ...
+```
+
+A call that runs over is cancelled and the model gets `Error: <tool> timed out after <n> seconds`. Middleware `after_tool`, `on_tool_error` and the `ToolCallFinished` event see it as any other failed call, with an `asyncio.TimeoutError`. A sync tool runs in a worker thread, which cannot be stopped: the agent moves on, but the function runs until it returns. MCP tools also have the client's own `call_timeout`.
 
 ## ToolRegistry
 

@@ -1,7 +1,7 @@
 """Agents as tools: a tool that runs an agent, nested in the calling agent's run."""
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 from weakref import WeakKeyDictionary
 
 from cyclops.core.hooks import RUN_STOPPED
@@ -9,7 +9,7 @@ from cyclops.core.run import _current_loop, _RunLoop
 from cyclops.core.run_state import _Run
 from cyclops.core.types import RunResult
 from cyclops.toolkit.tool import BaseTool
-from cyclops.toolkit.types import ToolResult
+from cyclops.toolkit.types import ToolAnnotations, ToolResult
 
 if TYPE_CHECKING:
     from cyclops.core.agent import Agent
@@ -36,9 +36,16 @@ class AgentTool(BaseTool):
     without an answer gives an error result.
     """
 
-    def __init__(self, agent: "Agent", name: str, description: str) -> None:
+    def __init__(
+        self,
+        agent: "Agent",
+        name: str,
+        description: str,
+        annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
+    ) -> None:
         self.agent = agent
-        super().__init__(name, description)
+        super().__init__(name, description, annotations, timeout)
 
     async def execute(self, input: str) -> Any:  # type: ignore[override]
         """Run the agent.
