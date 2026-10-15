@@ -48,7 +48,7 @@ await mcp.attach("legacy", url="https://example.com/sse", transport="sse")
 
 ### Reconnects
 
-A stdio server that exits is seen at once. A dropped remote session is seen by the call it breaks; the client does not watch idle remote sessions. The next call then reconnects, and for a remote server the reconnect starts in the background right away. Calls share one reconnect and wait for it up to `call_timeout`; if it is still running then, the call returns an error result and the reconnect goes on. Attempts back off exponentially with full jitter and stop after `max_retries`. The names follow the TypeScript SDK's reconnection options, in seconds; the defaults are cyclops' own, long enough to ride out a server restart:
+A stdio or SSE server that exits is seen at once. A dropped streamable HTTP session is seen by the call it breaks; the client does not watch idle streamable HTTP sessions. The next call then reconnects, and for a remote server the reconnect starts in the background right away. Calls share one reconnect and wait for it up to `call_timeout`; if it is still running then, the call returns an error result and the reconnect goes on. Attempts back off exponentially with full jitter and stop after `max_retries`. The names follow the TypeScript SDK's reconnection options, in seconds; the defaults are cyclops' own, long enough to ride out a server restart:
 
 ```python
 from cyclops.mcp import ReconnectionOptions
@@ -71,7 +71,7 @@ A call can wait for a reconnect twice, each time up to `call_timeout`: once when
 
 ### Status
 
-`status(name)` gives a server's `ServerStatus`: its `state` (`"connecting"`, `"connected"`, `"disconnected"` or `"failed"`) and the `error` behind it. It reflects the last call or reconnect, and the exit of a stdio server: a remote server that went away while idle reads `"connected"` until a call finds out. A server is `"disconnected"` after a drop or an idle close, `"connecting"` while reconnecting, and `"failed"` once every retry failed; the next call starts reconnecting again.
+`status(name)` gives a server's `ServerStatus`: its `state` (`"connecting"`, `"connected"`, `"disconnected"` or `"failed"`) and the `error` behind it. It reflects the last call or reconnect, and the exit of a stdio or SSE server: a streamable HTTP server that went away while idle reads `"connected"` until a call finds out. A server is `"disconnected"` after a drop or an idle close, `"connecting"` while reconnecting, and `"failed"` once every retry failed; the next call starts reconnecting again.
 
 ```python
 for name in mcp.servers:
