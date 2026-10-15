@@ -5,12 +5,11 @@ import contextlib
 import logging
 import random
 import sys
-import weakref
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import (
     Any,
     AsyncIterator,
-    Awaitable,
     Callable,
     Dict,
     Iterator,
@@ -91,6 +90,29 @@ def _cause(error: BaseException) -> BaseException:
     return error
 
 
+@dataclass
+class _Attempt:
+    """One attempt at a call; ``refused`` once the server answers it 404."""
+
+    refused: bool = False
+
+
+# The call attempt of the running task; its requests carry this context.
+_attempt: ContextVar[Optional[_Attempt]] = ContextVar("_attempt", default=None)
+
+
+async def _flag_refused(response: httpx2.Response) -> None:
+    # The spec's sign that the server no longer knows the session, as after a
+    # restart: a 404 to a request that carried its id. That request was not run.
+    attempt = _attempt.get()
+    if (
+        attempt is not None
+        and response.status_code == 404
+        and "mcp-session-id" in response.request.headers
+    ):
+        attempt.refused = True
+
+
 class _Dispatcher(JSONRPCDispatcher):
     """Calls ``on_end`` once the transport's read stream ends."""
 
@@ -148,13 +170,9 @@ class _Connection:
         self._detached = False
         self._busy = 0
         self._last_used = 0.0
-        # Sessions the server no longer knows; a call refused on one is safe to retry.
-        self._expired: weakref.WeakSet[ClientSession] = weakref.WeakSet()
 
     @contextlib.asynccontextmanager
-    async def _streams(
-        self, on_response: Callable[[httpx2.Response], Awaitable[None]]
-    ) -> AsyncIterator[Any]:
+    async def _streams(self) -> AsyncIterator[Any]:
         if self.transport == "stdio":
             assert self.command
             params = StdioServerParameters(
@@ -169,7 +187,7 @@ class _Connection:
             http = create_mcp_http_client(
                 headers=self.headers, timeout=timeout, auth=self.auth
             )
-            http.event_hooks["response"].append(on_response)
+            http.event_hooks["response"].append(_flag_refused)
             async with (
                 http,
                 streamable_http_client(self.url, http_client=http) as (read, write),
@@ -198,17 +216,8 @@ class _Connection:
             if isinstance(message, ToolListChangedNotification):
                 await self._refresh_tools(session)
 
-        async def on_response(response: httpx2.Response) -> None:
-            # The spec's sign that the server no longer knows the session, as
-            # after a restart: a 404 to a request that carried its id.
-            if (
-                response.status_code == 404
-                and "mcp-session-id" in response.request.headers
-            ):
-                self._expired.add(session)
-
         try:
-            async with self._streams(on_response) as (read, write):
+            async with self._streams() as (read, write):
                 session = ClientSession(
                     dispatcher=_Dispatcher(read, write, ended),
                     message_handler=on_message,
@@ -369,14 +378,18 @@ class _Connection:
     async def call_tool(self, tool: str, arguments: Dict[str, Any]) -> CallToolResult:
         with self._use():
             session = self.session or await self._session(None)
+            attempt = _Attempt()
+            token = _attempt.set(attempt)
             try:
                 return await self._call(session, tool, arguments)
             except MCPError as e:
                 # Dropped mid call: the tool may have run, so never retry it.
                 if e.code == CONNECTION_CLOSED:
                     self._lost(session, e)
-                if session not in self._expired:
+                if not attempt.refused:
                     raise
+            finally:
+                _attempt.reset(token)
             # Refused unrun: safe to retry once on a new session.
             session = await self._session(session)
             return await self._call(session, tool, arguments)

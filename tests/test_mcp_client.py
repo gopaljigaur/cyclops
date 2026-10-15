@@ -266,6 +266,22 @@ async def test_restarted_http_server_gets_a_new_session():
         proc.wait()
 
 
+async def test_timed_out_call_is_not_retried_after_another_404():
+    port = _free_port()
+    proc = _start("no-get", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach("remote", url=_url("no-get", port), call_timeout=1)
+            slow = await _tool(client, "remote__slow").execute(seconds=2)
+            await asyncio.sleep(0.5)
+            started = await _tool(client, "remote__slow_started").execute()
+        assert "timed out" in slow.error
+        assert started.to_message_content() == "1"
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 async def test_reconnect_wait_is_bounded_by_call_timeout():
     port = _free_port()
     proc = _start("streamable-http", port)

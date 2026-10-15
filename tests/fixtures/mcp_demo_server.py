@@ -1,6 +1,8 @@
 """Small MCPServer for the client tests.
 
-Usage: mcp_demo_server.py [stdio | streamable-http PORT | sse PORT]
+Usage: mcp_demo_server.py [stdio | streamable-http PORT | sse PORT | no-get PORT]
+
+``no-get`` serves streamable HTTP but answers every GET with 404.
 """
 
 import asyncio
@@ -51,22 +53,41 @@ def picture() -> Image:
     return Image(data=PNG, format="png")
 
 
+started = 0
 finished = 0
 
 
 @mcp.tool()
 async def slow(seconds: float) -> str:
     """Sleep, then answer"""
-    global finished
+    global started, finished
+    started += 1
     await asyncio.sleep(seconds)
     finished += 1
     return "done"
 
 
 @mcp.tool()
+def slow_started() -> int:
+    """How many slow calls started"""
+    return started
+
+
+@mcp.tool()
 def slow_finished() -> int:
     """How many slow calls ran to the end"""
     return finished
+
+
+def no_get(app):
+    async def serve(scope, receive, send):
+        if scope["type"] == "http" and scope["method"] == "GET":
+            await send({"type": "http.response.start", "status": 404, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+        else:
+            await app(scope, receive, send)
+
+    return serve
 
 
 @mcp.tool()
@@ -96,7 +117,11 @@ def crash() -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2:
+    if sys.argv[1:2] == ["no-get"]:
+        import uvicorn
+
+        uvicorn.run(no_get(mcp.streamable_http_app()), port=int(sys.argv[2]))
+    elif len(sys.argv) > 2:
         mcp.run(sys.argv[1], port=int(sys.argv[2]))
     else:
         mcp.run()
