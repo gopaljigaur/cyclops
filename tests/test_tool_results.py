@@ -335,7 +335,9 @@ def test_permissions_apply_to_the_reader():
     with _replies(_call("dump"), _read(20), "Done."):
         result = denied.run_with_response("Dump it.", session=session)
 
-    assert _tool_messages(session)[1] == "Error: Tool 'read_tool_result' is not permitted"
+    assert (
+        _tool_messages(session)[1] == "Error: Tool 'read_tool_result' is not permitted"
+    )
     assert result.denied_tool_calls[0].name == "read_tool_result"
 
     allowed = _agent(
