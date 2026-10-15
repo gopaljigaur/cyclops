@@ -568,6 +568,7 @@ class MCPClient:
         call_timeout: Optional[float] = 60.0,
         idle_timeout: Optional[float] = None,
         reconnection: ReconnectionOptions = ReconnectionOptions(),
+        defer_loading: bool = False,
     ) -> List[MCPClientTool]: ...
     async def detach(self, name: str) -> None: ...
     async def aclose(self) -> None: ...
@@ -585,7 +586,7 @@ class MCPClient:
 
 | Method / Property | Description |
 |---|---|
-| `attach(name, command, *, url, ...)` | Connect to a server and return its tools. Pass `command` for stdio or `url` for streamable HTTP (`transport="sse"` for SSE). Attaching an existing name replaces that server. |
+| `attach(name, command, *, url, ...)` | Connect to a server and return its tools. Pass `command` for stdio or `url` for streamable HTTP (`transport="sse"` for SSE). Attaching an existing name replaces that server. `defer_loading=True` defers every tool of the server; see [Deferred tools](/guides/tools/#deferred-tools). |
 | `detach(name)` | Disconnect a server and drop its tools. Unknown names are ignored. |
 | `aclose()` | Disconnect every server. |
 | `tools(servers)` | Tools of the given servers, or of every attached server. |
