@@ -119,11 +119,11 @@ async def soak(
     try:
         # Diff snapshots after a first slice, so objects only replaced during
         # the runs, such as a cache entry rewritten, don't count as growth.
-        cyclic_garbage = await _runs(run, runs // 4)
-        first = _snapshot()
-        cyclic_garbage += await _runs(run, runs - runs // 4)
-        growth = _snapshot().compare_to(first, "lineno")
         measured = runs - runs // 4
+        cyclic_garbage = await _runs(run, runs - measured)
+        first = _snapshot()
+        cyclic_garbage += await _runs(run, measured)
+        growth = _snapshot().compare_to(first, "lineno")
         bytes_per_run = sum(s.size_diff for s in growth) / measured
         top_growth = [str(s) for s in growth[:5]]
         del first, growth
