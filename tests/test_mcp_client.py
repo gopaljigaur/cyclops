@@ -371,7 +371,7 @@ class TestAttachDetach:
         await asyncio.gather(detach, return_exceptions=True)
         assert client.servers == ["d"]
         assert _live_sessions() == []
-        assert client._locks == {}
+        assert len(client._locks) == 0
         await client.aclose()
         assert client.servers == []
 
@@ -383,14 +383,38 @@ class TestAttachDetach:
         await attach
         assert client.servers == []
         assert _live_sessions() == []
-        assert client._locks == {}
+        assert len(client._locks) == 0
 
     async def test_unknown_detaches_keep_no_locks(self):
         client = MCPClient()
         for i in range(10_000):
             await client.detach(f"unknown{i}")
-        assert client._locks == {}
-        assert not client._lock_users
+        assert len(client._locks) == 0
+
+    async def test_late_caller_waits_for_a_woken_waiter(self):
+        client = MCPClient()
+        inside = []
+
+        async def critical(gate):
+            async with client._locks.setdefault("n", asyncio.Lock()):
+                inside.append(gate)
+                assert len(inside) == 1
+                await gate.wait()
+                inside.remove(gate)
+
+        first, second, third = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        a = asyncio.create_task(critical(first))
+        await asyncio.sleep(0)
+        b = asyncio.create_task(critical(second))
+        await asyncio.sleep(0)
+        first.set()
+        await a
+        c = asyncio.create_task(critical(third))
+        await asyncio.sleep(0)
+        second.set()
+        third.set()
+        await asyncio.gather(b, c)
+        assert len(client._locks) == 0
 
     async def test_attach_detach_cycles_keep_no_idle_locks(self):
         client = MCPClient()
@@ -402,7 +426,7 @@ class TestAttachDetach:
             )
             await client.detach(f"s{i}")
         assert client.servers == ["kept"]
-        assert client._locks == {}
+        assert len(client._locks) == 0
         assert len(_live_sessions()) == 1
         await client.aclose()
         assert _live_sessions() == []
