@@ -107,10 +107,13 @@ class BaseTool(ABC):
         name: str,
         description: str,
         annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
     ):
         self.name = name
         self.description = description
         self.annotations = annotations or ToolAnnotations()
+        # Seconds a call may run; None uses AgentConfig.tool_timeout.
+        self.timeout = timeout
         self._definition = self._build_definition()
 
     async def execute(self, **kwargs):
@@ -146,6 +149,7 @@ class Tool(BaseTool):
         description: str,
         func: Callable,
         annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
     ):
         self.func = func
         self._is_async = inspect.iscoroutinefunction(func)
@@ -154,7 +158,7 @@ class Tool(BaseTool):
             for p in inspect.signature(func).parameters.values()
             if p.kind is p.POSITIONAL_ONLY
         ]
-        super().__init__(name, description, annotations)
+        super().__init__(name, description, annotations, timeout)
 
     def _build_definition(self) -> ToolDefinition:
         return self._definition_for(self.func)

@@ -24,7 +24,7 @@ Every run method takes a keyword-only `session: Optional[Session] = None`.
 
 **Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `as_tool`, `reset`
 
-`as_tool(name, description) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
+`as_tool(name, description, *, annotations=None, timeout=None) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
 
 **Properties:** `messages`
 
@@ -61,6 +61,8 @@ class AgentConfig(BaseModel):
     max_cost: Optional[float] = None   # USD
     max_subagent_depth: int = 5
     max_concurrent_subagents: int = 10
+    max_parallel_tool_calls: int = 10
+    tool_timeout: Optional[float] = None   # seconds
     hooks: Optional[AgentHooks] = None
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool = False
@@ -321,6 +323,7 @@ def tool(
     description: Optional[str] = None,
     registry: Optional[ToolRegistry] = None,
     annotations: Optional[ToolAnnotations] = None,
+    timeout: Optional[float] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -337,6 +340,7 @@ class BaseTool(ABC):
         name: str,
         description: str,
         annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 
@@ -358,6 +362,7 @@ class Tool(BaseTool):
         description: str,
         func: Callable,
         annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 ```
@@ -382,6 +387,8 @@ class ToolResult(BaseModel):
     @classmethod
     def error_result(cls, error: str, result: Any = None) -> "ToolResult": ...
     def to_message_content(self) -> Union[str, List[Dict[str, Any]]]: ...
+    @staticmethod
+    def message_text(content: Union[str, List[Dict[str, Any]]]) -> str: ...   # without images
 ```
 
 ---

@@ -19,6 +19,10 @@ from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.sync import _run_coroutine_sync
 from cyclops.core.types import AgentConfig
+from cyclops.toolkit.types import ToolAnnotations
+
+# Read-only tools run concurrently, so tests of parallel calls use them.
+READ_ONLY = ToolAnnotations(read_only=True)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1180,7 +1184,7 @@ async def test_cancelled_tools_finish_their_cleanup():
                 raise
             return "done"
 
-        return Tool(name, name, tool)
+        return Tool(name, name, tool, READ_ONLY)
 
     agent = Agent(config=_make_config(), tools=[make("quick", 0), make("slow", 0.05)])
     calls = [
@@ -1850,7 +1854,7 @@ async def test_cancel_closes_tool_calls_and_resolves_cancelled():
     hooks.on_tool_start.return_value = "allow"
     agent = Agent(
         config=_make_config(hooks=hooks),
-        tools=[Tool("one", "One", one), Tool("two", "Two", two)],
+        tools=[Tool("one", "One", one, READ_ONLY), Tool("two", "Two", two, READ_ONLY)],
     )
     calls = [_make_tool_call("tc_1", "one", "{}"), _make_tool_call("tc_2", "two", "{}")]
     response = _make_completion_response(content=None, tool_calls=calls)
@@ -2097,7 +2101,10 @@ def test_first_failing_tool_call_ends_the_step():
 
     agent = Agent(
         config=_make_config(middleware=[Broken()]),
-        tools=[Tool("one", "One", tool), Tool("two", "Two", tool)],
+        tools=[
+            Tool("one", "One", tool, READ_ONLY),
+            Tool("two", "Two", tool, READ_ONLY),
+        ],
     )
     calls = [_make_tool_call("tc_1", "one", "{}"), _make_tool_call("tc_2", "two", "{}")]
     response = _make_completion_response(content=None, tool_calls=calls)

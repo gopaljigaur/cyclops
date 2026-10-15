@@ -30,6 +30,8 @@ config = AgentConfig(
 | `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
 | `max_subagent_depth` | `int` | `5` | Most levels of [subagent](subagents.md) runs below one run. |
 | `max_concurrent_subagents` | `int` | `10` | Most subagent runs one run has going at once; more calls wait. |
+| `max_parallel_tool_calls` | `int` | `10` | Most tool calls of one step that run at the same time; at least 1. See [Parallel calls and timeouts](tools.md#parallel-calls-and-timeouts). |
+| `tool_timeout` | `float \| None` | `None` | Seconds a tool call may run before it is cancelled and returns an error. A tool's own `timeout` wins. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
 | `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |

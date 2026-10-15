@@ -19,6 +19,7 @@ from tests.test_agent import (
     _make_completion_response,
     _make_config,
     _make_simple_tool,
+    READ_ONLY,
     _make_tool_call,
     _stream,
     _text_chunk,
@@ -53,14 +54,19 @@ def _make_completion(content: str):
     return _make_completion_response(content=content)
 
 
-def _agents(lead_tools=(), **child_config):
+def _agents(lead_tools=(), annotations=None, **child_config):
     child = Agent(
         _make_config(system_prompt="child", **child_config),
         tools=[_make_simple_tool()],
     )
     lead = Agent(
         _make_config(system_prompt="lead"),
-        tools=[child.as_tool("researcher", "Researches a question"), *lead_tools],
+        tools=[
+            child.as_tool(
+                "researcher", "Researches a question", annotations=annotations
+            ),
+            *lead_tools,
+        ],
     )
     return lead, child
 
@@ -314,7 +320,7 @@ async def test_cancelling_the_outer_run_cancels_the_nested_run():
 
 
 async def test_calls_in_one_step_run_concurrently():
-    lead, _ = _agents()
+    lead, _ = _agents(annotations=READ_ONLY)
     both_asked = asyncio.Event()
     asked: List[str] = []
 
@@ -439,7 +445,7 @@ def test_nesting_stops_at_the_depth_limit():
 
 
 async def test_concurrent_runs_wait_for_a_slot():
-    lead, _ = _agents()
+    lead, _ = _agents(annotations=READ_ONLY)
     lead.config.max_concurrent_subagents = 1
     running = 0
     most = 0
@@ -471,7 +477,7 @@ async def test_concurrent_runs_wait_for_a_slot():
 
 
 def test_calls_waiting_for_a_slot_stop_once_the_budget_is_spent():
-    lead, _ = _agents()
+    lead, _ = _agents(annotations=READ_ONLY)
     lead.config.max_total_tokens = 50
     lead.config.max_concurrent_subagents = 1
     acompletion, seen = _scripted(
@@ -498,7 +504,7 @@ def test_calls_waiting_for_a_slot_stop_once_the_budget_is_spent():
 
 
 async def test_cancelling_cancels_calls_waiting_for_a_slot():
-    lead, _ = _agents()
+    lead, _ = _agents(annotations=READ_ONLY)
     lead.config.max_concurrent_subagents = 1
     started = asyncio.Event()
     children = 0
@@ -552,3 +558,80 @@ def test_depth_limit_stops_an_agent_that_calls_itself():
         "Error: delegate failed: "
         "subagents are nested as deep as max_subagent_depth allows"
     )
+
+
+async def test_calls_not_marked_read_only_run_one_at_a_time():
+    lead, _ = _agents()
+    order: List[str] = []
+
+    async def acompletion(**kwargs):
+        messages = kwargs["messages"]
+        if messages[0]["content"] == "lead":
+            if messages[-1]["role"] == "tool":
+                return _make_completion("done")
+            return _asks(
+                _call("researcher", "find x", id="tc_1"),
+                _call("researcher", "find y", id="tc_2"),
+            )
+        task = messages[1]["content"]
+        order.append(f"start {task}")
+        await asyncio.sleep(0.02 if task == "find x" else 0)
+        order.append(f"end {task}")
+        return _make_completion(f"answer to {task}")
+
+    with patch("litellm.acompletion", new=acompletion):
+        await lead.arun_with_response("x and y?")
+
+    assert order == ["start find x", "end find x", "start find y", "end find y"]
+
+
+async def test_tool_and_subagent_limits_compose():
+    """A subagent's own tool calls use its run's slots, not the caller's."""
+    lead, _ = _agents(annotations=READ_ONLY)
+    lead.config.max_parallel_tool_calls = 1
+    lead.config.max_concurrent_subagents = 1
+
+    async def acompletion(**kwargs):
+        messages = kwargs["messages"]
+        if messages[-1]["role"] == "tool":
+            return _make_completion(f"{messages[0]['content']} done")
+        if messages[0]["content"] == "lead":
+            return _asks(
+                _call("researcher", "find x", id="tc_1"),
+                _call("researcher", "find y", id="tc_2"),
+            )
+        return _asks(_make_tool_call("tc_a", "add", '{"a": 1, "b": 2}'))
+
+    with patch("litellm.acompletion", new=acompletion):
+        result = await asyncio.wait_for(lead.arun_with_response("x and y?"), 5)
+
+    assert [c.result for c in result.tool_calls] == ["child done", "child done"]
+
+
+async def test_timeout_cancels_the_nested_run():
+    child = Agent(_make_config(system_prompt="child"))
+    lead = Agent(
+        _make_config(system_prompt="lead"),
+        tools=[child.as_tool("researcher", "Researches a question", timeout=0.02)],
+    )
+    cancelled = []
+
+    async def acompletion(**kwargs):
+        messages = kwargs["messages"]
+        if messages[0]["content"] == "child":
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+        if messages[-1]["role"] == "tool":
+            return _make_completion("done")
+        return _asks(_call("researcher", "find x"))
+
+    with patch("litellm.acompletion", new=acompletion):
+        await lead.arun("x?")
+
+    assert cancelled == [True]
+    assert [m["content"] for m in lead.messages if m["role"] == "tool"] == [
+        "Error: researcher timed out after 0.02 seconds"
+    ]

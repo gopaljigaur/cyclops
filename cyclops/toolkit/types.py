@@ -131,3 +131,10 @@ class ToolResult(BaseModel):
         if all(part["type"] == "text" for part in parts):
             return "\n".join(part["text"] for part in parts)
         return parts
+
+    @staticmethod
+    def message_text(content: Union[str, List[Dict[str, Any]]]) -> str:
+        """The text of content from to_message_content(), without its images."""
+        if isinstance(content, str):
+            return content
+        return "\n".join(part["text"] for part in content if part["type"] == "text")

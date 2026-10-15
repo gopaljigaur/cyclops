@@ -31,7 +31,7 @@ class Agent:
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
 | `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
 | `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
-| `as_tool` | `as_tool(name: str, description: str) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
+| `as_tool` | `as_tool(name: str, description: str, *, annotations: Optional[ToolAnnotations] = None, timeout: Optional[float] = None) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
 | `reset` | `reset() -> None` | Clear the history of runs without a session. |
 
 **Properties**
@@ -71,6 +71,8 @@ class AgentConfig(BaseModel):
     max_cost: Optional[float] = None   # USD
     max_subagent_depth: int = 5
     max_concurrent_subagents: int = 10
+    max_parallel_tool_calls: int = 10
+    tool_timeout: Optional[float] = None   # seconds
     hooks: Optional[AgentHooks] = None
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
@@ -90,6 +92,8 @@ class AgentConfig(BaseModel):
 | `max_cost` | `None` | Most USD per run, checked between steps. |
 | `max_subagent_depth` | `5` | Most levels of subagent runs below one run. |
 | `max_concurrent_subagents` | `10` | Most subagent runs one run has going at once. |
+| `max_parallel_tool_calls` | `10` | Most tool calls of one step that run at the same time. |
+| `tool_timeout` | `None` | Seconds a tool call may run before it is cancelled and fails. A tool's own `timeout` wins. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
@@ -334,6 +338,8 @@ def tool(
     name: Optional[str] = None,
     description: Optional[str] = None,
     registry: Optional[ToolRegistry] = None,
+    annotations: Optional[ToolAnnotations] = None,
+    timeout: Optional[float] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -343,6 +349,8 @@ def tool(
 | `name` | Override the tool name. Defaults to `func.__name__`. |
 | `description` | Override the tool description. Defaults to the docstring. |
 | `registry` | If provided, the tool is automatically registered in this registry. |
+| `annotations` | `ToolAnnotations` behaviour hints; `read_only` lets calls run in parallel. |
+| `timeout` | Seconds a call may run; overrides `AgentConfig.tool_timeout`. |
 
 ---
 
@@ -352,7 +360,13 @@ Abstract base class for all tools. Subclass this to create stateful tools.
 
 ```python
 class BaseTool(ABC):
-    def __init__(self, name: str, description: str): ...
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
+    ): ...
     async def execute(self, **kwargs) -> Any: ...
 
     @property
@@ -361,7 +375,7 @@ class BaseTool(ABC):
 
 | Member | Description |
 |---|---|
-| `__init__(name, description)` | Set the tool name and description. Builds the `ToolDefinition` from the `execute()` signature. |
+| `__init__(name, description, annotations, timeout)` | Set the tool name, description, behaviour hints and call timeout in seconds. Builds the `ToolDefinition` from the `execute()` signature. |
 | `execute(**kwargs)` | Override with the exact parameter signature you want exposed to the LLM. |
 | `definition` | `ToolDefinition` derived from the `execute()` signature. |
 
@@ -373,7 +387,14 @@ Function-wrapping tool created by the `@tool` decorator.
 
 ```python
 class Tool(BaseTool):
-    def __init__(self, name: str, description: str, func: Callable): ...
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        func: Callable,
+        annotations: Optional[ToolAnnotations] = None,
+        timeout: Optional[float] = None,
+    ): ...
     async def execute(self, **kwargs) -> Any: ...
 ```
 
