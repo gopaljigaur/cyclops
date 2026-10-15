@@ -52,7 +52,7 @@ As LiteLLM 1.105 sends them: Anthropic gets `image` and `document` blocks, with 
 Before the run starts, Cyclops reads LiteLLM's model map (`litellm.model_cost`, the entry under `provider/model`, else `model`) for the model, each of its deployments in a `router` (not the router's fallback groups) and each of its `fallback_models`, since they all read the same history. If the entry sets `supports_vision` to false and an image is sent, `supports_pdf_input` to false and a PDF is sent, or `supports_audio_input` to false and audio is sent, the run raises `ValueError`, so nothing is sent and no part is dropped:
 
 ```text
-o3-mini takes no image input: LiteLLM's model map sets supports_vision to false for it; if the model does take it, correct the entry with litellm.register_model
+o3-mini can't take image input: LiteLLM's model map sets supports_vision to false for it, a deployment or a fallback model; if that is wrong, correct the entry with litellm.register_model
 ```
 
 Only an explicit false counts. Most entries leave these flags out, and a model with no entry at all, such as one on a custom OpenAI compatible endpoint, gets the parts and its provider decides, as in Pydantic AI, the OpenAI Agents SDK and the Vercel AI SDK, which don't check. The check reads only the map LiteLLM ships, never a provider over the network. A file whose media type is unknown (a `file_id` without `format`) is not checked.
@@ -69,7 +69,7 @@ result = await handle
 
 The parts are the user message's `content` in the transcript, so a session keeps them, stores save them as JSON, and every later completion sends them again. Base64 data makes each saved session and each request that large: for big or many files, prefer URLs or provider file ids. `GuardContext.messages`, `AgentHooks.on_run_start` and `Message.content` see the list as it is.
 
-Compaction counts the parts with `litellm.token_counter`; a message with audio, which LiteLLM can't count, counts as one image does (`DEFAULT_IMAGE_TOKEN_COUNT`, 250 tokens).
+Compaction counts the parts with `litellm.token_counter`, except `input_audio`, which it can't count: an audio part is estimated from its size, at one token per 500 bytes (Gemini's 32 tokens a second at 128 kbit/s).
 
 `TelemetryHooks` records the length of the input's text only, never the parts' data.
 

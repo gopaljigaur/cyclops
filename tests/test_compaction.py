@@ -1,5 +1,6 @@
 """Tests for compaction and the tool output limit"""
 
+from base64 import b64encode
 from typing import List
 from unittest.mock import AsyncMock, patch
 
@@ -159,19 +160,36 @@ def test_a_request_below_the_threshold_is_sent_as_it_is():
     assert len(session.messages) == 3
 
 
-def test_audio_input_is_counted():
+def _audio(seconds: int) -> dict:
+    """An input_audio part of about 32 tokens per second."""
+    data = b64encode(b"\0" * 16000 * seconds).decode()
+    return {"type": "input_audio", "input_audio": {"data": data, "format": "mp3"}}
+
+
+def test_the_text_next_to_audio_is_counted():
     agent = Agent(AgentConfig(model=MODEL, compaction=Compaction()))
-    audio = {
-        "type": "input_audio",
-        "input_audio": {"data": "UklGRg==", "format": "wav"},
-    }
+    text = {"type": "text", "text": _words(330)}
+    session = Session(messages=[{"role": "user", "content": [text, _audio(1)]}])
 
-    with _replies("Heard it.") as mock:
-        assert (
-            agent.run([{"type": "text", "text": "Transcribe."}, audio]) == "Heard it."
-        )
+    with _replies("They sent a voice note.", "Done.") as mock:
+        agent.run("Go on.", session=session)
 
-    assert mock.call_count == 1
+    assert _is_summary_request(mock.call_args_list[0].kwargs)
+
+
+def test_audio_is_counted_by_its_size():
+    agent = Agent(AgentConfig(model=MODEL, compaction=Compaction()))
+    text = {"type": "text", "text": "Listen."}
+    session = Session(messages=[{"role": "user", "content": [text, _audio(12)]}])
+    small = Session(messages=[{"role": "user", "content": [text, _audio(1)]}])
+
+    with _replies("A short note.", "Done.", "Done.") as mock:
+        agent.run("Go on.", session=session)
+        agent.run("Go on.", session=small)
+
+    summary, *steps = mock.call_args_list
+    assert _is_summary_request(summary.kwargs)
+    assert not any(_is_summary_request(c.kwargs) for c in steps)
 
 
 def test_without_compaction_nothing_is_summarized():
