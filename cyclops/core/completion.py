@@ -88,10 +88,8 @@ def _quota_spent(error: Exception) -> bool:
     body = getattr(error, "body", None)
     if isinstance(body, dict) and body.get("code") == "insufficient_quota":
         return True
-    # Providers LiteLLM calls over plain HTTP keep the error JSON in the
-    # message; Azure keeps only its text.
-    message = str(error)
-    return "insufficient_quota" in message or "exceeded your current quota" in message
+    # Providers LiteLLM calls over plain HTTP keep the error JSON in the message.
+    return "insufficient_quota" in str(error)
 
 
 def _retry_delay(

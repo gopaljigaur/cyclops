@@ -170,6 +170,12 @@ class Usage(BaseModel):
 
 ---
 
+### StreamIdleTimeout
+
+`cyclops.core.completion`, exported from `cyclops`. A subclass of `litellm.Timeout`, raised when a stream sends no chunk for `AgentConfig.stream_idle_timeout` seconds after its first. A stalled stream is retried once if none of it was emitted, so a run ends with this error when the retry stalls too or content had already been emitted. See [Retries and timeouts](/guides/agents/#retries-and-timeouts).
+
+---
+
 ### Events
 
 `cyclops.core.events`: what `stream_events()` and `astream_events()` yield. Every event has `agent_path: Tuple[str, ...]`, empty for the agent that was run. See [Streaming](/guides/streaming/#run-events).

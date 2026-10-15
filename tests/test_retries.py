@@ -91,6 +91,8 @@ def test_request_sets_timeout_and_disables_client_retries():
     "error",
     [
         _rate_limit(),
+        # Gemini's per-minute limit uses OpenAI's quota sentence.
+        _rate_limit(f"GeminiException - RESOURCE_EXHAUSTED. {_QUOTA_TEXT}"),
         _overloaded(),
         litellm.ServiceUnavailableError(
             message="unavailable", llm_provider="openai", model=MODEL
@@ -151,8 +153,6 @@ def test_retry_after_header_sets_the_delay(delays):
             'Hosted_vllmException - {"error": {"type": "insufficient_quota", '
             '"code": "insufficient_quota"}}'
         ),
-        # Azure keeps only the text.
-        _rate_limit(f"AzureException RateLimitError - {_QUOTA_TEXT}"),
         litellm.BudgetExceededError(current_cost=2.0, max_budget=1.0),
     ],
 )
