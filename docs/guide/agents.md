@@ -81,6 +81,22 @@ asyncio.run(main())
 
 Both methods accept an optional `response_model` parameter for structured output. See [Structured Output](structured-output.md).
 
+### One event loop per process
+
+LiteLLM runs async success callbacks on one background worker per process, and that worker serves one event loop at a time. When a call comes from another loop, LiteLLM moves the worker, logging `LoggingWorker: event loop changed; carried N pending and revived N dequeued logging task(s) onto the new loop` at WARNING when tasks were waiting, and asyncio logs "Task exception was never retrieved" and "Task was destroyed but it is pending!" for the tasks left on the old loop. Some callbacks run only when the process exits, and with loops in several threads some never run at all.
+
+Any process with more than one event loop calling LiteLLM hits this, async-only code included, for example `asyncio.run` in two threads. The sync methods bring a loop of their own: they run on one shared loop in a background thread, while the async methods run on the caller's loop, so a process that calls both has two.
+
+Keep every call on one loop. An async application whose sync code needs an agent can hand the run to its own loop from another thread:
+
+```python
+loop = asyncio.get_running_loop()  # in async code
+
+
+def answer(question: str) -> str:  # sync code on another thread, e.g. asyncio.to_thread
+    return asyncio.run_coroutine_threadsafe(agent.arun(question), loop).result()
+```
+
 ## run_with_response() and arun_with_response()
 
 When you need token counts or cost estimates alongside the text reply, use `run_with_response()`. It returns a `RunResult` instead of a bare string.
