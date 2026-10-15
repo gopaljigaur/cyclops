@@ -28,6 +28,8 @@ config = AgentConfig(
 | `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds included; at least 1. |
 | `max_total_tokens` | `int \| None` | `None` | Most tokens one run may use, checked between steps. |
 | `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
+| `max_subagent_depth` | `int` | `5` | Most levels of [subagent](subagents.md) runs below one run. |
+| `max_concurrent_subagents` | `int` | `10` | Most subagent runs one run has going at once; more calls wait. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
 | `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |

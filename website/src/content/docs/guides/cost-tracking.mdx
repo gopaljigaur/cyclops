@@ -51,7 +51,7 @@ asyncio.run(main())
 | `run_id` | `str` | Unique id of the run, also given to tool middleware and guards. |
 | `stop_reason` | `str` | `"completed"` for a final answer, `"max_steps"` or `"budget"` when the run reached a [limit](/guides/agents/#step-and-budget-limits), `"guard"` when a [guard](/guides/hooks/#end-of-run-guards) still rejected the answer after `max_guard_rounds`, `"cancelled"` when a run handle was cancelled, `"error"` when it failed. |
 | `steps` | `int` | LLM completions made in the run. |
-| `usage` | `Usage` or `None` | Tokens and cost summed over every completion in the run. `None` if any completion reported no usage. |
+| `usage` | `Usage` or `None` | Tokens and cost summed over every completion in the run, including those of [subagents](/guides/subagents/) it called. `None` if any completion reported no usage. |
 | `error` | `Exception` or `None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |
 | `tokens_used` | `int` or `None` | Total tokens (prompt + completion), from `usage`. |
 | `prompt_tokens` | `int` or `None` | Tokens in the prompt/context sent to the model, from `usage`. |

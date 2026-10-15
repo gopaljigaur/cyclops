@@ -2,6 +2,7 @@
 
 from cyclops.core.agent import Agent, RunHandle
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.subagents import AgentTool
 from cyclops.core.middleware import (
     Deny,
     Guard,
@@ -28,6 +29,7 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentHooks",
+    "AgentTool",
     "Deny",
     "Guard",
     "GuardContext",
