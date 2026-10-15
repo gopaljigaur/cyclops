@@ -1113,7 +1113,9 @@ def _router(*deployments):
     )
 
 
-@pytest.mark.parametrize("check", _CHECKS, ids=lambda c: "-".join(map(str, c)))
+@pytest.mark.parametrize(
+    "check", _CHECKS, ids=lambda c: "-".join([c[0].__name__, *c[1:]])
+)
 def test_every_deployment_decides_as_each_check(check):
     """The memoized helper decides as the plain check, alone or through a router."""
     _holds.cache_clear()
