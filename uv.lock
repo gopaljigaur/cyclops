@@ -606,9 +606,11 @@ name = "cyclops-ai"
 version = "0.3.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "async-timeout", marker = "python_full_version < '3.11'" },
     { name = "docstring-parser" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "httpx" },
     { name = "litellm" },
     { name = "mcp" },
     { name = "opentelemetry-api" },
@@ -631,9 +633,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.5" },
     { name = "async-timeout", marker = "python_full_version < '3.11'", specifier = ">=4.0.0" },
     { name = "docstring-parser", specifier = ">=0.18.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.0.2" },
+    { name = "httpx", specifier = ">=0.27.1" },
     { name = "litellm", specifier = ">=1.101.0" },
     { name = "mcp", specifier = ">=1.24.0,<2" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
