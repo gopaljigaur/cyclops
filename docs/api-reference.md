@@ -68,7 +68,7 @@ class AgentConfig(BaseModel):
     timeout: float = 600   # seconds
     stream_idle_timeout: float = 120   # seconds
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
-    prompt_caching: bool = False
+    prompt_caching: bool | Literal["5m", "1h"] = True
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3

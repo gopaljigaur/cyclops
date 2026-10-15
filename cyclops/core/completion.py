@@ -11,6 +11,7 @@ import litellm
 # renames them fails at import, not inside the retry's except handler.
 from litellm import _calculate_retry_after, _should_retry
 
+from cyclops.core.caching import _cache_points
 from cyclops.core.events import ReasoningDelta, TextDelta
 from cyclops.core.providers import (
     _every_deployment,
@@ -25,12 +26,6 @@ if sys.version_info >= (3, 11):
 else:
     # wait_for before 3.11 can drop a cancellation that comes as the chunk arrives.
     from async_timeout import timeout as asyncio_timeout
-
-# Cache the system prompt (with the tools before it) and the conversation so far.
-_CACHE_POINTS = [
-    {"location": "message", "role": "system"},
-    {"location": "message", "index": -1},
-]
 
 
 def _completion_kwargs(
@@ -49,8 +44,11 @@ def _completion_kwargs(
     if config.router is None:
         kwargs.update(timeout=config.timeout, max_retries=0)
     kwargs.update(config.completion_kwargs)
+    # Injection points from completion_kwargs win, as over LiteLLM's own defaults.
     if config.prompt_caching and _marker_caching_supported(config):
-        kwargs["cache_control_injection_points"] = _CACHE_POINTS
+        kwargs.setdefault(
+            "cache_control_injection_points", _cache_points(config.prompt_caching)
+        )
     # With tools only where LiteLLM sends the schema natively: elsewhere it
     # may emulate it with a forced tool call, which blocks the agent's tools.
     if response_model is not None and (

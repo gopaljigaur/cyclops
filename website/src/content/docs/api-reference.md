@@ -77,6 +77,8 @@ class AgentConfig(BaseModel):
     num_retries: int = 2
     timeout: float = 600   # seconds
     stream_idle_timeout: float = 120   # seconds
+    completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
+    prompt_caching: bool | Literal["5m", "1h"] = True
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
@@ -101,6 +103,8 @@ class AgentConfig(BaseModel):
 | `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
 | `timeout` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |
+| `completion_kwargs` | `{}` | Extra LiteLLM completion arguments sent with every call. |
+| `prompt_caching` | `True` | Cache breakpoints for providers that cache at markers; `"5m"` or `"1h"` sets the time to live, `False` sends none. See [Prompt caching](/guides/agents/#prompt-caching). |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
 | `max_guard_rounds` | `3` | How many times per run guards may send the model back. |
