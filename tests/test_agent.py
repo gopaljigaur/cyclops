@@ -33,7 +33,9 @@ def _make_config(model: str = "gpt-3.5-turbo", **kwargs) -> AgentConfig:
     return AgentConfig(model=model, **kwargs)
 
 
-def _make_completion_response(content: Optional[str], tool_calls=None):
+def _make_completion_response(
+    content: Optional[str], tool_calls=None, finish_reason: Optional[str] = None
+):
     """Build a minimal mock litellm completion response."""
     msg = MagicMock(reasoning_content=None, thinking_blocks=None)
     msg.content = content
@@ -41,6 +43,7 @@ def _make_completion_response(content: Optional[str], tool_calls=None):
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason or ("tool_calls" if tool_calls else "stop")
 
     usage = MagicMock()
     usage.prompt_tokens = 10
@@ -2236,3 +2239,157 @@ def test_first_failing_tool_call_ends_the_step():
         result = agent.run_with_response("go")
 
     assert str(result.error) == "two broke"
+
+
+# ---------------------------------------------------------------------------
+# Finish reasons
+# ---------------------------------------------------------------------------
+
+
+def _finish_chunk(finish_reason: str):
+    return ModelResponseStream(
+        model="gpt-3.5-turbo",
+        choices=[StreamingChoices(delta=Delta(), finish_reason=finish_reason)],
+    )
+
+
+def test_finish_reason_is_recorded_on_each_step_and_the_result():
+    from cyclops.core.events import StepFinished
+
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    first = [
+        _tool_call_chunk(0, '{"a": 1, "b": 2}', id="tc_1", name="add"),
+        _finish_chunk("tool_calls"),
+    ]
+    second = [_text_chunk("3"), _finish_chunk("stop")]
+    mock = AsyncMock(side_effect=[_stream(first), _stream(second)])
+
+    with patch("litellm.acompletion", new=mock):
+        events = list(agent.stream_events("1 + 2?"))
+
+    steps = [e for e in events if isinstance(e, StepFinished)]
+    assert [s.finish_reason for s in steps] == ["tool_calls", "stop"]
+    result = events[-1].result
+    assert (result.stop_reason, result.finish_reason) == ("completed", "stop")
+
+
+def test_text_cut_by_the_length_limit_ends_with_max_tokens():
+    hooks = _RecordingHooks()
+    agent = Agent(config=_make_config(hooks=hooks))
+    response = _make_completion_response("The answer is", finish_reason="length")
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = agent.run_with_response("Explain.")
+
+    assert result.stop_reason == "max_tokens"
+    assert result.finish_reason == "length"
+    assert result.content == ""
+    assert agent.messages[-1] == {"role": "assistant", "content": "The answer is"}
+
+
+def test_guards_do_not_judge_a_cut_answer():
+    judged = []
+
+    async def guard(context):
+        judged.append(context.content)
+        return "Try again."
+
+    agent = Agent(config=_make_config(guards=[guard]))
+    response = _make_completion_response("The answer is", finish_reason="length")
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = agent.run_with_response("Explain.")
+
+    assert result.stop_reason == "max_tokens"
+    assert judged == []
+
+
+def test_a_tool_call_cut_by_the_length_limit_is_not_run():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    call = _make_tool_call("tc_1", "add", '{"a": 1, "b')
+    response = _make_completion_response(
+        None, tool_calls=[call], finish_reason="length"
+    )
+    mock = AsyncMock(return_value=response)
+
+    with patch("litellm.acompletion", new=mock):
+        result = agent.run_with_response("1 + 2?")
+
+    assert result.stop_reason == "max_tokens"
+    assert result.error is None
+    assert result.tool_calls == []
+    assert mock.call_count == 1
+    # An empty cut turn is left out, so the conversation needs no tool result.
+    assert agent.messages == [{"role": "user", "content": "1 + 2?"}]
+
+
+def test_a_complete_call_before_a_cut_one_is_not_run_either():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    calls = [
+        _make_tool_call("tc_1", "add", '{"a": 1, "b": 2}'),
+        _make_tool_call("tc_2", "add", '{"a": 3, "b'),
+    ]
+    response = _make_completion_response(
+        "Adding.", tool_calls=calls, finish_reason="length"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = agent.run_with_response("1 + 2 and 3 + 4?")
+
+    assert result.stop_reason == "max_tokens"
+    assert result.tool_calls == []
+    assert agent.messages[-1] == {"role": "assistant", "content": "Adding."}
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_tool_call_cut_by_the_length_limit_is_not_run():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    chunks = [
+        _text_chunk("Adding. "),
+        _tool_call_chunk(0, '{"a": 1, "b', id="tc_1", name="add"),
+        _finish_chunk("length"),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
+        events = [e async for e in agent.astream_events("1 + 2?")]
+
+    assert _event_summary(events) == [
+        ("text", "Adding. "),
+        ("step", 1),
+        ("run", "max_tokens", ""),
+    ]
+    assert events[-1].result.finish_reason == "length"
+    assert agent.messages[-1] == {"role": "assistant", "content": "Adding. "}
+
+
+def test_a_naive_tool_call_cut_by_the_length_limit_ends_with_max_tokens():
+    agent = Agent(config=_make_config(tool_mode="naive"), tools=[_make_simple_tool()])
+    response = _make_completion_response(
+        '{"tool": "add", "args": {"a": 1', finish_reason="length"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        events = list(agent.stream_events("1 + 2?"))
+
+    # The cut text may be a call, so it is not shown as answer text.
+    assert _event_summary(events) == [("step", 1), ("run", "max_tokens", "")]
+    assert events[-1].result.finish_reason == "length"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_filtered_output_ends_with_content_filter(stream):
+    agent = Agent(config=_make_config())
+    if stream:
+        response = _stream([_text_chunk("I can"), _finish_chunk("content_filter")])
+    else:
+        response = _make_completion_response("I can", finish_reason="content_filter")
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        if stream:
+            result = list(agent.stream_events("Do it."))[-1].result
+        else:
+            result = agent.run_with_response("Do it.")
+
+    assert result.stop_reason == "content_filter"
+    assert result.finish_reason == "content_filter"
+    assert result.content == ""

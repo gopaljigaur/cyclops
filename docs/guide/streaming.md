@@ -130,7 +130,7 @@ async for event in agent.astream_events("What is 2 + 3?"):
 | `ToolCallStarted` | `call_id`, `name`, `arguments` | Before a tool runs, with the arguments the model sent. `call_id` is `None` in naive tool mode. |
 | `ToolCallFinished` | `call_id`, `name`, `result`, `is_error` | After a tool returns, fails, is cancelled or is denied by middleware. `result` is the text sent to the model. |
 | `GuardRejected` | `feedback` | After a rejected answer's text, when a [guard](hooks.md#end-of-run-guards) sends the model back. |
-| `StepFinished` | `step`, `usage` | After one completion and the tool calls it asked for. |
+| `StepFinished` | `step`, `usage`, `finish_reason` | After one completion and the tool calls it asked for. |
 | `RunFinished` | `result` | Last event, with the run's `RunResult`, including usage and cost. |
 
 Every event has `agent_path`, the names of the nested agents it came from, outermost first. It is empty for events of the agent you ran; events of a [subagent](subagents.md) carry its tool name, and its `RunFinished` comes before the outer run's.

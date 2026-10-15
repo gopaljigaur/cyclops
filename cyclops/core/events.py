@@ -57,6 +57,10 @@ class StepFinished(Event):
 
     step: int = Field(description="1 for the first step of the run")
     usage: Optional[Usage] = Field(description="None if the completion had none")
+    finish_reason: Optional[str] = Field(
+        default=None,
+        description="The completion's finish reason as LiteLLM normalizes it",
+    )
 
 
 class RunFinished(Event):

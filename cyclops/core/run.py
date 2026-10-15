@@ -36,13 +36,21 @@ from cyclops.core.tool_execution import (
     _parse_naive_tool_call,
     _ToolExecutor,
 )
-from cyclops.core.types import AgentConfig, RunResult
+from cyclops.core.types import AgentConfig, RunResult, StopReason
 from cyclops.skills import Skills
 
 if TYPE_CHECKING:
     from cyclops.core.agent import Agent
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
+# Finish reasons, as LiteLLM normalizes them, that end a run without an answer.
+# LiteLLM maps Anthropic's refusal and Bedrock's guardrail to content_filter,
+# and Anthropic's compaction pause to length.
+_FINISH_STOP_REASONS: Dict[str, StopReason] = {
+    "length": "max_tokens",
+    "content_filter": "content_filter",
+}
 
 
 def _system_prompt(
@@ -195,18 +203,32 @@ class _RunLoop:
             result.steps += 1
             step_usage = _usage(response)
             run.spend(step_usage)
-            msg = response.choices[0].message
+            choice = response.choices[0]
+            msg = choice.message
+            result.finish_reason = choice.finish_reason
             content = msg.content or ""
             assistant = _assistant_message(msg, msg.content)
             naive_call = _parse_naive_tool_call(content) if naive else None
+            stop_reason = _FINISH_STOP_REASONS.get(choice.finish_reason)
             if not streamed:
                 if "reasoning_content" in assistant:
                     run.emit(ReasoningDelta(text=assistant["reasoning_content"]))
-                if content and not naive_call:
+                # In naive mode cut text may be a call that no longer parses.
+                if content and not naive_call and not (naive and stop_reason):
                     run.emit(TextDelta(text=content))
 
             done = False
-            if not naive and msg.tool_calls:
+            if stop_reason is not None:
+                # Cut or filtered output is no answer, and a cut tool call
+                # can't run, so the turn is kept as text only. An empty turn
+                # is left out: providers rewrite, drop or pass on empty
+                # assistant text differently.
+                if content:
+                    assistant["content"] = content
+                    run.history.append(assistant)
+                result.stop_reason = stop_reason
+                done = True
+            elif not naive and msg.tool_calls:
                 await executor.run_native_tool_calls(msg, assistant)
             elif naive_call:
                 await executor.run_naive_tool_call(naive_call)
@@ -228,7 +250,13 @@ class _RunLoop:
                 else:
                     guard_rounds += 1
                     run.emit(GuardRejected(feedback=feedback))
-            run.emit(StepFinished(step=result.steps, usage=step_usage))
+            run.emit(
+                StepFinished(
+                    step=result.steps,
+                    usage=step_usage,
+                    finish_reason=choice.finish_reason,
+                )
+            )
             if done:
                 return
 
