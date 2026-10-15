@@ -35,7 +35,7 @@ class MCPClient:
         self._connections: Dict[str, _Connection] = {}
         self._tools: Dict[str, List[MCPClientTool]] = {}
         # Every holder and waiter keeps a strong reference to its lock,
-        # so a name's entry goes when the last one leaves.
+        # so a name's entry stays while any of them is in it.
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
