@@ -1804,7 +1804,7 @@ async def test_dropped_event_stream_leaves_no_thread_or_task():
     from cyclops.core.events import TextDelta
 
     def workers():
-        return sum(t.name == "AnyIO worker thread" for t in threading.enumerate())
+        return {t for t in threading.enumerate() if t.name == "AnyIO worker thread"}
 
     before = workers()
     acompletion = functools.partial(litellm.acompletion, mock_response="a b c d")
@@ -1820,7 +1820,7 @@ async def test_dropped_event_stream_leaves_no_thread_or_task():
                 await asyncio.sleep(0)
 
     assert asyncio.all_tasks() == {asyncio.current_task()}
-    assert workers() <= max(before, 1)
+    assert not workers() - before
 
 
 @pytest.mark.asyncio
