@@ -1,6 +1,5 @@
-"""Agent lifecycle hooks — standard event callbacks for the agent run loop."""
+"""Agent lifecycle hooks: standard event callbacks for the agent run loop."""
 
-import asyncio
 import inspect
 from contextvars import ContextVar
 from typing import (
@@ -119,23 +118,18 @@ class AgentHooks:
 
 
 async def _call_hook(config: "AgentConfig", name: str, *args: Any) -> Any:
-    """Call config.hooks' method name, if any hooks are set, within config.hook_timeout.
+    """Call config.hooks' method name, if any hooks are set.
 
-    A sync hook runs in a worker thread when there is a timeout, since one
-    cannot be stopped otherwise; on timeout the thread runs on. A hook that
-    times out raises TimeoutError, as a hook that raises does.
+    An async hook gets config.hook_timeout and raises TimeoutError past it, as
+    a hook that raises does. A plain hook runs inline, since nothing can stop it.
     """
     if config.hooks is None:
         return None
     hook = getattr(config.hooks, name)
-    timeout = config.hook_timeout
-    if inspect.iscoroutinefunction(hook):
-        async with asyncio_timeout(timeout):
-            return await hook(*args)
-    if timeout is None:
+    if not inspect.iscoroutinefunction(hook):
         return hook(*args)
-    async with asyncio_timeout(timeout):
-        return await asyncio.to_thread(hook, *args)
+    async with asyncio_timeout(config.hook_timeout):
+        return await hook(*args)
 
 
 __all__ = ["AgentHooks", "RUN_STOPPED", "current_tool_call_id"]

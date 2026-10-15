@@ -167,10 +167,10 @@ class _RunLoop:
 
     async def _loop(self, input_message: _Content) -> None:
         run = self.run
-        replaced = await _call_hook(self.config, "on_run_start", input_message)
-        if replaced is not None:
-            input_message = _user_content(self.config, replaced)
         try:
+            replaced = await _call_hook(self.config, "on_run_start", input_message)
+            if replaced is not None:
+                input_message = _user_content(self.config, replaced)
             # Compaction may replace earlier messages too, so the transcript is
             # restored as a whole.
             before = list(run.history)

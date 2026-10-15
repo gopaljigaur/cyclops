@@ -100,7 +100,8 @@ class AgentConfig(BaseModel):
     hook_timeout: Optional[float] = Field(
         default=None,
         gt=0,
-        description="Seconds each hook call may run before it raises TimeoutError",
+        description="Seconds each async hook call may run before it raises "
+        "TimeoutError",
     )
     middleware: List[ToolMiddleware] = Field(default_factory=list)
     guards: List[Guard] = Field(default_factory=list)

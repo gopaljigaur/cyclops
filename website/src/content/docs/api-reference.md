@@ -109,7 +109,7 @@ class AgentConfig(BaseModel):
 | `max_parallel_tool_calls` | `10` | Most tool calls of one step that run at the same time. |
 | `tool_timeout` | `None` | Seconds a tool call may run before it is cancelled and fails. A tool's own `timeout` wins. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
-| `hook_timeout` | `None` | Seconds each hook call may run before it raises `TimeoutError`. See [Hook timeouts](/guides/hooks/#hook-timeouts). |
+| `hook_timeout` | `None` | Seconds each async hook call may run before it raises `TimeoutError`. See [Hook timeouts](/guides/hooks/#hook-timeouts). |
 | `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
 | `timeout` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |

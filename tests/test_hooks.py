@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 from unittest.mock import AsyncMock, patch
 
 import litellm
@@ -11,6 +12,7 @@ from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.session import Session
 from cyclops.core.types import RunResult
+from cyclops.toolkit.tool import Tool
 from tests.test_agent import (
     _make_completion_response,
     _make_config,
@@ -63,9 +65,14 @@ async def test_async_on_run_start_adds_context_as_parts():
 
 @pytest.mark.asyncio
 async def test_replacement_input_is_checked_as_run_input_is():
+    errors = []
+
     class Empty(AgentHooks):
         def on_run_start(self, input_message):
             return []
+
+        def on_run_error(self, error):
+            errors.append(error)
 
     agent = Agent(_make_config(hooks=Empty()))
     mock = AsyncMock(return_value=_make_completion_response("ok"))
@@ -73,6 +80,28 @@ async def test_replacement_input_is_checked_as_run_input_is():
         result = await agent.arun_with_response("hi")
 
     assert isinstance(result.error, ValueError)
+    assert errors == [result.error]
+    mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_run_start_past_its_timeout_fires_on_run_error():
+    errors = []
+
+    class Slow(AgentHooks):
+        async def on_run_start(self, input_message):
+            await asyncio.sleep(10)
+
+        def on_run_error(self, error):
+            errors.append(error)
+
+    agent = Agent(_make_config(hooks=Slow(), hook_timeout=0.01))
+    mock = AsyncMock(return_value=_make_completion_response("ok"))
+    with patch("litellm.acompletion", new=mock):
+        result = await agent.arun_with_response("hi")
+
+    assert isinstance(result.error, asyncio.TimeoutError)
+    assert errors == [result.error]
     mock.assert_not_called()
 
 
@@ -125,23 +154,80 @@ async def test_async_hook_past_its_timeout_fails_the_run():
 
 
 @pytest.mark.asyncio
-async def test_sync_hook_past_its_timeout_fails_the_run():
-    release = threading.Event()
+async def test_async_on_tool_start_past_its_timeout_fails_closed():
+    ran = []
+
+    def add(a: int, b: int) -> int:
+        ran.append((a, b))
+        return a + b
 
     class Slow(AgentHooks):
-        def on_run_start(self, input_message):
-            release.wait(10)
+        async def on_tool_start(self, tool_name, args):
+            await asyncio.sleep(10)
 
-    agent = Agent(_make_config(hooks=Slow(), hook_timeout=0.01))
-    mock = AsyncMock(return_value=_make_completion_response("ok"))
-    try:
-        with patch("litellm.acompletion", new=mock):
-            result = await agent.arun_with_response("hi")
-    finally:
-        release.set()
+    agent = Agent(
+        _make_config(hooks=Slow(), hook_timeout=0.01),
+        tools=[Tool("add", "Add two numbers", add)],
+    )
+    asks = _make_completion_response(
+        None, tool_calls=[_make_tool_call("tc_1", "add", '{"a": 1, "b": 2}')]
+    )
+    mock = AsyncMock(side_effect=[asks, _make_completion_response("done")])
+    with patch("litellm.acompletion", new=mock):
+        result = await agent.arun_with_response("hi")
 
     assert isinstance(result.error, asyncio.TimeoutError)
-    mock.assert_not_called()
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_plain_hooks_run_inline_without_a_timeout():
+    """hook_timeout bounds async hooks only; a plain hook runs on the loop's thread."""
+    threads = []
+
+    class Plain(AgentHooks):
+        def on_run_start(self, input_message):
+            time.sleep(0.05)
+            threads.append(threading.get_ident())
+
+    agent = Agent(_make_config(hooks=Plain(), hook_timeout=0.01))
+    mock = AsyncMock(return_value=_make_completion_response("ok"))
+    with patch("litellm.acompletion", new=mock):
+        result = await agent.arun_with_response("hi")
+
+    assert result.content == "ok"
+    assert threads == [threading.get_ident()]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_run_during_a_hook():
+    started = asyncio.Event()
+    errors = []
+
+    class Waits(AgentHooks):
+        async def on_tool_start(self, tool_name, args):
+            started.set()
+            await asyncio.sleep(10)
+
+        def on_run_error(self, error):
+            errors.append(error)
+
+    agent = Agent(
+        _make_config(hooks=Waits(), hook_timeout=10), tools=[_make_simple_tool()]
+    )
+    asks = _make_completion_response(
+        None, tool_calls=[_make_tool_call("tc_1", "add", '{"a": 1, "b": 2}')]
+    )
+    mock = AsyncMock(side_effect=[asks, _make_completion_response("done")])
+    with patch("litellm.acompletion", new=mock):
+        handle = agent.start("hi", stream=False)
+        await started.wait()
+        handle.cancel()
+        result = await handle
+
+    assert result.stop_reason == "cancelled"
+    assert result.error is None
+    assert [type(e) for e in errors] == [asyncio.CancelledError]
 
 
 @pytest.mark.asyncio
@@ -269,4 +355,35 @@ def test_subagent_hooks_go_to_the_direct_parent_only():
     assert [s[:2] for s in child_watch.seen] == [
         ("start", ("researcher", "digger")),
         ("end", ("researcher", "digger")),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_parent_hooks_see_a_cancelled_subagent_run():
+    started = asyncio.Event()
+
+    class Waits(AgentHooks):
+        async def on_llm_start(self, messages):
+            started.set()
+            await asyncio.sleep(10)
+
+    lead, child = _agents()
+    child.config.hooks = Waits()
+    watch = _Watch()
+    lead.config.hooks = watch
+    acompletion, _ = _scripted(
+        {
+            "lead": [_asks(_call("researcher", "find x"))],
+            "child": [_make_completion("found: 5")],
+        }
+    )
+    with patch("litellm.acompletion", new=acompletion):
+        handle = lead.start("what is x?", stream=False)
+        await started.wait()
+        handle.cancel()
+        result = await handle
+
+    assert result.stop_reason == "cancelled"
+    assert [(s[0], s[1], s[2].stop_reason) for s in watch.seen[1:]] == [
+        ("end", ("researcher",), "cancelled")
     ]

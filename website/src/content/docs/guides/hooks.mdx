@@ -58,7 +58,7 @@ In the tool hooks, `cyclops.core.hooks.current_tool_call_id()` returns the id of
 
 ## Rewriting the input with on_run_start
 
-`on_run_start` may return text or a list of content parts to use in place of the run's input, for instance to add context the model should see with the message. `None` keeps the input. The replacement is checked as run input is, so content the model can't take fails the run with `ValueError`, and it is what the model and the session get.
+`on_run_start` may return text or a list of content parts to use in place of the run's input, for instance to add context the model should see with the message. `None` keeps the input. The replacement is checked as run input is, so content the model can't take fails the run with `ValueError` and fires `on_run_error`, and it is what the model and the session get.
 
 ```python
 from datetime import date
@@ -92,9 +92,9 @@ class SubagentLog(AgentHooks):
 
 ## Hook timeouts
 
-`AgentConfig.hook_timeout` caps how many seconds each hook call may run. A hook that takes longer raises `TimeoutError`, and the run treats it as a hook that raised: in `on_tool_start` it fails the run, as middleware that raises does, so a slow approval never lets a call through. Without `hook_timeout`, hooks run as long as they take.
+`AgentConfig.hook_timeout` caps how many seconds each async hook call may run. A hook that takes longer is cancelled and raises `TimeoutError`, and the run treats it as a hook that raised: in `on_tool_start` it fails the run, as middleware that raises does, so a slow approval never lets a call through. Without `hook_timeout`, hooks run as long as they take.
 
-An async hook is cancelled on timeout. A plain hook runs in a worker thread when `hook_timeout` is set, since that is the only way to stop waiting for it; the thread runs on after a timeout, and context variables the hook sets do not reach the run. `TelemetryHooks` keeps its spans in context variables, so leave `hook_timeout` unset with it.
+Plain hooks run inline on the event loop and are not bounded, since asyncio cannot interrupt blocking code. Write a hook as `async def` to bound it with `hook_timeout`.
 
 ## Tool approval with on_tool_start
 
