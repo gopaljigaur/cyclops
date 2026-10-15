@@ -211,6 +211,96 @@ def test_streamed_thinking_blocks_keep_their_signature():
     assert agent.messages[-1]["thinking_blocks"] == THINKING
 
 
+def _sse(*events):
+    return "".join(f"event: {e['type']}\ndata: {dumps(e)}\n\n" for e in events).encode()
+
+
+def _anthropic_stream(*blocks, stop_reason):
+    """An Anthropic SSE stream of the given content blocks, each a list of deltas."""
+    events = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-5",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        }
+    ]
+    for index, (start, deltas) in enumerate(blocks):
+        events.append(
+            {"type": "content_block_start", "index": index, "content_block": start}
+        )
+        events += [
+            {"type": "content_block_delta", "index": index, "delta": d} for d in deltas
+        ]
+        events.append({"type": "content_block_stop", "index": index})
+    events += [
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason},
+            "usage": {"output_tokens": 1},
+        },
+        {"type": "message_stop"},
+    ]
+    return _sse(*events)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="LiteLLM repeats streamed thinking at its signature (#108)",
+)
+def test_streamed_anthropic_tool_loop_sends_back_the_signed_thinking():
+    """End to end through LiteLLM's Anthropic SSE parser and request builder."""
+    streams = [
+        _anthropic_stream(
+            (
+                {"type": "thinking", "thinking": ""},
+                [
+                    {"type": "thinking_delta", "thinking": "Add "},
+                    {"type": "thinking_delta", "thinking": "them."},
+                    {"type": "signature_delta", "signature": "sig-1"},
+                ],
+            ),
+            (
+                {"type": "tool_use", "id": "toolu_1", "name": "add", "input": {}},
+                [{"type": "input_json_delta", "partial_json": '{"a": 1, "b": 2}'}],
+            ),
+            stop_reason="tool_use",
+        ),
+        _anthropic_stream(
+            (
+                {"type": "text", "text": ""},
+                [{"type": "text_delta", "text": "3"}],
+            ),
+            stop_reason="end_turn",
+        ),
+    ]
+    bodies = []
+
+    async def post(self, url, data=None, json=None, **kwargs):
+        bodies.append(loads(data) if data else json)
+        return httpx.Response(
+            200,
+            content=streams[len(bodies) - 1],
+            request=httpx.Request("POST", url),
+        )
+
+    config = AgentConfig(
+        model="anthropic/claude-sonnet-4-5",
+        temperature=1,
+        thinking_budget=1024,
+        completion_kwargs={"api_key": "sk-test"},
+    )
+    with patch.object(AsyncHTTPHandler, "post", post):
+        assert "".join(Agent(config, tools=[add]).stream("1 + 2?")) == "3"
+
+    assert bodies[1]["messages"][1]["content"][0] == THINKING[0]
+
+
 def test_message_round_trips_reasoning():
     d = {
         "role": "assistant",
@@ -365,6 +455,12 @@ def test_openai_request_takes_the_reasoning_effort(monkeypatch):
     assert body["reasoning_effort"] == "high"
 
 
+def test_gpt_5_request_takes_the_reasoning_effort(monkeypatch):
+    body = _request_body(monkeypatch, "gpt-5", reasoning_effort="high")
+
+    assert body["reasoning_effort"] == "high"
+
+
 def test_anthropic_request_turns_the_reasoning_effort_into_a_budget(monkeypatch):
     body = _request_body(
         monkeypatch, "anthropic/claude-sonnet-4-5", reasoning_effort="low"
@@ -392,6 +488,22 @@ def test_anthropic_request_sends_effort_to_adaptive_thinking_models(monkeypatch)
     assert body["output_config"] == {"effort": "high"}
 
 
+def test_anthropic_request_sends_adaptive_thinking_on_opus_4_7(monkeypatch):
+    body = _request_body(
+        monkeypatch, "anthropic/claude-opus-4-7", reasoning_effort="high"
+    )
+
+    assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert body["output_config"] == {"effort": "high"}
+
+
+def test_anthropic_request_turns_a_budget_into_an_effort_on_opus_4_7(monkeypatch):
+    body = _request_body(monkeypatch, "anthropic/claude-opus-4-7", thinking_budget=2048)
+
+    assert body["thinking"] == {"type": "adaptive"}
+    assert body["output_config"] == {"effort": "medium"}
+
+
 def test_gemini_request_turns_the_reasoning_effort_into_a_budget(monkeypatch):
     body = _request_body(monkeypatch, "gemini/gemini-2.5-flash", reasoning_effort="low")
 
@@ -408,6 +520,25 @@ def test_gemini_request_takes_the_thinking_budget(monkeypatch):
         "thinkingBudget": 2048,
         "includeThoughts": True,
     }
+
+
+def test_gemini_3_request_takes_the_reasoning_effort_as_a_level(monkeypatch):
+    body = _request_body(
+        monkeypatch, "gemini/gemini-3-pro-preview", reasoning_effort="high"
+    )
+
+    assert body["generationConfig"]["thinkingConfig"] == {
+        "thinkingLevel": "high",
+        "includeThoughts": True,
+    }
+
+
+def test_gemini_3_request_drops_the_thinking_budget(monkeypatch):
+    body = _request_body(
+        monkeypatch, "gemini/gemini-3-pro-preview", thinking_budget=2048
+    )
+
+    assert body["generationConfig"]["thinkingConfig"] == {"includeThoughts": True}
 
 
 @pytest.mark.parametrize(
@@ -446,19 +577,13 @@ def test_reasoning_options_send_nothing_by_default():
         "bedrock/meta.llama3-1-70b-instruct-v1:0",
     ],
 )
-def test_reasoning_options_are_not_sent_to_models_without_reasoning(model):
-    kwargs = _reasoning_kwargs(model, reasoning_effort="high", thinking_budget=2048)
+@pytest.mark.parametrize(
+    "option", [{"reasoning_effort": "high"}, {"thinking_budget": 2048}]
+)
+def test_reasoning_options_are_not_sent_to_models_without_reasoning(model, option):
+    kwargs = _reasoning_kwargs(model, **option)
 
     assert kwargs == {}
-
-
-def test_thinking_budget_goes_where_the_model_takes_it():
-    options = {"reasoning_effort": "high", "thinking_budget": 2048}
-
-    assert _reasoning_kwargs("gpt-5", **options) == {"reasoning_effort": "high"}
-    assert _reasoning_kwargs("anthropic/claude-sonnet-4-5", **options) == {
-        "thinking": {"type": "enabled", "budget_tokens": 2048}
-    }
 
 
 def test_reasoning_options_need_every_router_deployment():
@@ -485,19 +610,24 @@ def test_reasoning_options_give_way_to_completion_kwargs(completion_kwargs):
     kwargs = _reasoning_kwargs(
         "anthropic/claude-sonnet-4-5",
         reasoning_effort="low",
-        thinking_budget=2048,
         completion_kwargs=completion_kwargs,
     )
 
     assert kwargs == completion_kwargs
 
 
-@pytest.mark.parametrize(
-    "option", [{"reasoning_effort": "extreme"}, {"thinking_budget": 0}]
-)
-def test_reasoning_options_are_validated(option):
+def test_reasoning_options_are_validated():
+    AgentConfig(model="gpt-5", reasoning_effort="high")
+    AgentConfig(model="gpt-5", thinking_budget=1)
     with pytest.raises(ValueError):
-        AgentConfig(model="gpt-5", **option)
+        AgentConfig(model="gpt-5", reasoning_effort="extreme")
+    with pytest.raises(ValueError):
+        AgentConfig(model="gpt-5", thinking_budget=0)
+
+
+def test_reasoning_options_are_one_or_the_other():
+    with pytest.raises(ValueError, match="not both"):
+        AgentConfig(model="gpt-5", reasoning_effort="high", thinking_budget=2048)
 
 
 # ---------------------------------------------------------------------------

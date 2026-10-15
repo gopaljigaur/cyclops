@@ -61,12 +61,12 @@ def _completion_kwargs(
 
 def _reasoning_kwargs(config: AgentConfig) -> Dict[str, Any]:
     """LiteLLM's reasoning arguments for the typed options the model takes."""
+    if config.reasoning_effort and _every_deployment_takes(config, "reasoning_effort"):
+        return {"reasoning_effort": config.reasoning_effort}
     if config.thinking_budget and _every_deployment_takes(config, "thinking"):
         return {
             "thinking": {"type": "enabled", "budget_tokens": config.thinking_budget}
         }
-    if config.reasoning_effort and _every_deployment_takes(config, "reasoning_effort"):
-        return {"reasoning_effort": config.reasoning_effort}
     return {}
 
 
