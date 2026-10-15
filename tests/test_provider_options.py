@@ -251,6 +251,7 @@ def _anthropic_stream(*blocks, stop_reason):
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="LiteLLM repeats streamed thinking at its signature (#108)",
 )
 def test_streamed_anthropic_tool_loop_sends_back_the_signed_thinking():
