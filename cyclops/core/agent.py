@@ -1,10 +1,15 @@
 """The Agent class and its public entry points."""
 
 import asyncio
+import math
 from contextlib import aclosing
 from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple, Type
 
-from cyclops.core.compaction import _compaction_window
+from cyclops.core.compaction import (
+    _compaction_window,
+    _context_window,
+    _ContextWindow,
+)
 from cyclops.core.completion import _tool_to_openai_format
 from cyclops.core.content import UserContent, _user_content
 from cyclops.core.events import Event, RunFinished, TextDelta
@@ -14,7 +19,14 @@ from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.tool_search import SEARCH_TOOL_NAME, _ToolSearch
-from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage, _added
+from cyclops.core.types import (
+    AgentConfig,
+    Compaction,
+    ContextUsage,
+    RunResult,
+    Usage,
+    _added,
+)
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolAnnotations
 
@@ -208,16 +220,33 @@ class Agent:
         def spend(model: str, usage: Optional[Usage]) -> None:
             session.usage = _added(session.usage, usage)
 
-        mode = self._get_tool_mode()
-        # The tools a run starts with: deferred ones only once found.
-        loaded = _ToolSearch(self.tools, self._tools_by_name).loaded
         compaction = self.config.compaction or Compaction()
         window = _compaction_window(self.config, compaction, spend)
-        tools = None
-        if mode == "native":
-            tools = [_tool_to_openai_format(t) for t in loaded]
-        window.request(_system_prompt(self.config, self.skills, loaded, mode), tools)
+        self._request(window)
         return await window.compact(session.messages, compaction) is not None
+
+    def context_usage(self, session: Session) -> Optional[ContextUsage]:
+        """The tokens of the session's next request against the model's input limit.
+
+        Counted as a run counts them for compaction, with the system prompt and
+        the tools a run starts with, and without a network call. None when
+        LiteLLM knows no input limit for the model; with config.compaction set,
+        that raises ValueError as a run does.
+        """
+        compaction = self.config.compaction
+        # Nothing is compacted, so nothing is spent.
+        window = _context_window(self.config, compaction, lambda model, usage: None)
+        if window is None:
+            return None
+        self._request(window)
+        threshold = None
+        if compaction is not None:
+            threshold = math.ceil(window.threshold(compaction))
+        return ContextUsage(
+            tokens=window.tokens(session.messages),
+            max_input_tokens=window.max_input_tokens,
+            compaction_threshold=threshold,
+        )
 
     def as_tool(
         self,
@@ -251,6 +280,16 @@ class Agent:
             _RunLoop(self, run, stream, response_model).execute(content)
         )
         return run, task
+
+    def _request(self, window: _ContextWindow) -> None:
+        """Note on window the system prompt and tools a run starts with."""
+        mode = self._get_tool_mode()
+        # Deferred tools only once found.
+        loaded = _ToolSearch(self.tools, self._tools_by_name).loaded
+        tools = None
+        if mode == "native":
+            tools = [_tool_to_openai_format(t) for t in loaded]
+        window.request(_system_prompt(self.config, self.skills, loaded, mode), tools)
 
     def _get_tool_mode(self) -> str:
         if not self.tools:

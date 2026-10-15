@@ -224,7 +224,7 @@ config = AgentConfig(
 )
 ```
 
-Each attempt fires `on_llm_start`, and `on_llm_error` if it fails. `num_retries=0` turns off the retries of failed requests; a stalled stream is still retried once. With a `router`, the request's retries and timeout are the Router's own (`num_retries`, `retry_policy`, `timeout`, `stream_timeout`), and the stream idle timeout and its one retry still apply.
+Each attempt fires `on_llm_start`, and `on_llm_error` if it fails. Each retry of a step's completion emits a [`CompletionRetry`](/guides/streaming/#rate-limits) event before it waits, with the error's `status_code`, the `delay`, and the provider's `headers` and `rate_limit`; the compaction summary's retries emit none. `num_retries=0` turns off the retries of failed requests; a stalled stream is still retried once. With a `router`, the request's retries and timeout are the Router's own (`num_retries`, `retry_policy`, `timeout`, `stream_timeout`), and the stream idle timeout and its one retry still apply.
 
 ## Fallback models
 
@@ -382,6 +382,18 @@ Compaction changes the start of the conversation, so with [prompt caching](#prom
 To compact a session now, as between runs, call `agent.compact(session)` or `await agent.acompact(session)`. It uses `config.compaction`, or the `Compaction()` defaults when that is `None`, adds the summary's usage to the session, and returns `False` without changing anything when nothing but an earlier summary would be summarized. Like `session.truncate()`, it does not save: the next run's first save stores the whole session.
 
 Anthropic models also offer server-side context management. LiteLLM passes `context_management` through, so its `clear_tool_uses_20250919` edit works from `completion_kwargs`; its compaction edit returns a block that has to be sent back in later requests, which the agent's transcript does not keep.
+
+### Context usage
+
+`agent.context_usage(session)` reports how much of the context window the session's next request takes, without a completion or a network request:
+
+```python
+usage = agent.context_usage(session)
+if usage is not None:
+    print(f"{usage.tokens} of {usage.max_input_tokens} tokens")
+```
+
+It returns a `ContextUsage` with `tokens`, the system prompt, the tools a run starts with and the transcript, counted as compaction counts them; `max_input_tokens`, the model's input limit (through a `router`, the smallest deployment's); and `compaction_threshold`, the tokens at which a run compacts, or `None` without `compaction`. The next run's input comes on top. A model LiteLLM has no input limit for gives `None`; with `compaction` set it raises `ValueError`, as a run does. Each call counts the whole transcript, as a run's first step does.
 
 ### Context overflow
 

@@ -181,6 +181,22 @@ def test_a_summarizing_model_without_known_limits_raises(requests):
     assert requests == []
 
 
+def test_context_usage_asks_no_server(config, requests):
+    session = Session(messages=[{"role": "user", "content": "Hi."}])
+
+    assert Agent(config).context_usage(session) is None
+    assert requests == []
+
+
+def test_a_registered_models_context_usage_asks_no_server(requests):
+    session = Session(messages=[{"role": "user", "content": "Hi."}])
+
+    usage = Agent(AgentConfig(model=REGISTERED)).context_usage(session)
+
+    assert usage.max_input_tokens == 400
+    assert requests == []
+
+
 def test_another_providers_entry_is_not_read(requests):
     # The bare name has an OpenAI entry.
     assert _model_info("ollama/gpt-4o") == {}
