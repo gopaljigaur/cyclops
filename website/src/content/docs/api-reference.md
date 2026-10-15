@@ -116,7 +116,7 @@ class AgentConfig(BaseModel):
 | `thinking_budget` | `None` | Thinking tokens for models that take a budget; not with `reasoning_effort`. See [Reasoning](/guides/agents/#reasoning). |
 | `completion_kwargs` | `{}` | Extra LiteLLM completion arguments sent with every call. |
 | `compaction` | `None` | Summarize older messages once a request nears the model's input limit. See [Context window](/guides/agents/#context-window). |
-| `max_tool_output_chars` | `None` | Longest tool result text sent to the model whole; longer text is stored and sent a page at a time. See [Tool output limit](/guides/agents/#tool-output-limit). |
+| `max_tool_output_chars` | `None` | Longest tool result text sent to the model whole; longer text is stored and sent as its start and end, which the model can read between. See [Tool output limit](/guides/agents/#tool-output-limit). |
 | `prompt_caching` | `True` | Cache breakpoints for providers that cache at markers; `"5m"` or `"1h"` sets the time to live, `False` sends none. See [Prompt caching](/guides/agents/#prompt-caching). |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |

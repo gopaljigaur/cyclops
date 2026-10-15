@@ -207,9 +207,8 @@ class _RunLoop:
             self.config.hooks.on_run_end(run.result.content)
 
     async def _steps(self, input_message: _Content, mode: str) -> None:
-        agent = self.agent
-        tools = _ToolSearch(agent.tools, agent._tools_by_name)
-        results = _ToolResults(agent.tool_result_store, tools)
+        results = _ToolResults(self.agent.tool_result_store)
+        tools = self.agent._run_tools(results)
         try:
             await self._step_loop(input_message, mode, tools, results)
         finally:

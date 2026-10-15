@@ -344,7 +344,7 @@ class _ToolExecutor:
         return args, rendered
 
     async def _limited(self, name: str, rendered: _Rendered) -> _Rendered:
-        """The rendered result, with text past the tool's limit stored and paged."""
+        """The rendered result, with text past the tool's limit stored and previewed."""
         tool = self.tools_by_name.get(name)
         limit = self.config.max_tool_output_chars
         if tool is not None and tool.max_output_chars is not None:
@@ -352,7 +352,7 @@ class _ToolExecutor:
         # The read tool's pages are within the limit already.
         if limit is None or len(rendered.text) <= limit or name == READ_TOOL_NAME:
             return rendered
-        text = await self.results.first_page(rendered.text, limit)
+        text = await self.results.preview(rendered.text, limit)
         images = _images(rendered.content)
         content = [{"type": "text", "text": text}, *images] if images else text
         return rendered._replace(content=content, text=text)

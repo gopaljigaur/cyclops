@@ -48,7 +48,7 @@ config = AgentConfig(
 | `thinking_budget` | `int \| None` | `None` | Tokens the model may think, sent to models that take a thinking budget; not with `reasoning_effort`. See [Reasoning](#reasoning). |
 | `prompt_caching` | `bool \| "5m" \| "1h"` | `True` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
 | `compaction` | `Compaction \| None` | `None` | Summarize older messages once a request nears the model's input limit. See [Context window](#context-window). |
-| `max_tool_output_chars` | `int \| None` | `None` | Longest tool result text sent to the model whole; longer text is stored and sent as a first page the model can read on from. See [Tool output limit](#tool-output-limit). |
+| `max_tool_output_chars` | `int \| None` | `None` | Longest tool result text sent to the model whole; longer text is stored and sent as its start and end, which the model can read between. See [Tool output limit](#tool-output-limit). |
 
 ## Constructing an Agent
 
@@ -330,7 +330,7 @@ The run reads each completion's `finish_reason`, as LiteLLM normalizes it across
 
 ## Context window
 
-A long conversation, or a large tool result, eventually outgrows the model's context window. Two settings keep requests within it: compaction summarizes older messages, and `max_tool_output_chars` sends a long tool result a page at a time. A request that still overflows is retried with what fits. Both are off by default, as in other agent libraries, since compaction makes an extra completion and replaces what the model saw with a summary.
+A long conversation, or a large tool result, eventually outgrows the model's context window. Two settings keep requests within it: compaction summarizes older messages, and `max_tool_output_chars` sends the start and end of a long tool result, with the rest to read on demand. A request that still overflows is retried with what fits. Both are off by default, as in other agent libraries, since compaction makes an extra completion and replaces what the model saw with a summary.
 
 Compaction and overflow recovery take the model's limits from LiteLLM. For Ollama, Lemonade and Hugging Face models Cyclops reads only LiteLLM's model map, since LiteLLM's `get_model_info` would ask the provider's server and block the run. A model the map lacks, such as `ollama/qwen3:4b`, gets no limits: compaction raises `ValueError` and an overflow is not retried. Register its limits at startup, keyed by the exact model string, with the context length your server runs it with:
 
@@ -390,13 +390,13 @@ Once the run has counted its transcript, from the start with `compaction` set or
 
 ### Tool output limit
 
-`max_tool_output_chars` limits the text of each tool result the model gets whole. A longer result is stored, and the model gets its first `max_tool_output_chars` characters followed by a note with the result's handle:
+`max_tool_output_chars` limits the text of each tool result the model gets whole. A longer result is stored, and the model gets its start and end, half the limit each, around a note with the result's handle:
 
 ```text
-[Characters 0 to 20000 of 180000. Read on with read_tool_result(handle="3f9c...", offset=20000).]
+[Characters 10000 to 170000 of 180000 omitted. Read them with read_tool_result(handle="3f9c...", offset=10000).]
 ```
 
-Once a run has stored a result, its next completions include a `read_tool_result` tool, which takes the `handle`, an `offset` in characters and an optional `limit`, and returns that page with the same kind of note; the last page says it is the end. A page is at most the limit of the tool that returned the result. A tool's own `max_output_chars` overrides the agent's limit, and works without one:
+With any limit set, every completion of a run includes a `read_tool_result` tool, from the first step on, so the tools sent never change and a [cached prompt](#prompt-caching) stays valid. It takes the `handle`, an `offset` in characters and an optional `limit`, and returns that page with a note of where it is and the offset to read on from; the last page says it is the end. A page is at most the limit of the tool that returned the result. A tool's own `max_output_chars` overrides the agent's limit, and works without one:
 
 ```python
 config = AgentConfig(model="gpt-4o-mini", max_tool_output_chars=20_000)
@@ -408,9 +408,9 @@ def read_log(path: str) -> str:
     ...
 ```
 
-Images in a result are kept with the first page. The first page is what the transcript, a [session](/guides/sessions/), `ToolCallFinished.result` and `RunResult.tool_calls` carry, so compaction counts the page and not the whole result; hooks and middleware see the whole result. `read_tool_result` is a read-only tool like any other: middleware and [`ToolPermissions`](/guides/hooks/#tool-permissions) see its calls, so a permission list that denies unlisted tools must allow it. With any limit set, `read_tool_result` is a reserved tool name.
+Images in a result are kept with the preview. The preview is what the transcript, a [session](/guides/sessions/), `ToolCallFinished.result` and `RunResult.tool_calls` carry, so compaction counts the preview and not the whole result; hooks and middleware see the whole result. `read_tool_result` is a read-only tool like any other: middleware and [`ToolPermissions`](/guides/hooks/#tool-permissions) see its calls, so a permission list that denies unlisted tools must allow it. With any limit set, `read_tool_result` is a reserved tool name.
 
-Stored results last as long as their run: the run deletes them when it ends, finished, failed or cancelled, so a store never grows past what live runs hold. A later run of the same session sees the first page in the transcript but cannot read on. By default a run keeps its results in memory; to keep them elsewhere, such as on disk for very large results, pass `Agent(..., tool_result_store=...)` an object with the `ToolResultStore` methods:
+Stored results last as long as their run: the run deletes them when it ends, finished, failed or cancelled, so a store never grows past what live runs hold. A handle lasts one run: a later run of the same session sees the preview, start and end, in the transcript, and reading its handle gets `No stored tool result has the handle ...`. By default a run keeps its results in memory; to keep them elsewhere, such as on disk for very large results, pass `Agent(..., tool_result_store=...)` an object with the `ToolResultStore` methods:
 
 ```python
 class ToolResultStore(Protocol):

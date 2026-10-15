@@ -1,26 +1,26 @@
-"""Oversized tool results: stored whole, sent as a first page, read on by handle."""
+"""Oversized tool results: stored whole, sent as a preview, read in pages by handle."""
 
 import uuid
-from typing import Annotated, Dict, Optional, Protocol
+from typing import Annotated, Any, Dict, List, Optional, Protocol
 
 from pydantic import Field
 
-from cyclops.core.tool_search import _ToolSearch
+from cyclops.core.types import AgentConfig
 from cyclops.toolkit.tool import Tool
 from cyclops.toolkit.types import ToolAnnotations
 
 READ_TOOL_NAME = "read_tool_result"
 
 _DESCRIPTION = (
-    "Read more of a tool result that was too long to send whole, by the handle "
-    "its first page ends with."
+    "Read part of a tool result that was too long to send whole, by the "
+    "handle in its note."
 )
 
 
 class ToolResultStore(Protocol):
     """Where a run keeps the tool results too long to send whole.
 
-    A run deletes what it stored when it ends.
+    A run deletes what it stored when it ends, so a handle lasts one run.
     """
 
     async def put(self, handle: str, text: str) -> None:
@@ -49,6 +49,21 @@ class InMemoryToolResultStore:
         self._results.pop(handle, None)
 
 
+def _read_on(handle: str, offset: int) -> str:
+    return f'{READ_TOOL_NAME}(handle="{handle}", offset={offset})'
+
+
+def _preview(text: str, handle: str, limit: int) -> str:
+    """The start and end of text, limit characters in all, around a note of the rest."""
+    head = limit // 2
+    tail = len(text) - (limit - head)
+    note = (
+        f"[Characters {head} to {tail} of {len(text)} omitted. "
+        f"Read them with {_read_on(handle, head)}.]"
+    )
+    return f"{text[:head]}\n{note}\n{text[tail:]}"
+
+
 def _page(text: str, handle: str, offset: int, limit: int) -> str:
     """The characters of text from offset, at most limit, and where they are."""
     end = min(offset + limit, len(text))
@@ -56,36 +71,34 @@ def _page(text: str, handle: str, offset: int, limit: int) -> str:
     if end == len(text):
         note = f"[{where}, the end of the result.]"
     else:
-        note = (
-            f"[{where}. Read on with {READ_TOOL_NAME}"
-            f'(handle="{handle}", offset={end}).]'
-        )
+        note = f"[{where}. Read on with {_read_on(handle, end)}.]"
     return f"{text[offset:end]}\n{note}"
 
 
+def _limits_output(config: AgentConfig, tools: List[Any]) -> bool:
+    """True if the agent or any of its tools has an output limit."""
+    return config.max_tool_output_chars is not None or any(
+        t.max_output_chars is not None for t in tools
+    )
+
+
 class _ToolResults:
-    """The results one run stored, and the tool that reads them.
+    """The results one run stored, and the tool that reads them."""
 
-    The tool joins the run's tools once a result is stored.
-    """
-
-    def __init__(self, store: Optional[ToolResultStore], tools: _ToolSearch) -> None:
+    def __init__(self, store: Optional[ToolResultStore]) -> None:
         self.store = store or InMemoryToolResultStore()
-        self.tools = tools
         # Each stored result's page size: the limit of the tool that returned it.
         self._pages: Dict[str, int] = {}
         self.tool = Tool(
             READ_TOOL_NAME, _DESCRIPTION, self.read, ToolAnnotations(read_only=True)
         )
 
-    async def first_page(self, text: str, limit: int) -> str:
-        """Store text and return its first limit characters with its handle."""
+    async def preview(self, text: str, limit: int) -> str:
+        """Store text and return its preview, with its handle."""
         handle = uuid.uuid4().hex
         await self.store.put(handle, text)
         self._pages[handle] = limit
-        if self.tool not in self.tools.loaded:
-            self.tools.add(self.tool)
-        return _page(text, handle, 0, limit)
+        return _preview(text, handle, limit)
 
     async def read(
         self,
@@ -96,7 +109,7 @@ class _ToolResults:
         """Read a stored tool result from a character offset.
 
         Args:
-            handle: The handle the result's first page ends with.
+            handle: The handle in the result's note.
             offset: The first character to read.
             limit: Most characters to read; at most, and by default, a page.
         """

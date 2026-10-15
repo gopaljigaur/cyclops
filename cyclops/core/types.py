@@ -152,7 +152,8 @@ class AgentConfig(BaseModel):
         default=None,
         gt=0,
         description="Longest tool result text sent to the model whole; longer "
-        "text is stored and sent as a first page the model can read on from",
+        "text is stored and sent as its start and end, which the model can "
+        "read between",
     )
 
     @model_validator(mode="after")
