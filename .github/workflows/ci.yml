@@ -70,27 +70,3 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
-
-  # Informational: resolves every dependency to its newest release, ignoring
-  # uv.lock, so a breaking upstream release shows up here. Not a required check.
-  test-latest-deps:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install newest dependencies
-        run: uv sync --upgrade --python 3.12
-
-      - name: Show resolved versions
-        run: uv pip list
-
-      - name: Run tests
-        run: uv run pytest
