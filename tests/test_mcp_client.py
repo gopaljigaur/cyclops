@@ -55,7 +55,7 @@ def _live_tasks(qualname):
 
 
 def _live_sessions():
-    return _live_tasks("Connection._run")
+    return _live_tasks("_Connection._run")
 
 
 class TestStdio:
@@ -225,7 +225,7 @@ async def test_remote_server_fails_after_bounded_retries():
         await _tool(client, "remote__add").execute(a=1, b=1)
         await _until(lambda: client.status("remote").state == "failed")
         assert "TaskGroup" not in client.status("remote").error
-        assert _live_tasks("Connection._reconnect") == []
+        assert _live_tasks("_Connection._reconnect") == []
 
 
 async def test_restarted_http_server_gets_a_new_session():
@@ -265,7 +265,7 @@ async def test_reconnect_wait_is_bounded_by_call_timeout():
         result = await add.execute(a=1, b=1)
         assert time.monotonic() - started < 5
         assert "still reconnecting" in result.error
-        assert len(_live_tasks("Connection._reconnect")) == 1
+        assert len(_live_tasks("_Connection._reconnect")) == 1
 
 
 async def test_cancelled_caller_leaves_shared_reconnect_running():
@@ -284,7 +284,7 @@ async def test_cancelled_caller_leaves_shared_reconnect_running():
             await asyncio.sleep(0.2)
             waiting.cancel()
             await asyncio.gather(waiting, return_exceptions=True)
-            assert len(_live_tasks("Connection._reconnect")) == 1
+            assert len(_live_tasks("_Connection._reconnect")) == 1
             proc = await asyncio.to_thread(_start, "streamable-http", port)
             await _until(lambda: client.status("remote").state == "connected")
     finally:
@@ -302,9 +302,9 @@ async def test_detach_cancels_background_reconnect():
     proc.wait()
     await _tool(client, "remote__add").execute(a=1, b=1)
     await _until(lambda: client.status("remote").error != "Connection closed")
-    assert len(_live_tasks("Connection._reconnect")) == 1
+    assert len(_live_tasks("_Connection._reconnect")) == 1
     await asyncio.wait_for(client.aclose(), 5)
-    assert _live_tasks("Connection._reconnect") == []
+    assert _live_tasks("_Connection._reconnect") == []
     assert _live_sessions() == []
 
 

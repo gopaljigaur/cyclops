@@ -60,7 +60,7 @@ await mcp.attach(
 
 A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run. A call that could not be sent, or that a restarted streamable HTTP server refused because it no longer knows the session, is retried once on a new session.
 
-So a call takes at most `call_timeout` waiting for a reconnect plus `call_timeout` for the tool itself. With the defaults, a server that stays down costs each call 60 seconds at most, while the reconnect behind it sleeps up to 31 seconds in all, plus up to `max_retries + 1` times `connect_timeout` against a host that does not answer.
+A call can wait for a reconnect twice, each time up to `call_timeout`: once when it starts without a session, and once more when its first attempt hits a closed stream or a terminated session. So the worst case is three times `call_timeout`: two reconnect waits plus the call itself. A server that stays down fails the first wait, so with the defaults it costs each call 60 seconds at most, while the reconnect behind it sleeps up to 31 seconds in all, plus up to `max_retries + 1` times `connect_timeout` against a host that does not answer.
 
 ### Status
 

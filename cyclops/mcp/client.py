@@ -9,7 +9,7 @@ from mcp.types import CallToolResult, Tool
 
 from cyclops.mcp.connection import (
     DEFAULT_CALL_TIMEOUT,
-    Connection,
+    _Connection,
     ReconnectionOptions,
     ServerStatus,
     Transport,
@@ -31,7 +31,7 @@ class MCPClient:
     """
 
     def __init__(self) -> None:
-        self._connections: Dict[str, Connection] = {}
+        self._connections: Dict[str, _Connection] = {}
         self._tools: Dict[str, List[MCPClientTool]] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
 
@@ -74,7 +74,7 @@ class MCPClient:
         label = name if prefix is True else prefix
         async with self._locks.setdefault(name, asyncio.Lock()):
             await self._detach(name)
-            conn = Connection(
+            conn = _Connection(
                 name=name,
                 transport=transport or ("stdio" if command else "http"),
                 command=command,

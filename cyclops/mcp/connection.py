@@ -83,7 +83,7 @@ def _cause(error: BaseException) -> BaseException:
     return error
 
 
-class Connection:
+class _Connection:
     """One server session, owned by a background task on the client's loop.
 
     The transport is opened and closed inside that task, so connect and close
