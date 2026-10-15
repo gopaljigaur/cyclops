@@ -17,7 +17,7 @@ class AgentConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     model: str
-    temperature: float = 0.1
+    temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
     tool_mode: Literal["auto", "native", "naive"] = "auto"

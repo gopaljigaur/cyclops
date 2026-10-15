@@ -93,7 +93,6 @@ def test_completion_kwargs_go_to_every_call():
         del kwargs["messages"], kwargs["tools"]
         assert kwargs == {
             "model": "gpt-4o-mini",
-            "temperature": 0.1,
             "max_tokens": 512,
             "api_key": "sk-test",
             "api_base": "https://llm.example.com/v1",
@@ -118,8 +117,6 @@ def test_completion_kwargs_go_through_a_router():
     router.acompletion.assert_called_once_with(
         model="smart",
         messages=[{"role": "user", "content": "hello"}],
-        temperature=0.1,
-        max_tokens=None,
         reasoning_effort="low",
         timeout=10,
     )
@@ -294,7 +291,6 @@ def test_streamed_anthropic_tool_loop_sends_back_the_signed_thinking():
 
     config = AgentConfig(
         model="anthropic/claude-sonnet-4-5",
-        temperature=1,
         thinking_budget=1024,
         completion_kwargs={"api_key": "sk-test"},
     )
@@ -354,7 +350,6 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
 
     config = AgentConfig(
         model="anthropic/claude-sonnet-4-5",
-        temperature=1,
         system_prompt="Be brief.",
         prompt_caching=True,
         thinking_budget=1024,
@@ -443,13 +438,66 @@ def _request_body(monkeypatch, model, **config):
         bodies.append(loads(request.content))
         return httpx.Response(200, json=REPLIES[request.url.host], request=request)
 
-    config = AgentConfig(
-        model=model, temperature=1, completion_kwargs={"api_key": "test"}, **config
-    )
+    config = AgentConfig(model=model, completion_kwargs={"api_key": "test"}, **config)
     with patch.object(httpx.AsyncClient, "send", send):
         assert Agent(config).run("hello") == "hi"
     (body,) = bodies
     return body
+
+
+# ---------------------------------------------------------------------------
+# Temperature
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "o3-mini", "gpt-5"])
+def test_request_has_no_temperature_by_default(monkeypatch, model):
+    body = _request_body(monkeypatch, model)
+
+    assert "temperature" not in body
+
+
+def test_request_takes_a_set_temperature(monkeypatch):
+    body = _request_body(monkeypatch, "gpt-4o-mini", temperature=0.3)
+
+    assert body["temperature"] == 0.3
+
+
+def test_router_request_keeps_the_deployment_sampling_params(monkeypatch):
+    bodies = []
+
+    async def send(self, request, **kwargs):
+        bodies.append(loads(request.content))
+        return httpx.Response(200, json=REPLIES[request.url.host], request=request)
+
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {
+                    "model": "gpt-4o-mini",
+                    "api_key": "test",
+                    "temperature": 0.7,
+                    "max_tokens": 77,
+                },
+            }
+        ]
+    )
+    with patch.object(httpx.AsyncClient, "send", send):
+        assert Agent(AgentConfig(model="smart", router=router)).run("hello") == "hi"
+
+    (body,) = bodies
+    assert body["temperature"] == 0.7
+    assert body["max_tokens"] == 77
+
+
+def test_anthropic_thinking_request_has_no_temperature_by_default(monkeypatch):
+    body = _request_body(
+        monkeypatch, "anthropic/claude-sonnet-4-5", thinking_budget=2048
+    )
+
+    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+    assert "temperature" not in body
 
 
 def test_openai_request_takes_the_reasoning_effort(monkeypatch):

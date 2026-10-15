@@ -20,7 +20,7 @@ config = AgentConfig(
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model` | `str` | required | LiteLLM model string, e.g. `"gpt-4o-mini"`, `"groq/llama-3.1-8b-instant"`, `"ollama/qwen3:4b"`. |
-| `temperature` | `float` | `0.1` | Sampling temperature. Lower values are more deterministic. |
+| `temperature` | `float \| None` | `None` | Sampling temperature. Lower values are more deterministic. `None` uses the model's default. |
 | `max_tokens` | `int \| None` | `None` | Maximum tokens in the response. `None` uses the model's default. |
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` uses native function calling and switches this agent to `"naive"` if LiteLLM reports the model does not support tools; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
@@ -240,12 +240,11 @@ Each option goes only to models where LiteLLM lists the matching parameter (`rea
 ```python
 config = AgentConfig(
     model="anthropic/claude-sonnet-4-5",
-    temperature=1,  # Anthropic requires 1 with thinking
     reasoning_effort="medium",
 )
 ```
 
-Anthropic models accept thinking only with `temperature=1`, and OpenAI reasoning models reject any other temperature, so set it with these options. When `max_tokens` is unset and the request carries a thinking budget, LiteLLM sends the budget plus 4096 tokens (its `DEFAULT_MAX_TOKENS`) as the Anthropic output limit; when it is set, it has to exceed the budget.
+Leave `temperature` unset with these options: Anthropic models accept thinking only at temperature 1, and OpenAI reasoning models reject any other value. When `max_tokens` is unset and the request carries a thinking budget, LiteLLM sends the budget plus 4096 tokens (its `DEFAULT_MAX_TOKENS`) as the Anthropic output limit; when it is set, it has to exceed the budget.
 
 ## Prompt caching
 

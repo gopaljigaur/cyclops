@@ -49,7 +49,7 @@ Pydantic model that holds all LLM and agent runtime settings.
 ```python
 class AgentConfig(BaseModel):
     model: str
-    temperature: float = 0.1
+    temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
     tool_mode: Literal["auto", "native", "naive"] = "auto"

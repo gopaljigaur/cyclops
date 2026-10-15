@@ -30,10 +30,9 @@ def _completion_kwargs(
     response_model: Optional[Type],
 ) -> Dict[str, Any]:
     """The arguments of every completion in a run, besides its messages."""
-    kwargs: Dict[str, Any] = {
-        "temperature": config.temperature,
-        "max_tokens": config.max_tokens,
-    }
+    # Unset values stay out: through a Router, None would replace a deployment's own.
+    sampling = {"temperature": config.temperature, "max_tokens": config.max_tokens}
+    kwargs: Dict[str, Any] = {k: v for k, v in sampling.items() if v is not None}
     # A router has its own timeouts and retries. Elsewhere _acompletion's
     # retries replace those of the OpenAI client LiteLLM uses for some providers.
     if config.router is None:
