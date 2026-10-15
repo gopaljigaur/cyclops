@@ -956,11 +956,17 @@ def test_litellm_callbacks_fire_for_sync_runs():
     events = []
 
     class Recorder(CustomLogger):
-        async def async_log_success_event(self, *args, **kwargs):
-            events.append("success")
+        async def async_log_success_event(
+            self, kwargs, response_obj, start_time, end_time
+        ):
+            # Other tests' logging can finish during this one.
+            if response_obj.choices[0].message.content == "sync callbacks reply":
+                events.append("success")
 
     agent = Agent(config=_make_config())
-    acompletion = functools.partial(litellm.acompletion, mock_response="hi")
+    acompletion = functools.partial(
+        litellm.acompletion, mock_response="sync callbacks reply"
+    )
     with (
         patch.object(litellm, "callbacks", [Recorder()]),
         patch("litellm.acompletion", new=acompletion),
@@ -985,8 +991,12 @@ def test_litellm_callbacks_fire_when_sync_and_async_runs_alternate():
 
     # LiteLLM skips a CustomLogger whose class name it has already seen.
     class AlternationRecorder(CustomLogger):
-        async def async_log_success_event(self, *args, **kwargs):
-            events.append("success")
+        async def async_log_success_event(
+            self, kwargs, response_obj, start_time, end_time
+        ):
+            # Other tests' logging can finish during this one.
+            if response_obj.choices[0].message.content == "alternating callbacks reply":
+                events.append("success")
 
     agent = Agent(config=_make_config())
 
@@ -999,7 +1009,9 @@ def test_litellm_callbacks_fire_when_sync_and_async_runs_alternate():
                 break
             await asyncio.sleep(0.05)
 
-    acompletion = functools.partial(litellm.acompletion, mock_response="hi")
+    acompletion = functools.partial(
+        litellm.acompletion, mock_response="alternating callbacks reply"
+    )
     with (
         patch.object(litellm, "callbacks", [AlternationRecorder()]),
         patch("litellm.acompletion", new=acompletion),
