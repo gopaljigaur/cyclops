@@ -4,7 +4,8 @@ import asyncio
 import threading
 from typing import Any, Coroutine, List, Optional, Sequence, TypeVar
 
-from cyclops.mcp.client import MCPClient, ServerStatus
+from cyclops.mcp.client import MCPClient
+from cyclops.mcp.connection import ServerStatus
 from cyclops.mcp.tools import MCPClientTool
 from cyclops.toolkit.types import ToolResult
 

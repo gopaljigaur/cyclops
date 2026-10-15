@@ -55,7 +55,7 @@ def _live_tasks(qualname):
 
 
 def _live_sessions():
-    return _live_tasks("_Connection._run")
+    return _live_tasks("Connection._run")
 
 
 class TestStdio:
@@ -165,6 +165,16 @@ class TestResilience:
         result = await _tool(mcp, "demo__extra").execute()
         assert result.to_message_content() == "extra"
 
+    async def test_clashing_refresh_keeps_the_old_tools(self, caplog):
+        async with MCPClient() as client:
+            await client.attach("a", COMMAND, prefix="p")
+            await client.attach("b", COMMAND, prefix=False)
+            before = [t.name for t in client.tools(["b"])]
+            await _tool(client, "grow").execute(name="p__add")
+            await _until(lambda: "Could not refresh tools" in caplog.text)
+            assert [t.name for t in client.tools(["b"])] == before
+            assert [t.server for t in client.tools() if t.name == "p__add"] == ["a"]
+
     async def test_dropped_stdio_session_reports_disconnected(self, mcp):
         crashed = await _tool(mcp, "demo__crash").execute()
         assert crashed.error == "Connection closed"
@@ -214,8 +224,72 @@ async def test_remote_server_fails_after_bounded_retries():
         proc.wait()
         await _tool(client, "remote__add").execute(a=1, b=1)
         await _until(lambda: client.status("remote").state == "failed")
-        assert client.status("remote").error
-        assert _live_tasks("_Connection._reconnect") == []
+        assert "TaskGroup" not in client.status("remote").error
+        assert _live_tasks("Connection._reconnect") == []
+
+
+async def test_restarted_http_server_gets_a_new_session():
+    port = _free_port()
+    proc = _start("streamable-http", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach("remote", url=_url("streamable-http", port))
+            proc.kill()
+            proc.wait()
+            proc = await asyncio.to_thread(_start, "streamable-http", port)
+            add = await _tool(client, "remote__add").execute(a=1, b=1)
+            assert add.to_message_content() == "2"
+            assert client.status("remote") == ServerStatus("connected")
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+async def test_reconnect_wait_is_bounded_by_call_timeout():
+    port = _free_port()
+    proc = _start("streamable-http", port)
+    slow = ReconnectionOptions(initial_reconnection_delay=60)
+    async with MCPClient() as client:
+        await client.attach(
+            "remote",
+            url=_url("streamable-http", port),
+            call_timeout=0.5,
+            reconnection=slow,
+        )
+        proc.kill()
+        proc.wait()
+        add = _tool(client, "remote__add")
+        await add.execute(a=1, b=1)
+        await _until(lambda: client.status("remote").error != "Connection closed")
+        started = time.monotonic()
+        result = await add.execute(a=1, b=1)
+        assert time.monotonic() - started < 5
+        assert "still reconnecting" in result.error
+        assert len(_live_tasks("Connection._reconnect")) == 1
+
+
+async def test_cancelled_caller_leaves_shared_reconnect_running():
+    port = _free_port()
+    proc = _start("streamable-http", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach(
+                "remote", url=_url("streamable-http", port), reconnection=FAST
+            )
+            proc.kill()
+            proc.wait()
+            add = _tool(client, "remote__add")
+            await add.execute(a=1, b=1)
+            waiting = asyncio.create_task(add.execute(a=1, b=1))
+            await asyncio.sleep(0.2)
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+            assert len(_live_tasks("Connection._reconnect")) == 1
+            proc = await asyncio.to_thread(_start, "streamable-http", port)
+            await _until(lambda: client.status("remote").state == "connected")
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 async def test_detach_cancels_background_reconnect():
@@ -228,9 +302,9 @@ async def test_detach_cancels_background_reconnect():
     proc.wait()
     await _tool(client, "remote__add").execute(a=1, b=1)
     await _until(lambda: client.status("remote").error != "Connection closed")
-    assert len(_live_tasks("_Connection._reconnect")) == 1
+    assert len(_live_tasks("Connection._reconnect")) == 1
     await asyncio.wait_for(client.aclose(), 5)
-    assert _live_tasks("_Connection._reconnect") == []
+    assert _live_tasks("Connection._reconnect") == []
     assert _live_sessions() == []
 
 
