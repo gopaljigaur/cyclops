@@ -16,12 +16,14 @@ from typing import (
 )
 
 import litellm
+from pydantic import TypeAdapter, ValidationError
 
 from cyclops.core.compaction import _context_window, _ContextWindow
 from cyclops.core.completion import _build_messages, _usage
 from cyclops.core.events import (
     Compacted,
     GuardRejected,
+    OutputRejected,
     ReasoningDelta,
     RunFinished,
     StepFinished,
@@ -47,6 +49,8 @@ if TYPE_CHECKING:
     from cyclops.core.agent import Agent
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
+_ERRORS: TypeAdapter[List[Dict[str, Any]]] = TypeAdapter(List[Dict[str, Any]])
 
 # Finish reasons, as LiteLLM normalizes them, that end a run without an answer.
 # LiteLLM maps Anthropic's refusal and Bedrock's guardrail to content_filter,
@@ -216,8 +220,8 @@ class _RunLoop:
         # Without compaction the transcript is counted once a request overflows.
         window = _context_window(self.config, compaction, run.spend)
 
-        guard_rounds = 0
-        # Guard feedback waiting to be sent once another step is allowed.
+        guard_rounds = output_retries = 0
+        # Feedback waiting to be sent once another step is allowed.
         feedback: Optional[str] = None
         limit = self.config.max_steps
         for step in range(limit):
@@ -295,8 +299,21 @@ class _RunLoop:
             else:
                 assistant["content"] = content
                 run.history.append(assistant)
-                feedback = await self._guard_feedback(content)
-                if feedback is None:
+                feedback = self._validation_feedback(content)
+                if feedback is not None:
+                    if (
+                        output_retries < self.config.output_retries
+                        and step + 1 < limit
+                        and not run.over_budget()
+                    ):
+                        output_retries += 1
+                        run.emit(OutputRejected(feedback=feedback))
+                    else:
+                        # The answer stays the content, for the caller to see.
+                        result.content = content
+                        result.stop_reason = "output_validation"
+                        done = True
+                elif (feedback := await self._guard_feedback(content)) is None:
                     result.content = content
                     done = True
                 elif guard_rounds == self.config.max_guard_rounds:
@@ -372,6 +389,31 @@ class _RunLoop:
         if self.saver is not None:
             self.saver.rewritten()
         return True
+
+    def _validation_feedback(self, content: str) -> Optional[str]:
+        """The answer's response_model validation errors as a retry prompt, else None."""
+        if self.response_model is None:
+            return None
+        try:
+            self.response_model.model_validate_json(content)
+        except ValidationError as e:
+            # As Pydantic AI does: the model has its answer, so only nested
+            # errors keep the input that failed.
+            errors = [
+                {
+                    k: v
+                    for k, v in error.items()
+                    if k != "input" or len(error["loc"]) > 1
+                }
+                for error in e.errors(include_url=False, include_context=False)
+            ]
+            plural = "s" if len(errors) != 1 else ""
+            return (
+                f"{len(errors)} validation error{plural}:\n"
+                f"```json\n{_ERRORS.dump_json(errors, indent=2).decode()}\n```\n\n"
+                "Fix the errors and try again."
+            )
+        return None
 
     async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""

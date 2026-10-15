@@ -52,6 +52,13 @@ class GuardRejected(Event):
     feedback: str
 
 
+class OutputRejected(Event):
+    """The answer failed response_model validation, so the model was sent back
+    with the errors; that answer is not the result."""
+
+    feedback: str
+
+
 class ModelFallback(Event):
     """A model failed or refused, so the step's completion goes to the next model."""
 
@@ -103,6 +110,7 @@ __all__ = [
     "ToolCallStarted",
     "ToolCallFinished",
     "GuardRejected",
+    "OutputRejected",
     "ModelFallback",
     "StepFinished",
     "Compacted",
