@@ -1944,6 +1944,122 @@ async def test_handle_iterates_once():
 
 
 @pytest.mark.asyncio
+async def test_handle_iterated_from_the_start_gets_every_delta():
+    agent = Agent(config=_make_config())
+    chunks = [_text_chunk(t) for t in "abc"]
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
+        handle = agent.start("hi")
+        events = [e async for e in handle]
+    assert _event_summary(events) == [
+        ("text", "a"),
+        ("text", "b"),
+        ("text", "c"),
+        ("step", 1),
+        ("run", "completed", "abc"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handle_awaited_before_iterating_keeps_one_delta_per_step():
+    from cyclops.core.events import ReasoningDelta, TextDelta
+
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    first = [
+        _text_chunk("Let"),
+        _text_chunk(" me add."),
+        _tool_call_chunk(0, '{"a": 2, "b": 3}', id="tc_1", name="add"),
+    ]
+    second = [_text_chunk(t) for t in ["It", " is", " 5."]]
+    mock = AsyncMock(side_effect=[_stream(first), _stream(second)])
+    with patch("litellm.acompletion", new=mock):
+        handle = agent.start("2 + 3?")
+        await handle
+        # Seven events and the finished task.
+        assert handle._run.events.qsize() == 8
+        events = [e async for e in handle]
+    assert _event_summary(events) == [
+        ("text", "Let me add."),
+        ("tool_start", "tc_1", "add", {"a": 2, "b": 3}),
+        ("tool_end", "tc_1", "5", False),
+        ("step", 1),
+        ("text", "It is 5."),
+        ("step", 2),
+        ("run", "completed", "It is 5."),
+    ]
+
+    # Only deltas of one kind merge.
+    from cyclops.core.run_state import _Events
+
+    queue = _Events()
+    for event in [
+        TextDelta(text="a"),
+        TextDelta(text="b"),
+        ReasoningDelta(text="c"),
+        ReasoningDelta(text="d"),
+        TextDelta(text="e"),
+    ]:
+        queue.put_nowait(event)
+    merged = [queue.get_nowait() for _ in range(queue.qsize())]
+    assert [(type(e).__name__, e.text) for e in merged] == [
+        ("TextDelta", "ab"),
+        ("ReasoningDelta", "cd"),
+        ("TextDelta", "e"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_paced_run_reads_a_bounded_number_of_chunks_ahead():
+    """A consumer that stops reading holds the stream within _READ_AHEAD chunks."""
+    import asyncio
+
+    from cyclops.core.completion import _READ_AHEAD
+
+    read = []
+
+    async def completion_stream():
+        for i in range(100):
+            read.append(i)
+            yield _text_chunk(str(i))
+
+    agent = Agent(config=_make_config())
+    with patch("litellm.acompletion", new=AsyncMock(return_value=completion_stream())):
+        events = agent.astream_events("go")
+        await events.__anext__()
+        await asyncio.sleep(0.05)
+        assert len(read) == _READ_AHEAD + 1
+        texts = [e.text async for e in events if hasattr(e, "text")]
+    assert texts == [str(i) for i in range(1, 100)]
+
+
+def test_sync_events_caller_that_stops_reading_holds_the_run():
+    """A sync caller holding the iterator after the first event stops tools from running."""
+    import time
+
+    from cyclops.toolkit.tool import Tool
+
+    calls = []
+
+    def record() -> str:
+        calls.append(1)
+        return "done"
+
+    agent = Agent(config=_make_config(), tools=[Tool("record", "Records", record)])
+    chunks = [
+        _text_chunk("Calling."),
+        _tool_call_chunk(0, "{}", id="tc_1", name="record"),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
+        events = agent.stream_events("go")
+        next(events)
+        time.sleep(0.05)
+        assert calls == []
+        events.close()
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_second_cancel_leaves_the_tool_cleanup_alone():
     import asyncio
 

@@ -1,12 +1,49 @@
 """A run in progress: the state its step loop shares, and the RunHandle its caller holds."""
 
 import asyncio
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple
+import io
+from collections import deque
+from typing import Any, AsyncGenerator, Deque, Dict, Generator, List, Optional, Tuple
 
-from cyclops.core.events import Event, RunFinished
+from cyclops.core.events import Event, ReasoningDelta, RunFinished, TextDelta
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.session import Session
 from cyclops.core.types import AgentConfig, RunResult, Usage
+
+
+class _Events(asyncio.Queue):
+    """A run's events.
+
+    Until the handle is iterated, consecutive deltas are kept as one and
+    nested runs' events are dropped, so a run that is only awaited holds a few
+    events per step instead of one per token. put_nowait counts a merged
+    delta as unfinished, which join() would wait on; only paced runs join, and
+    their handle is iterated before the run starts.
+    """
+
+    def _init(self, maxsize: int) -> None:
+        # Each item with the text of the deltas merged into it, if any.
+        self._queue: Deque[Tuple[Any, Optional[io.StringIO]]] = deque()
+        self.listening = False
+
+    def _put(self, item: Any) -> None:
+        if not self.listening and self._queue:
+            last, text = self._queue[-1]
+            if isinstance(item, (TextDelta, ReasoningDelta)) and type(item) is type(
+                last
+            ):
+                if text is None:
+                    text = io.StringIO()
+                    self._queue[-1] = (last, text)
+                text.write(item.text)
+                return
+        self._queue.append((item, None))
+
+    def _get(self) -> Any:
+        item, text = self._queue.popleft()
+        if text is not None:
+            item = item.model_copy(update={"text": item.text + text.getvalue()})
+        return item
 
 
 class _Run:
@@ -31,9 +68,9 @@ class _Run:
         self.session = session
         self.parent = parent
         self.agent_path: Tuple[str, ...] = ()
-        self.events: asyncio.Queue
+        self.events: _Events
         if parent is None:
-            self.events = asyncio.Queue()
+            self.events = _Events()
             # True for astream_events, whose caller takes the events as they come.
             self.paced = paced
         else:
@@ -49,12 +86,17 @@ class _Run:
 
     def emit(self, event: Event) -> None:
         if self.agent_path:
+            if not self.events.listening:
+                return
             event = event.model_copy(update={"agent_path": self.agent_path})
         self.events.put_nowait(event)
 
-    async def taken(self) -> None:
-        """When paced, wait until the caller has taken every event emitted so far."""
-        if self.paced:
+    async def taken(self, ahead: int = 0) -> None:
+        """When paced, wait until the caller has taken every event emitted so far.
+
+        With ahead, wait only once more than that many are left to take.
+        """
+        if self.paced and self.events.qsize() > ahead:
             await self.events.join()
 
     def spend(self, usage: Optional[Usage]) -> None:
@@ -100,6 +142,7 @@ class RunHandle:
         if self._iterated:
             raise RuntimeError("A run's events can be iterated only once")
         self._iterated = True
+        self._run.events.listening = True
         return self._events()
 
     async def _events(self) -> AsyncGenerator[Event, None]:

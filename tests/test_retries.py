@@ -284,3 +284,20 @@ async def test_idle_timeout_starts_after_the_first_chunk():
     config = AgentConfig(model=MODEL, stream_idle_timeout=0.01)
     with patch("litellm.acompletion", new=AsyncMock(return_value=slow_start())):
         assert await _streamed_text(Agent(config)) == "hello"
+
+
+async def test_consumer_slower_than_the_idle_timeout_keeps_the_stream():
+    """Waiting for the caller to take events doesn't count as an idle stream."""
+    texts = [str(i) for i in range(40)]
+    config = AgentConfig(model=MODEL, stream_idle_timeout=0.01)
+    mock = AsyncMock(return_value=_stream(*[_chunk(t) for t in texts]))
+    received = []
+    with patch("litellm.acompletion", new=mock):
+        async for event in Agent(config).astream_events("hi"):
+            if hasattr(event, "text"):
+                received.append(event.text)
+                await asyncio.sleep(0.02)
+
+    assert received == texts
+    assert event.result.stop_reason == "completed"
+    assert mock.call_count == 1
