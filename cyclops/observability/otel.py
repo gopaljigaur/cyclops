@@ -11,6 +11,7 @@ from opentelemetry.context import Context
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 from cyclops.core.hooks import RUN_STOPPED, AgentHooks, current_tool_call_id
+from cyclops.toolkit.types import ToolResult
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
@@ -151,13 +152,15 @@ class TelemetryHooks(AgentHooks):
 
     # ── Run lifecycle ─────────────────────────────────────────────────────────
 
-    def on_run_start(self, input_message: str) -> None:
+    def on_run_start(self, input_message: str | list[dict[str, Any]]) -> None:
+        # Only the text's length: parts may hold base64 data.
+        text = ToolResult.message_text(input_message)
         self._push(
             "invoke_agent",
             SpanKind.INTERNAL,
             {
                 "gen_ai.operation.name": "invoke_agent",
-                "cyclops.input.length": len(input_message),
+                "cyclops.input.length": len(text),
             },
             run=True,
         )

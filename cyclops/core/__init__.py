@@ -1,6 +1,7 @@
 """Core agent framework components"""
 
 from cyclops.core.agent import Agent, RunHandle
+from cyclops.core.content import ContentPart, UserContent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.completion import StreamIdleTimeout
 from cyclops.core.subagents import AgentTool
@@ -34,6 +35,7 @@ __all__ = [
     "AgentHooks",
     "Compaction",
     "AgentTool",
+    "ContentPart",
     "DeniedToolCall",
     "Deny",
     "Guard",
@@ -51,4 +53,5 @@ __all__ = [
     "RunResult",
     "ToolCall",
     "Usage",
+    "UserContent",
 ]

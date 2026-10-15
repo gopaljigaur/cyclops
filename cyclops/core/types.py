@@ -1,7 +1,7 @@
 """Core type definitions"""
 
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from litellm.types.llms.openai import REASONING_EFFORT
 from pydantic import BaseModel, Field, model_validator
 
@@ -166,7 +166,8 @@ class Message(BaseModel):
     """A single conversation message. Covers all LiteLLM message types."""
 
     role: str
-    content: Optional[str] = None
+    # Text, or a list of content parts such as text and image_url.
+    content: Optional[Union[str, List[Dict[str, Any]]]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None

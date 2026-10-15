@@ -40,6 +40,7 @@ export default defineConfig({
             { label: 'Subagents', slug: 'guides/subagents' },
             { label: 'Streaming', slug: 'guides/streaming' },
             { label: 'Structured Output', slug: 'guides/structured-output' },
+            { label: 'Images and Files', slug: 'guides/multimodal' },
             { label: 'Sessions', slug: 'guides/sessions' },
             { label: 'Skills', slug: 'guides/skills' },
             { label: 'MCP', slug: 'guides/mcp' },

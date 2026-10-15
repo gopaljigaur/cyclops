@@ -101,6 +101,15 @@ def _trimmed(lines: List[str], counts: List[int], budget: int) -> List[str]:
     return kept[::-1]
 
 
+# Gemini counts 32 tokens per second of audio, one per 500 bytes at 128 kbit/s.
+_AUDIO_BYTES_PER_TOKEN = 500
+
+
+def _audio_tokens(data: str) -> int:
+    """About the tokens of base64 audio, from its size."""
+    return len(data) * 3 // 4 // _AUDIO_BYTES_PER_TOKEN
+
+
 class _ContextWindow:
     """Counts the tokens of a run's requests and compacts its transcript.
 
@@ -135,12 +144,20 @@ class _ContextWindow:
         self._fixed = None
 
     def _count(self, message: Dict[str, Any]) -> int:
+        # LiteLLM's counter raises on input_audio parts, so they are estimated
+        # from their size and counted apart from the rest of the message.
+        audio: List[Dict[str, Any]] = []
+        content = message.get("content")
+        if isinstance(content, list):
+            audio = [p for p in content if p["type"] == "input_audio"]
+            rest = [p for p in content if p["type"] != "input_audio"]
+            message = {**message, "content": rest}
         return litellm.token_counter(
             model=self.model,
             messages=[message],
             count_response_tokens=True,
             use_default_image_token_count=True,
-        )
+        ) + sum(_audio_tokens(p["input_audio"]["data"]) for p in audio)
 
     def tokens(self, history: List[Dict[str, Any]]) -> int:
         """Tokens of a request with this transcript."""

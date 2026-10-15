@@ -12,6 +12,12 @@ from cyclops.core.types import AgentConfig
 # blocks for these providers (on vertex_ai only for Gemini models); others
 # accept only text in a tool message.
 _TOOL_MESSAGE_IMAGE_PROVIDERS = {"anthropic", "bedrock", "gemini"}
+# The LiteLLM model info flag for each kind of input a content part may need.
+_INPUT_SUPPORT = {
+    "image": "supports_vision",
+    "pdf": "supports_pdf_input",
+    "audio": "supports_audio_input",
+}
 # Providers that cache a prompt prefix at cache_control markers (on vertex_ai
 # only for Anthropic models). Gemini turns them into billed cachedContents
 # resources instead, and OpenAI caches without them.
@@ -67,6 +73,19 @@ def _lacks_tools(model: str, custom_llm_provider: Optional[str]) -> bool:
         model=model, custom_llm_provider=custom_llm_provider
     )
     return supported is not None and "tools" not in supported
+
+
+def _takes_input(model: str, custom_llm_provider: Optional[str], flag: str) -> bool:
+    """False only if LiteLLM's model map sets `flag` to false for the model.
+
+    Most entries leave the flags out. The entry is read from litellm.model_cost
+    under provider/model, else model: get_model_info asks some providers
+    (Ollama) over the network.
+    """
+    model, provider = litellm.get_llm_provider(model, custom_llm_provider)[:2]
+    costs = litellm.model_cost
+    info = costs.get(f"{provider}/{model}") or costs.get(model) or {}
+    return info.get(flag) is not False
 
 
 def _deployments(config: AgentConfig) -> List[Dict[str, Any]]:

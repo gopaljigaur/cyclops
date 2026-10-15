@@ -5,6 +5,7 @@ import io
 from collections import deque
 from typing import Any, AsyncGenerator, Deque, Dict, Generator, List, Optional, Tuple
 
+from cyclops.core.content import UserContent, _Content, _user_content
 from cyclops.core.events import Event, ReasoningDelta, RunFinished, TextDelta
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.session import Session
@@ -77,7 +78,7 @@ class _Run:
             self.agent_path = parent.agent_path + (name,)
             self.events = parent.events
             self.paced = parent.paced
-        self.steering: List[str] = []
+        self.steering: List[_Content] = []
         self.started = False
         self.cancelled = False
         # Budgets count what is known, even once the reported totals are not.
@@ -156,18 +157,19 @@ class RunHandle:
             if isinstance(event, RunFinished) and not event.agent_path:
                 return
 
-    def steer(self, message: str) -> None:
+    def steer(self, message: UserContent) -> None:
         """Add a user message that the model sees in its next completion.
 
         A message that arrives during a completion goes into the one after,
         once the step's tool calls finish; if that completion was the final
         answer, the run takes another step to answer it when its limits allow,
         and otherwise leaves it in the session for its next run; without a
-        session it is dropped. Steering a finished run raises RuntimeError.
+        session it is dropped. Steering a finished run raises RuntimeError, and
+        content the model can't take raises ValueError, as run input does.
         """
         if self._task.done():
             raise RuntimeError("The run has finished")
-        self._run.steering.append(message)
+        self._run.steering.append(_user_content(self._run.config, message))
 
     def cancel(self) -> None:
         """Stop the run; awaiting it then gives stop_reason "cancelled".

@@ -15,7 +15,7 @@ from cyclops import Agent, AgentConfig, AgentHooks
 
 
 class LoggingHooks(AgentHooks):
-    def on_run_start(self, input_message: str) -> None:
+    def on_run_start(self, input_message) -> None:
         print(f"[run] {input_message!r}")
 
     def on_llm_end(self, response) -> None:
@@ -39,7 +39,7 @@ agent.run("What is the weather in London?")
 
 | Method | When it fires | Return value |
 |---|---|---|
-| `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()` | `None` |
+| `on_run_start(input_message)` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()`, with the input text or its list of content parts | `None` |
 | `on_run_end(content)` | When a run finishes, streamed or not | `None` |
 | `on_run_error(error)` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (`handle.cancel()`, or a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. A handle cancelled before its run started fires no hooks at all; its events still end with `RunFinished`. | `None` |
 | `on_llm_start(messages)` | Before each LiteLLM completion call | `None` |

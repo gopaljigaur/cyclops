@@ -9,6 +9,7 @@ from cyclops.core import (
     AgentConfig,
     AgentHooks,
     Compaction,
+    ContentPart,
     DeniedToolCall,
     Deny,
     Guard,
@@ -25,6 +26,7 @@ from cyclops.core import (
     FileSessionStore,
     RunResult,
     Usage,
+    UserContent,
 )
 from cyclops.toolkit import (
     BaseTool,
@@ -49,6 +51,7 @@ __all__ = [
     "AgentConfig",
     "AgentHooks",
     "Compaction",
+    "ContentPart",
     "DeniedToolCall",
     "Deny",
     "Guard",
@@ -65,6 +68,7 @@ __all__ = [
     "FileSessionStore",
     "RunResult",
     "Usage",
+    "UserContent",
     "BaseTool",
     "tool",
     "ToolResult",

@@ -1,5 +1,6 @@
 """Tests for completion kwargs, reasoning history, prompt caching and response schemas"""
 
+from base64 import b64decode
 from json import dumps, loads
 from unittest.mock import AsyncMock, patch
 
@@ -391,6 +392,11 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
 # Reasoning options
 # ---------------------------------------------------------------------------
 
+# A one pixel PNG.
+PNG = b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
 REPLIES = {
     "api.openai.com": {
         "id": "chatcmpl-1",
@@ -436,20 +442,26 @@ REPLIES = {
 }
 
 
-def _request_body(monkeypatch, model, **config):
-    """The body LiteLLM builds for one completion, answered without a network."""
+def _request_body(monkeypatch, model, message="hello", **config):
+    """The body LiteLLM builds for one completion, answered without a network.
+
+    An image URL in the message is served a one pixel PNG.
+    """
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     monkeypatch.setenv("AWS_REGION_NAME", "us-east-1")
     bodies = []
 
     async def send(self, request, **kwargs):
+        if request.url.host == "example.com":
+            headers = {"content-type": "image/png"}
+            return httpx.Response(200, content=PNG, headers=headers, request=request)
         bodies.append(loads(request.content))
         return httpx.Response(200, json=REPLIES[request.url.host], request=request)
 
     config = AgentConfig(model=model, completion_kwargs={"api_key": "test"}, **config)
     with patch.object(httpx.AsyncClient, "send", send):
-        assert Agent(config).run("hello") == "hi"
+        assert Agent(config).run(message) == "hi"
     (body,) = bodies
     return body
 

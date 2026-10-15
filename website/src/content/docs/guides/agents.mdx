@@ -92,6 +92,8 @@ asyncio.run(main())
 
 Both methods accept an optional `response_model` parameter for structured output. See [Structured Output](/guides/structured-output/).
 
+The input is text or a list of content parts, such as text with images or a PDF. See [Images and Files](/guides/multimodal/).
+
 ### One event loop per process
 
 LiteLLM runs async success callbacks on one background worker per process, and that worker serves one event loop at a time. When a call comes from another loop, LiteLLM moves the worker, logging `LoggingWorker: event loop changed; carried N pending and revived N dequeued logging task(s) onto the new loop` at WARNING when tasks were waiting, and asyncio logs "Task exception was never retrieved" and "Task was destroyed but it is pending!" for the tasks left on the old loop. Some callbacks run only when the process exits, and with loops in several threads some never run at all.
@@ -163,7 +165,7 @@ async for event in handle:
 result = await handle
 ```
 
-- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the session for its next run, and without a session it is dropped (a run that already answered completes with that answer). Steering a run that has finished raises `RuntimeError`.
+- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the session for its next run, and without a session it is dropped (a run that already answered completes with that answer). The message can be content parts, as run input can. Steering a run that has finished raises `RuntimeError`.
 - `handle.cancel()` stops the run. Tool calls in progress are cancelled and get a cancelled result, so the conversation stays valid, and awaiting the handle gives `stop_reason="cancelled"`. A completion in progress is dropped. Calling it again does nothing.
 
 Cancelling the task that awaits a handle (or `arun()`) also cancels the run, but as a plain `asyncio.CancelledError`: the await raises it and there is no `"cancelled"` result.

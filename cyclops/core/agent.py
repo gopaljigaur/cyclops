@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple, T
 
 from cyclops.core.compaction import _compaction_window
 from cyclops.core.completion import _tool_to_openai_format
+from cyclops.core.content import UserContent, _user_content
 from cyclops.core.events import Event, RunFinished, TextDelta
 from cyclops.core.run import _RunLoop, _system_prompt
 from cyclops.core.run_state import RunHandle, _Run
@@ -54,7 +55,7 @@ class Agent:
 
     def start(
         self,
-        input_message: str,
+        input_message: UserContent,
         *,
         stream: bool = True,
         response_model: Optional[Type] = None,
@@ -62,6 +63,10 @@ class Agent:
     ) -> RunHandle:
         """Start a run in a task on the running event loop and return its handle.
 
+        input_message is text, or a list of OpenAI chat content parts (text,
+        image_url, file, input_audio). Parts that aren't, or of a kind LiteLLM's
+        model map marks the model as not taking, raise ValueError before the run
+        starts.
         With stream=False the completions aren't streamed, so each step's text
         arrives as one TextDelta. response_model asks the provider for that
         schema when it supports one; the result's content is the raw JSON.
@@ -79,7 +84,7 @@ class Agent:
 
     def run(
         self,
-        input_message: str,
+        input_message: UserContent,
         response_model: Optional[Type] = None,
         *,
         session: Optional[Session] = None,
@@ -91,7 +96,7 @@ class Agent:
 
     async def arun(
         self,
-        input_message: str,
+        input_message: UserContent,
         response_model: Optional[Type] = None,
         *,
         session: Optional[Session] = None,
@@ -110,7 +115,7 @@ class Agent:
         return result.content
 
     def run_with_response(
-        self, input_message: str, *, session: Optional[Session] = None
+        self, input_message: UserContent, *, session: Optional[Session] = None
     ) -> RunResult:
         """Run and return a RunResult with the stop reason, usage and cost."""
         return _run_coroutine_sync(
@@ -118,7 +123,7 @@ class Agent:
         )
 
     async def arun_with_response(
-        self, input_message: str, *, session: Optional[Session] = None
+        self, input_message: UserContent, *, session: Optional[Session] = None
     ) -> RunResult:
         """Run async and return a RunResult with the stop reason, usage and cost.
 
@@ -128,13 +133,13 @@ class Agent:
         return await self.start(input_message, stream=False, session=session)
 
     def stream(
-        self, input_message: str, *, session: Optional[Session] = None
+        self, input_message: UserContent, *, session: Optional[Session] = None
     ) -> Iterator[str]:
         """Stream output tokens. Naive tool mode yields the final answer as one chunk."""
         return _iterate_sync(self.astream(input_message, session=session))
 
     async def astream(
-        self, input_message: str, *, session: Optional[Session] = None
+        self, input_message: UserContent, *, session: Optional[Session] = None
     ) -> AsyncGenerator[str, None]:
         """Async stream output tokens. Naive tool mode yields the final answer as one chunk."""
         async with aclosing(
@@ -149,13 +154,13 @@ class Agent:
                     raise event.result.error
 
     def stream_events(
-        self, input_message: str, *, session: Optional[Session] = None
+        self, input_message: UserContent, *, session: Optional[Session] = None
     ) -> Iterator[Event]:
         """Stream the run's events; the last one is RunFinished."""
         return _iterate_sync(self.astream_events(input_message, session=session))
 
     async def astream_events(
-        self, input_message: str, *, session: Optional[Session] = None
+        self, input_message: UserContent, *, session: Optional[Session] = None
     ) -> AsyncGenerator[Event, None]:
         """Async stream the run's events; the last one is RunFinished.
 
@@ -226,7 +231,7 @@ class Agent:
 
     def _start(
         self,
-        input_message: str,
+        input_message: UserContent,
         *,
         stream: bool,
         response_model: Optional[Type],
@@ -234,10 +239,11 @@ class Agent:
         paced: bool = False,
     ) -> Tuple[_Run, "asyncio.Task[RunResult]"]:
         """Create a run and start its task on the running event loop."""
+        content = _user_content(self.config, input_message)
         history = [] if session is None else session.messages
         run = _Run(self.config, history, session, paced)
         task = asyncio.get_running_loop().create_task(
-            _RunLoop(self, run, stream, response_model).execute(input_message)
+            _RunLoop(self, run, stream, response_model).execute(content)
         )
         return run, task
 

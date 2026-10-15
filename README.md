@@ -67,6 +67,7 @@ print(agent.run("What is Apple's stock price?"))
 | **Subagents** | `agent.as_tool()` lets one agent delegate tasks to others, with shared cancellation, events and budgets |
 | **Streaming** | `agent.stream()` and `agent.astream()` for token-by-token output |
 | **Structured output** | `agent.run(..., response_model=MyModel)` returns a Pydantic instance |
+| **Images and files** | Run input can be OpenAI chat content parts: images, PDFs and audio, checked against what the model takes |
 | **Cost tracking** | `agent.run_with_response()` returns tokens used and estimated cost |
 | **Skills** | Load instructions from `SKILL.md` folders only when the task needs them |
 | **Sessions** | `Session` transcripts with usage, saved and loaded through a `SessionStore` (in memory or files), automatically after each step or run; forked and truncated |
