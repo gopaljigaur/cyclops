@@ -27,7 +27,7 @@ With a `session_store`, every run with a session saves it there as `durability` 
 
 Every run method takes a keyword-only `session: Optional[Session] = None`.
 
-**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `as_tool`
+**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `compact`, `acompact`, `as_tool`
 
 `as_tool(name, description, *, annotations=None, timeout=None) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
 
@@ -74,9 +74,25 @@ class AgentConfig(BaseModel):
     thinking_budget: Optional[int] = None   # tokens
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool | Literal["5m", "1h"] = True
+    compaction: Optional[Compaction] = None
+    max_tool_output_chars: Optional[int] = None
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
+```
+
+---
+
+### Compaction
+
+When a run summarizes the older part of its transcript, and how. See [Context window](guide/agents.md#context-window).
+
+```python
+class Compaction(BaseModel):
+    threshold: float = 0.8   # of the model's max input tokens
+    keep: float = 0.2        # of the model's max input tokens, below threshold
+    model: Optional[str] = None   # the agent's model when None
+    prompt: str = ...        # the summarizing instruction
 ```
 
 ---
@@ -173,6 +189,7 @@ class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dic
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
 class StepFinished(Event):     step: int; usage: Optional[Usage]; finish_reason: Optional[str]
+class Compacted(Event):        summary: str; replaced_messages: int; tokens_before: int; tokens_after: int
 class RunFinished(Event):      result: RunResult
 ```
 
@@ -214,6 +231,7 @@ class AgentHooks:
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
     def on_llm_end(self, response: Any) -> None: ...
     def on_llm_error(self, error: Exception) -> None: ...
+    def on_compaction(self, summary: str, tokens_before: int, tokens_after: int) -> None: ...
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]: ...
     def on_tool_end(self, tool_name: str, args: Dict[str, Any], result: str) -> None: ...
     def on_tool_error(self, tool_name: str, args: Dict[str, Any], error: BaseException) -> None: ...

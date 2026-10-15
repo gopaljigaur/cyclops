@@ -16,6 +16,7 @@ from typing import (
 
 import litellm
 
+from cyclops.core.compaction import _context_window
 from cyclops.core.completion import (
     _acompletion,
     _build_messages,
@@ -167,7 +168,9 @@ class _RunLoop:
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
         try:
-            start = len(run.history)
+            # Compaction may replace earlier messages too, so the transcript is
+            # restored as a whole.
+            before = list(run.history)
             mode = self.agent._get_tool_mode()
             try:
                 await self._steps(input_message, mode)
@@ -177,7 +180,7 @@ class _RunLoop:
                 if not _tools_unsupported(self.config):
                     raise
                 self.agent._detected_tool_mode = "naive"
-                del run.history[start:]
+                run.history[:] = before
                 if self.saver is not None:
                     self.saver.rewritten()
                 await self._steps(input_message, "naive")
@@ -211,6 +214,8 @@ class _RunLoop:
         kwargs: Dict[str, Any] = {}
         system_prompt: Optional[str] = None
         executor = _ToolExecutor(self.config, tools.tools_by_name, run)
+        compaction = self.config.compaction
+        window = None
 
         guard_rounds = 0
         # Guard feedback waiting to be sent once another step is allowed.
@@ -229,6 +234,10 @@ class _RunLoop:
                 system_prompt = _system_prompt(
                     self.config, agent.skills, tools.loaded, mode
                 )
+                if compaction is not None:
+                    window = _context_window(
+                        self.config, compaction, system_prompt, kwargs.get("tools")
+                    )
             if feedback is not None:
                 run.history.append({"role": "user", "content": feedback})
                 feedback = None
@@ -238,6 +247,12 @@ class _RunLoop:
             run.history += [
                 {"role": "user", "content": m} for m in run.steering[:steered]
             ]
+            if window is not None:
+                compacted = await window.compact_if_needed(run.history)
+                if compacted is not None:
+                    event, usage = compacted
+                    run.spend(usage)
+                    run.emit(event)
             messages = _build_messages(run.history, system_prompt)
             response: Any
             if streamed:

@@ -36,6 +36,19 @@ def _render(result: ToolResult) -> _Rendered:
     return _Rendered(content, ToolResult.message_text(content), result.is_error)
 
 
+def _limited(rendered: _Rendered, limit: Optional[int]) -> _Rendered:
+    """The rendered result with text past limit characters cut from its middle."""
+    text = rendered.text
+    if limit is None or len(text) <= limit:
+        return rendered
+    head = limit // 2
+    tail = len(text) - (limit - head)
+    text = f"{text[:head]}\n[{tail - head} characters omitted]\n{text[tail:]}"
+    images = _images(rendered.content)
+    content = [{"type": "text", "text": text}, *images] if images else text
+    return rendered._replace(content=content, text=text)
+
+
 def _images(content: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """The image parts of rendered content; only content with images is a list."""
     if isinstance(content, str):
@@ -313,6 +326,7 @@ class _ToolExecutor:
                 rendered = _render(ToolResult.error_result(error))
             else:
                 args, rendered = await self._run_tool(call_id, name, args)
+            rendered = _limited(rendered, self.config.max_tool_output_chars)
         except BaseException as e:
             # Middleware raised or the call was cancelled: it still finishes.
             run.emit(

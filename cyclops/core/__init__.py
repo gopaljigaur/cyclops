@@ -14,6 +14,7 @@ from cyclops.core.middleware import (
 from cyclops.core.permissions import ToolPermissions
 from cyclops.core.types import (
     AgentConfig,
+    Compaction,
     DeniedToolCall,
     Message,
     RunResult,
@@ -31,6 +32,7 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentHooks",
+    "Compaction",
     "AgentTool",
     "DeniedToolCall",
     "Deny",

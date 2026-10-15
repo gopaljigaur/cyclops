@@ -9,6 +9,46 @@ from cyclops.core.caching import PromptCaching
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import Guard, ToolMiddleware
 
+_SUMMARY_PROMPT = (
+    "Summarize the conversation below so that it can go on from your summary "
+    "alone. Keep the user's goals and instructions, the decisions made, the "
+    "facts and results the tools returned, names, identifiers and numbers that "
+    "matter, and what is left to do. Write only the summary."
+)
+
+
+class Compaction(BaseModel):
+    """When a run summarizes the older part of its transcript, and how."""
+
+    model_config = {"extra": "forbid"}
+
+    threshold: float = Field(
+        default=0.8,
+        gt=0,
+        le=1,
+        description="Fraction of the model's max input tokens a request may "
+        "reach before its older messages are summarized",
+    )
+    keep: float = Field(
+        default=0.2,
+        gt=0,
+        lt=1,
+        description="Fraction of the model's max input tokens kept as the most "
+        "recent messages, unsummarized",
+    )
+    model: Optional[str] = Field(
+        default=None, description="Model that writes the summary; None uses the agent's"
+    )
+    prompt: str = Field(
+        default=_SUMMARY_PROMPT, description="Instruction the summary is written to"
+    )
+
+    @model_validator(mode="after")
+    def _keep_below_threshold(self) -> "Compaction":
+        if self.keep >= self.threshold:
+            raise ValueError("keep must be below threshold")
+        return self
+
 
 class AgentConfig(BaseModel):
     """Configuration for an agent"""
@@ -90,6 +130,17 @@ class AgentConfig(BaseModel):
     # Mark cache breakpoints for providers that cache at cache_control markers:
     # True, or a time to live of "5m" or "1h"; False sends none.
     prompt_caching: PromptCaching = True
+    compaction: Optional[Compaction] = Field(
+        default=None,
+        description="Summarize older messages once a request nears the model's "
+        "input limit; None never does",
+    )
+    max_tool_output_chars: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Longest tool result text sent to the model; longer text "
+        "keeps its start and end around a note of what was cut",
+    )
 
     @model_validator(mode="after")
     def _one_reasoning_option(self) -> "AgentConfig":
