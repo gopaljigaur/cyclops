@@ -42,19 +42,12 @@ config = AgentConfig(
 | `num_retries` | `int` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. See [Retries and timeouts](#retries-and-timeouts). |
 | `timeout` | `float` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `float` | `120` | Seconds a stream may go without a chunk after its first. |
-<<<<<<< HEAD
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
 | `reasoning_effort` | `str \| None` | `None` | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, sent to models that take it. See [Reasoning](#reasoning). |
 | `thinking_budget` | `int \| None` | `None` | Tokens the model may think, sent to models that take a thinking budget; not with `reasoning_effort`. See [Reasoning](#reasoning). |
 | `prompt_caching` | `bool \| "5m" \| "1h"` | `True` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
-=======
-| `completion_kwargs` | `dict` | `{}` | Extra LiteLLM completion arguments sent with every call, such as `api_key`, `api_base` or `extra_headers`. |
-| `reasoning_effort` | `str` or `None` | `None` | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, sent to models that take it. See [Reasoning](#reasoning). |
-| `thinking_budget` | `int` or `None` | `None` | Tokens the model may think, sent to models that take a thinking budget; not with `reasoning_effort`. See [Reasoning](#reasoning). |
-| `prompt_caching` | `bool`, `"5m"` or `"1h"` | `True` | Mark cache breakpoints on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
-| `compaction` | `Compaction` or `None` | `None` | Summarize older messages once a request nears the model's input limit. See [Context window](#context-window). |
-| `max_tool_output_chars` | `int` or `None` | `None` | Longest tool result text sent to the model; longer text is cut in the middle. See [Tool output limit](#tool-output-limit). |
->>>>>>> f37b258 (feat: summarize older messages near the model's input limit)
+| `compaction` | `Compaction \| None` | `None` | Summarize older messages once a request nears the model's input limit. See [Context window](#context-window). |
+| `max_tool_output_chars` | `int \| None` | `None` | Longest tool result text sent to the model; longer text is cut in the middle. See [Tool output limit](#tool-output-limit). |
 
 ## Constructing an Agent
 
@@ -323,7 +316,7 @@ Before each completion the run counts the request's tokens with LiteLLM's `token
 |---|---|---|---|
 | `threshold` | `float` | `0.8` | Fraction of the model's max input tokens a request may reach before its older messages are summarized. |
 | `keep` | `float` | `0.2` | Fraction of the model's max input tokens kept as the most recent messages; below `threshold`. |
-| `model` | `str` or `None` | `None` | Model that writes the summary; `None` uses the agent's. Through a `router`, a model name the router serves. |
+| `model` | `str \| None` | `None` | Model that writes the summary; `None` uses the agent's. Through a `router`, a model name the router serves. |
 | `prompt` | `str` | a summarizing instruction | Instruction the summary is written to; the older messages follow it as a plain text transcript. |
 
 The summary is an ordinary message in the transcript, so a [session](/guides/sessions/) keeps it and stays compacted when saved. Its completion goes through the same retries and hooks as a step's, and its usage counts in the run's `usage`, `max_total_tokens` and `max_cost`, though it is not a step. The run emits a `Compacted` event with the summary, the number of messages it replaced and the request's tokens before and after, and calls the `on_compaction` hook.
