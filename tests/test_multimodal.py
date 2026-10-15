@@ -165,6 +165,29 @@ def test_unsupported_input_checks_every_router_deployment():
         _agent("chat", router=router).run([TEXT, IMAGE_DATA])
 
 
+def test_unsupported_input_checks_every_fallback_model():
+    mock = AsyncMock()
+    agent = _agent("gpt-4o", fallback_models=[NO_VISION])
+    with patch("litellm.acompletion", new=mock):
+        with pytest.raises(ValueError, match=f"{NO_VISION} takes no image input"):
+            agent.run([TEXT, IMAGE_DATA])
+    mock.assert_not_called()
+
+
+def test_steer_checks_every_fallback_model():
+    async def main():
+        mock = AsyncMock(return_value=_make_completion_response("Hi."))
+        with patch("litellm.acompletion", new=mock):
+            handle = _agent("gpt-4o", fallback_models=[NO_VISION]).start(
+                "hello", stream=False
+            )
+            with pytest.raises(ValueError, match=f"{NO_VISION} takes no image input"):
+                handle.steer([IMAGE_DATA])
+            return await handle
+
+    assert asyncio.run(main()).steps == 1
+
+
 @pytest.mark.parametrize(
     "model, part",
     [

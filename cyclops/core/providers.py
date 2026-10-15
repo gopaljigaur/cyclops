@@ -76,14 +76,15 @@ def _lacks_tools(model: str, custom_llm_provider: Optional[str]) -> bool:
 
 
 def _input_unsupported(config: AgentConfig, kind: str) -> Optional[str]:
-    """The first deployment LiteLLM's model map marks as not taking this input.
+    """The first model LiteLLM's model map marks as not taking this input.
 
-    Only an explicit false counts: most entries leave the flags out. The entry
+    Checks every deployment of the model and every fallback model. Only an explicit false counts: most entries leave the flags out. The entry
     is read from litellm.model_cost under provider/model, else model, and not
     from get_model_info, which asks some providers (Ollama) over the network.
     """
     flag = _INPUT_SUPPORT[kind]
-    for p in _deployments(config):
+    # Fallback models read the same history.
+    for p in _deployments(config) + [{"model": m} for m in config.fallback_models]:
         model, provider = litellm.get_llm_provider(
             p["model"], custom_llm_provider=p.get("custom_llm_provider")
         )[:2]

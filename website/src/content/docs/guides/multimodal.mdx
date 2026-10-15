@@ -52,7 +52,7 @@ As LiteLLM 1.105 sends them: Anthropic gets `image` and `document` blocks, with 
 
 ## Models that can't take the input
 
-Before the run starts, Cyclops reads LiteLLM's model map (`litellm.model_cost`, the entry under `provider/model`, else `model`) for the model, or for each of its deployments in a `router` (not the router's fallback groups). If the entry sets `supports_vision` to false and an image is sent, `supports_pdf_input` to false and a PDF is sent, or `supports_audio_input` to false and audio is sent, the run raises `ValueError`, so nothing is sent and no part is dropped:
+Before the run starts, Cyclops reads LiteLLM's model map (`litellm.model_cost`, the entry under `provider/model`, else `model`) for the model, each of its deployments in a `router` (not the router's fallback groups) and each of its `fallback_models`, since they all read the same history. If the entry sets `supports_vision` to false and an image is sent, `supports_pdf_input` to false and a PDF is sent, or `supports_audio_input` to false and audio is sent, the run raises `ValueError`, so nothing is sent and no part is dropped:
 
 ```text
 o3-mini takes no image input: LiteLLM's model map sets supports_vision to false for it; if the model does take it, correct the entry with litellm.register_model
