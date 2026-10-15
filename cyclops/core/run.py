@@ -11,19 +11,14 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Type,
 )
 
 import litellm
 
 from cyclops.core.compaction import _context_window, _ContextWindow
-from cyclops.core.completion import (
-    _acompletion,
-    _build_messages,
-    _completion_kwargs,
-    _streamed_completion,
-    _usage,
-)
+from cyclops.core.completion import _build_messages, _usage
 from cyclops.core.events import (
     Compacted,
     GuardRejected,
@@ -32,6 +27,7 @@ from cyclops.core.events import (
     StepFinished,
     TextDelta,
 )
+from cyclops.core.fallback import _complete_with_fallbacks, _Request, _requests
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.middleware import GuardContext
 from cyclops.core.providers import _tools_unsupported
@@ -212,7 +208,7 @@ class _RunLoop:
         # Naive mode never streams deltas: the text may be a tool call.
         streamed = self.stream and not naive
         tools = _ToolSearch(agent.tools, agent._tools_by_name)
-        kwargs: Dict[str, Any] = {}
+        requests: List[_Request] = []
         system_prompt: Optional[str] = None
         executor = _ToolExecutor(self.config, tools.tools_by_name, run)
         compaction = self.config.compaction
@@ -230,14 +226,14 @@ class _RunLoop:
                 return
             if tools.changed:
                 tools.changed = False
-                kwargs = _completion_kwargs(
+                requests = _requests(
                     self.config, tools.loaded, mode, self.response_model
                 )
                 system_prompt = _system_prompt(
                     self.config, agent.skills, tools.loaded, mode
                 )
                 if window is not None:
-                    window.request(system_prompt, kwargs.get("tools"))
+                    window.request(system_prompt, requests[0][1].get("tools"))
             if feedback is not None:
                 run.history.append({"role": "user", "content": feedback})
                 feedback = None
@@ -249,7 +245,9 @@ class _RunLoop:
             ]
             if window is not None and compaction is not None:
                 self._compacted(await window.compact_if_needed(run.history, compaction))
-            response = await self._complete(window, system_prompt, kwargs, streamed)
+            model, response = await self._complete(
+                window, system_prompt, requests, streamed
+            )
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
             del run.steering[:steered]
@@ -306,6 +304,7 @@ class _RunLoop:
             run.emit(
                 StepFinished(
                     step=result.steps,
+                    model=model,
                     usage=step_usage,
                     finish_reason=choice.finish_reason,
                 )
@@ -321,10 +320,11 @@ class _RunLoop:
         self,
         window: Optional[_ContextWindow],
         system_prompt: Optional[str],
-        kwargs: Dict[str, Any],
+        requests: List[_Request],
         streamed: bool,
-    ) -> Any:
-        """A step's completion, kept within the context window.
+    ) -> Tuple[str, Any]:
+        """The model that answered a step, and its completion, kept within the
+        context window of the configured model.
 
         Once the transcript is counted, max_tokens is lowered to the room the
         request leaves. On an overflow each remedy is tried at most once: a
@@ -332,22 +332,21 @@ class _RunLoop:
         """
         history = self.run.history
         compaction = self.config.compaction
+        kwargs = requests[0][1]
         fit = window is not None and window.counting
         compacted = False
         while True:
-            request = kwargs
+            fitted = requests
             max_tokens = None
             if window is not None and fit:
                 max_tokens = window.fitting_max_tokens(history, kwargs)
             if max_tokens is not None:
-                request = {**kwargs, "max_tokens": max_tokens}
+                fitted = [(c, {**k, "max_tokens": max_tokens}) for c, k in requests]
             messages = _build_messages(history, system_prompt)
             try:
-                if streamed:
-                    return await _streamed_completion(
-                        self.config, messages, request, self.run
-                    )
-                return await _acompletion(self.config, messages=messages, **request)
+                return await _complete_with_fallbacks(
+                    fitted, messages, self.run, streamed
+                )
             except litellm.ContextWindowExceededError:
                 if window is None:
                     raise

@@ -136,7 +136,8 @@ async for event in agent.astream_events("What is 2 + 3?"):
 | `ToolCallStarted` | `call_id`, `name`, `arguments` | Before a tool runs, with the arguments the model sent. `call_id` is `None` in naive tool mode. |
 | `ToolCallFinished` | `call_id`, `name`, `result`, `is_error` | After a tool returns, fails, is cancelled or is denied by middleware. `result` is the text sent to the model. |
 | `GuardRejected` | `feedback` | After a rejected answer's text, when a [guard](/guides/hooks/#end-of-run-guards) sends the model back. |
-| `StepFinished` | `step`, `usage`, `finish_reason` | After one completion and the tool calls it asked for. |
+| `ModelFallback` | `model`, `fallback_model`, `error`, `usage` | When a model failed or refused and the step's completion goes to the next of the [fallback models](/guides/agents/#fallback-models). `error` is `None` for a refusal, whose usage is in `usage`. |
+| `StepFinished` | `step`, `model`, `usage`, `finish_reason` | After one completion and the tool calls it asked for. `model` is the model that answered. |
 | `Compacted` | `summary`, `replaced_messages`, `tokens_before`, `tokens_after` | Before a completion, when a summary replaced older messages. See [Context window](/guides/agents/#context-window). |
 | `RunFinished` | `result` | Last event, with the run's `RunResult`, including usage and cost. |
 

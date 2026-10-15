@@ -61,6 +61,7 @@ Pydantic model holding all LLM and agent runtime settings.
 ```python
 class AgentConfig(BaseModel):
     model: str
+    fallback_models: List[str] = []
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
@@ -224,7 +225,8 @@ class ReasoningDelta(Event):   text: str
 class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
-class StepFinished(Event):     step: int; usage: Optional[Usage]; finish_reason: Optional[str]
+class ModelFallback(Event):    model: str; fallback_model: str; error: Optional[Exception]; usage: Optional[Usage]
+class StepFinished(Event):     step: int; model: Optional[str]; usage: Optional[Usage]; finish_reason: Optional[str]
 class Compacted(Event):        summary: str; replaced_messages: int; tokens_before: int; tokens_after: int
 class RunFinished(Event):      result: RunResult
 ```
