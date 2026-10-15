@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import weakref
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import httpx
@@ -33,7 +34,11 @@ class MCPClient:
     def __init__(self) -> None:
         self._connections: Dict[str, _Connection] = {}
         self._tools: Dict[str, List[MCPClientTool]] = {}
-        self._locks: Dict[str, asyncio.Lock] = {}
+        # Every holder and waiter keeps a strong reference to its lock,
+        # so a name's entry stays while any of them is in it.
+        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     async def __aenter__(self) -> "MCPClient":
         return self
@@ -134,7 +139,8 @@ class MCPClient:
 
     async def aclose(self) -> None:
         """Disconnect every server, including ones still attaching."""
-        await asyncio.gather(*[self.detach(name) for name in list(self._locks)])
+        names = dict.fromkeys([*self._connections, *self._locks])
+        await asyncio.gather(*[self.detach(name) for name in names])
 
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]:
         """Tools of the given servers, or of every attached server.
