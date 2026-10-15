@@ -221,7 +221,8 @@ class _RunLoop:
             if stop_reason is not None:
                 # Cut or filtered output is no answer, and a cut tool call
                 # can't run, so the turn is kept as text only. An empty turn
-                # is left out: providers rewrite or drop empty assistant text.
+                # is left out: providers rewrite, drop or pass on empty
+                # assistant text differently.
                 if content:
                     assistant["content"] = content
                     run.history.append(assistant)
