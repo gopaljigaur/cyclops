@@ -93,7 +93,6 @@ def test_completion_kwargs_go_to_every_call():
         del kwargs["messages"], kwargs["tools"]
         assert kwargs == {
             "model": "gpt-4o-mini",
-            "temperature": None,
             "max_tokens": 512,
             "api_key": "sk-test",
             "api_base": "https://llm.example.com/v1",
@@ -118,8 +117,6 @@ def test_completion_kwargs_go_through_a_router():
     router.acompletion.assert_called_once_with(
         model="smart",
         messages=[{"role": "user", "content": "hello"}],
-        temperature=None,
-        max_tokens=None,
         reasoning_effort="low",
         timeout=10,
     )
@@ -462,6 +459,34 @@ def test_request_takes_a_set_temperature(monkeypatch):
     body = _request_body(monkeypatch, "gpt-4o-mini", temperature=0.3)
 
     assert body["temperature"] == 0.3
+
+
+def test_router_request_keeps_the_deployment_sampling_params(monkeypatch):
+    bodies = []
+
+    async def send(self, request, **kwargs):
+        bodies.append(loads(request.content))
+        return httpx.Response(200, json=REPLIES[request.url.host], request=request)
+
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {
+                    "model": "gpt-4o-mini",
+                    "api_key": "test",
+                    "temperature": 0.7,
+                    "max_tokens": 77,
+                },
+            }
+        ]
+    )
+    with patch.object(httpx.AsyncClient, "send", send):
+        assert Agent(AgentConfig(model="smart", router=router)).run("hello") == "hi"
+
+    (body,) = bodies
+    assert body["temperature"] == 0.7
+    assert body["max_tokens"] == 77
 
 
 def test_anthropic_thinking_request_has_no_temperature_by_default(monkeypatch):
