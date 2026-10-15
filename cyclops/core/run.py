@@ -247,6 +247,7 @@ class _RunLoop:
                 self._compacted(await window.compact_if_needed(run.history, compaction))
             answer = await self._complete(window, system_prompt, requests, streamed)
             if answer is None:
+                del run.steering[:steered]
                 result.stop_reason = "budget"
                 return
             model, response = answer

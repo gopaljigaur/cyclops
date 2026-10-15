@@ -339,14 +339,23 @@ async def test_tool_images_stay_in_the_tool_message_only_if_every_model_takes_th
 async def test_refusal_past_the_budget_stops_the_run():
     refused = _response(PRIMARY, "", "content_filter")
     mock = AsyncMock(side_effect=[refused, _response(FALLBACK)])
+    session = Session()
     with patch("litellm.acompletion", new=mock):
-        events = await _events(Agent(_config(max_total_tokens=1000)))
+        agent = Agent(_config(max_total_tokens=1000))
+        handle = agent.start("hi", stream=False, session=session)
+        handle.steer("also this")
+        events = [e async for e in handle]
 
     result = events[-1].result
     assert result.stop_reason == "budget"
     assert result.usage.total_tokens == USAGE["total_tokens"]
     assert _models(mock) == [PRIMARY]
     assert not any(isinstance(e, ModelFallback) for e in events)
+    # The steer was sent with the refused request, and is kept once.
+    assert session.messages == [
+        {"role": "user", "content": "hi"},
+        {"role": "user", "content": "also this"},
+    ]
 
 
 async def test_cancel_during_a_fallback_attempt():
