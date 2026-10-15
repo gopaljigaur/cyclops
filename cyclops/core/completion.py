@@ -1,9 +1,15 @@
 """Build a completion's arguments, call LiteLLM, and assemble streamed responses."""
 
+import asyncio
+import sys
 from contextlib import aclosing
-from typing import Any, AsyncGenerator, Dict, List, Optional, Type
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Type
 
 import litellm
+
+# The Router's retry policy and backoff. Imported here so a LiteLLM that
+# renames them fails at import, not inside the retry's except handler.
+from litellm import _calculate_retry_after, _should_retry
 
 from cyclops.core.events import ReasoningDelta, TextDelta
 from cyclops.core.providers import (
@@ -31,8 +37,12 @@ def _completion_kwargs(
     kwargs: Dict[str, Any] = {
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
-        **config.completion_kwargs,
     }
+    # A router has its own timeouts and retries. Elsewhere _acompletion's
+    # retries replace those of the OpenAI client LiteLLM uses for some providers.
+    if config.router is None:
+        kwargs.update(timeout=config.timeout, max_retries=0)
+    kwargs.update(config.completion_kwargs)
     if config.prompt_caching and _marker_caching_supported(config):
         kwargs["cache_control_injection_points"] = _CACHE_POINTS
     # With tools only where LiteLLM sends the schema natively: elsewhere it
@@ -69,7 +79,42 @@ def _build_messages(
     return messages
 
 
-async def _acompletion(config: AgentConfig, /, **kwargs):
+class StreamIdleTimeout(litellm.Timeout):
+    """A stream sent no chunk for AgentConfig.stream_idle_timeout seconds."""
+
+
+def _quota_spent(error: Exception) -> bool:
+    """OpenAI's 429 for a spent quota, wherever LiteLLM's mapping kept it."""
+    body = getattr(error, "body", None)
+    if isinstance(body, dict) and body.get("code") == "insufficient_quota":
+        return True
+    # Providers LiteLLM calls over plain HTTP keep the error JSON in the message.
+    return "insufficient_quota" in str(error)
+
+
+def _retry_delay(
+    config: AgentConfig, error: Exception, retries: int
+) -> Optional[float]:
+    """Seconds to wait before retrying a failed completion, or None to raise."""
+    status = getattr(error, "status_code", None)
+    if (
+        config.router is not None
+        or retries == config.num_retries
+        or status is None
+        # 408, 409, 429 and 5xx, as the OpenAI client retries.
+        or not _should_retry(status)
+        or _quota_spent(error)
+    ):
+        return None
+    # Exponential backoff with jitter, or the retry-after header up to 60s.
+    return _calculate_retry_after(
+        remaining_retries=config.num_retries - retries,
+        max_retries=config.num_retries,
+        response_headers=getattr(error, "litellm_response_headers", None),
+    )
+
+
+async def _attempt(config: AgentConfig, /, **kwargs):
     if config.hooks:
         config.hooks.on_llm_start(kwargs.get("messages", []))
     try:
@@ -82,10 +127,37 @@ async def _acompletion(config: AgentConfig, /, **kwargs):
         raise
 
 
+async def _acompletion(config: AgentConfig, /, **kwargs):
+    """Make a completion, retrying transient provider errors."""
+    retries = 0
+    while True:
+        try:
+            return await _attempt(config, **kwargs)
+        except Exception as e:
+            delay = _retry_delay(config, e, retries)
+            if delay is None:
+                raise
+            retries += 1
+            await asyncio.sleep(delay)
+
+
+if sys.version_info >= (3, 11):
+
+    async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
+        async with asyncio.timeout(timeout):
+            return await chunks.__anext__()
+
+else:
+
+    async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
+        # Before 3.11 there is no asyncio.timeout; wait_for runs a task per chunk.
+        return await asyncio.wait_for(chunks.__anext__(), timeout)
+
+
 async def _astream_completion(
     config: AgentConfig, messages, kwargs
 ) -> AsyncGenerator[Any, None]:
-    response = await _acompletion(
+    response = await _attempt(
         config,
         messages=messages,
         stream=True,
@@ -93,8 +165,22 @@ async def _astream_completion(
         **kwargs,
     )
     try:
-        async for chunk in response:
+        # The first chunk may follow minutes of thinking, so the idle timeout
+        # starts after it.
+        idle_timeout = None
+        while True:
+            try:
+                chunk = await _next(response, idle_timeout)
+            except StopAsyncIteration:
+                return
+            except asyncio.TimeoutError:
+                raise StreamIdleTimeout(
+                    message=f"no stream chunk for {idle_timeout}s",
+                    model=config.model,
+                    llm_provider=None,
+                ) from None
             yield chunk
+            idle_timeout = config.stream_idle_timeout
     except Exception as e:
         if config.hooks:
             config.hooks.on_llm_error(e)
@@ -104,20 +190,43 @@ async def _astream_completion(
 
 
 async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run):
-    """Stream a completion, emitting its deltas, and build the whole response."""
-    chunks = []
-    async with aclosing(_astream_completion(config, messages, kwargs)) as completion:
-        async for chunk in completion:
-            chunks.append(chunk)
-            delta = chunk.choices[0].delta if chunk.choices else None
-            # LiteLLM sets reasoning_content on a delta only when present.
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                run.emit(ReasoningDelta(text=reasoning))
-            if delta and delta.content:
-                run.emit(TextDelta(text=delta.content))
-            await run.taken()
-    return litellm.stream_chunk_builder(chunks, messages=messages)
+    """Stream a completion, emitting its deltas, and build the whole response.
+
+    Until a delta is emitted, a transient error is retried as in _acompletion
+    and a stalled stream once.
+    """
+    retries, stalled = 0, False
+    while True:
+        chunks = []
+        emitted = False
+        try:
+            async with aclosing(
+                _astream_completion(config, messages, kwargs)
+            ) as completion:
+                async for chunk in completion:
+                    chunks.append(chunk)
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    # LiteLLM sets reasoning_content on a delta only when present.
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        emitted = True
+                        run.emit(ReasoningDelta(text=reasoning))
+                    if delta and delta.content:
+                        emitted = True
+                        run.emit(TextDelta(text=delta.content))
+                    await run.taken()
+        except StreamIdleTimeout:
+            if emitted or stalled:
+                raise
+            stalled = True
+        except Exception as e:
+            delay = None if emitted else _retry_delay(config, e, retries)
+            if delay is None:
+                raise
+            retries += 1
+            await asyncio.sleep(delay)
+        else:
+            return litellm.stream_chunk_builder(chunks, messages=messages)
 
 
 def _usage(response) -> Optional[Usage]:

@@ -64,6 +64,9 @@ class AgentConfig(BaseModel):
     max_parallel_tool_calls: int = 10
     tool_timeout: Optional[float] = None   # seconds
     hooks: Optional[AgentHooks] = None
+    num_retries: int = 2
+    timeout: float = 600   # seconds
+    stream_idle_timeout: float = 120   # seconds
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool = False
     middleware: List[ToolMiddleware] = []
@@ -137,6 +140,12 @@ class Usage(BaseModel):
     total_tokens: int
     cost: Optional[float]  # None when LiteLLM can't price a completion
 ```
+
+---
+
+### StreamIdleTimeout
+
+`cyclops.core.completion`, exported from `cyclops`. A subclass of `litellm.Timeout`, raised when a stream sends no chunk for `AgentConfig.stream_idle_timeout` seconds after its first. A stalled stream is retried once if none of it was emitted, so a run ends with this error when the retry stalls too or content had already been emitted. See [Retries and timeouts](guide/agents.md#retries-and-timeouts).
 
 ---
 

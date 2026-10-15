@@ -74,6 +74,9 @@ class AgentConfig(BaseModel):
     max_parallel_tool_calls: int = 10
     tool_timeout: Optional[float] = None   # seconds
     hooks: Optional[AgentHooks] = None
+    num_retries: int = 2
+    timeout: float = 600   # seconds
+    stream_idle_timeout: float = 120   # seconds
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
@@ -95,6 +98,9 @@ class AgentConfig(BaseModel):
 | `max_parallel_tool_calls` | `10` | Most tool calls of one step that run at the same time. |
 | `tool_timeout` | `None` | Seconds a tool call may run before it is cancelled and fails. A tool's own `timeout` wins. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
+| `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
+| `timeout` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
+| `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
 | `max_guard_rounds` | `3` | How many times per run guards may send the model back. |
@@ -165,6 +171,12 @@ class Usage(BaseModel):
     total_tokens: int
     cost: Optional[float]  # None when LiteLLM can't price a completion
 ```
+
+---
+
+### StreamIdleTimeout
+
+`cyclops.core.completion`, exported from `cyclops`. A subclass of `litellm.Timeout`, raised when a stream sends no chunk for `AgentConfig.stream_idle_timeout` seconds after its first. A stalled stream is retried once if none of it was emitted, so a run ends with this error when the retry stalls too or content had already been emitted. See [Retries and timeouts](/guides/agents/#retries-and-timeouts).
 
 ---
 

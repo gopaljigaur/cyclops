@@ -33,6 +33,9 @@ config = AgentConfig(
 | `max_parallel_tool_calls` | `int` | `10` | Most tool calls of one step that run at the same time; at least 1. See [Parallel calls and timeouts](tools.md#parallel-calls-and-timeouts). |
 | `tool_timeout` | `float \| None` | `None` | Seconds a tool call may run before it is cancelled and returns an error. A tool's own `timeout` wins. |
 | `hooks` | `AgentHooks \| None` | `None` | Lifecycle callbacks for observability and tool approval. See [Hooks](hooks.md). |
+| `num_retries` | `int` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. See [Retries and timeouts](#retries-and-timeouts). |
+| `timeout` | `float` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
+| `stream_idle_timeout` | `float` | `120` | Seconds a stream may go without a chunk after its first. |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
 | `prompt_caching` | `bool` | `False` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models). See [Prompt caching](#prompt-caching). |
 
@@ -168,7 +171,7 @@ response = agent.run("What was the code word?")
 
 ## Provider options
 
-`completion_kwargs` is passed to every LiteLLM completion call the agent makes, so any argument LiteLLM accepts works per agent: credentials, endpoints, headers, retries, timeouts and reasoning settings. Keys here win over `temperature` and `max_tokens`.
+`completion_kwargs` is passed to every LiteLLM completion call the agent makes, so any argument LiteLLM accepts works per agent: credentials, endpoints, headers and reasoning settings. Keys here win over `temperature`, `max_tokens` and `timeout`. Set retries with `num_retries` (see [Retries and timeouts](#retries-and-timeouts)): LiteLLM's own `num_retries` here would retry on top of it.
 
 ```python
 import os
@@ -179,8 +182,6 @@ config = AgentConfig(
     completion_kwargs={
         "api_key": os.environ["MY_ANTHROPIC_KEY"],
         "extra_headers": {"X-Request-Source": "docs"},
-        "num_retries": 3,
-        "timeout": 60,
         "max_tokens": 8192,
         "thinking": {"type": "enabled", "budget_tokens": 4096},
     },
@@ -188,6 +189,23 @@ config = AgentConfig(
 ```
 
 For OpenAI style reasoning models use `"reasoning_effort": "low"` and so on. See the [LiteLLM input docs](https://docs.litellm.ai/docs/completion/input) for every argument.
+
+## Retries and timeouts
+
+A completion that fails with a rate limit, an overloaded or 5xx response, a timeout or a connection error is retried up to `num_retries` times (default `2`) with exponential backoff and jitter: about 0.5s, then 1s, doubling up to 8s, each plus up to 0.75s. When the provider sends a `retry-after` of 60 seconds or less, the retry waits that long instead; a longer `retry-after` falls back to the backoff. These delays are LiteLLM's, set by its `INITIAL_RETRY_DELAY`, `MAX_RETRY_DELAY` and `JITTER` environment variables. Other errors, such as authentication, permission or invalid request errors, are never retried, nor is a spent quota or budget. A streamed completion is retried only while none of its text or reasoning has been emitted; after that the error ends the run. A failed attempt adds nothing to the run's usage, though the provider may still bill for it.
+
+`timeout` (default `600` seconds) is the request timeout LiteLLM gives its HTTP client, which applies it to connecting and to each read and write, not to the response as a whole. A timeout is retried like the errors above, so one completion can take up to `(num_retries + 1) * timeout`. `stream_idle_timeout` (default `120` seconds) is how long a stream may go without a chunk after its first. Only the chunks LiteLLM yields reset it; it drops keep-alive events such as Anthropic's pings. A stalled stream is aborted with `StreamIdleTimeout`, a subclass of `litellm.Timeout`, and retried once if none of it has been emitted. A pause longer than `stream_idle_timeout` after the stream has emitted content ends the run.
+
+```python
+config = AgentConfig(
+    model="anthropic/claude-sonnet-4-5",
+    num_retries=4,
+    timeout=120,
+    stream_idle_timeout=60,
+)
+```
+
+Each attempt fires `on_llm_start`, and `on_llm_error` if it fails. `num_retries=0` turns off the retries of failed requests; a stalled stream is still retried once. With a `router`, the request's retries and timeout are the Router's own (`num_retries`, `retry_policy`, `timeout`, `stream_timeout`), and the stream idle timeout and its one retry still apply.
 
 ## Reasoning in history
 

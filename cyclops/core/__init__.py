@@ -2,6 +2,7 @@
 
 from cyclops.core.agent import Agent, RunHandle
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.completion import StreamIdleTimeout
 from cyclops.core.subagents import AgentTool
 from cyclops.core.middleware import (
     Deny,
@@ -39,6 +40,7 @@ __all__ = [
     "RunHandle",
     "Session",
     "SessionStore",
+    "StreamIdleTimeout",
     "InMemorySessionStore",
     "FileSessionStore",
     "RunResult",

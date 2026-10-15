@@ -77,7 +77,6 @@ def test_completion_kwargs_go_to_every_call():
             "api_key": "sk-test",
             "api_base": "https://llm.example.com/v1",
             "extra_headers": {"X-Trace": "1"},
-            "num_retries": 2,
             "timeout": 30,
             "max_tokens": 512,
         },
@@ -98,8 +97,8 @@ def test_completion_kwargs_go_to_every_call():
             "api_key": "sk-test",
             "api_base": "https://llm.example.com/v1",
             "extra_headers": {"X-Trace": "1"},
-            "num_retries": 2,
             "timeout": 30,
+            "max_retries": 0,
         }
 
 
