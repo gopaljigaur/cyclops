@@ -162,7 +162,7 @@ def fetch_page(url: str) -> str:
 
 ## Parallel calls and timeouts
 
-When the model asks for several tools in one step, calls to tools marked `read_only=True` run at the same time. Every other call may change something, so those run one at a time in the order the model gave them, alongside the read-only ones. `AgentConfig.max_parallel_tool_calls` (default `10`) caps how many calls of a step run at once. A call waiting for its turn has not started: it gets no `ToolCallStarted` event until it runs. If middleware raises, that call ends the step and the calls still running or waiting are cancelled.
+When the model asks for several tools in one step, calls to tools marked `read_only=True` run at the same time. Every other call may change something, so those run one at a time in the order the model gave them, alongside the read-only ones. `AgentConfig.max_parallel_tool_calls` (default `10`) caps how many calls of a step run at once. A call waiting for its turn has not started: it gets no `ToolCallStarted` event until it runs. If middleware raises, that call ends the step: the calls still running are cancelled, and a call that has not started by then never starts and gets `Tool call cancelled.`
 
 `AgentConfig.tool_timeout` sets how many seconds any call may run, and a tool's own `timeout` overrides it:
 

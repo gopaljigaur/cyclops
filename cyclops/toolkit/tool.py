@@ -111,6 +111,8 @@ class BaseTool(ABC):
     ):
         self.name = name
         self.description = description
+        if timeout is not None and timeout <= 0:
+            raise ValueError(f"timeout of tool '{name}' must be positive")
         self.annotations = annotations or ToolAnnotations()
         # Seconds a call may run; None uses AgentConfig.tool_timeout.
         self.timeout = timeout

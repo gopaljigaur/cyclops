@@ -183,6 +183,8 @@ class _ToolExecutor:
         self.run = run
         self._slots = asyncio.Semaphore(config.max_parallel_tool_calls)
         self._in_order = asyncio.Lock()
+        # Set once a call of the current step fails, so waiting calls never start.
+        self._step_failed = False
 
     async def run_naive_tool_call(self, call: Dict[str, Any]) -> None:
         name = call["tool"]
@@ -198,6 +200,7 @@ class _ToolExecutor:
     async def run_native_tool_calls(self, msg, assistant: Dict[str, Any]) -> None:
         run = self.run
         _append_tool_call_message(run.history, msg, assistant)
+        self._step_failed = False
         tasks = [
             asyncio.ensure_future(self._execute_tool_call(tc)) for tc in msg.tool_calls
         ]
@@ -262,7 +265,13 @@ class _ToolExecutor:
         if tool and tool.annotations.read_only:
             turn = contextlib.nullcontext()
         async with turn, self._slots:
-            return await self._call_tool(tool_call.id, name, args, error)
+            if self._step_failed:
+                raise asyncio.CancelledError()
+            try:
+                return await self._call_tool(tool_call.id, name, args, error)
+            except BaseException:
+                self._step_failed = True
+                raise
 
     async def _call_tool(
         self,
@@ -362,7 +371,7 @@ class _ToolExecutor:
                         and loop.time() - started >= timeout
                     )
                     outcome = (
-                        f"timed out after {timeout} seconds"
+                        f"timed out after {timeout:g} seconds"
                         if timed_out
                         else f"failed: {e}"
                     )

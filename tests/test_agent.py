@@ -1032,7 +1032,10 @@ async def test_tool_raising_cancelled_stops_sibling_calls():
 
     agent = Agent(
         config=_make_config(),
-        tools=[Tool("cancels", "Cancels", cancels), Tool("slow", "Slow", slow)],
+        tools=[
+            Tool("cancels", "Cancels", cancels, READ_ONLY),
+            Tool("slow", "Slow", slow, READ_ONLY),
+        ],
     )
     calls = [
         _make_tool_call("tc_1", "cancels", "{}"),
@@ -1669,6 +1672,7 @@ async def test_run_ending_without_run_finished_raises_from_the_stream():
     from cyclops.toolkit.tool import Tool
 
     async def bad() -> str:
+        await asyncio.sleep(0)
         raise asyncio.CancelledError()
 
     async def slow() -> str:
@@ -1677,7 +1681,10 @@ async def test_run_ending_without_run_finished_raises_from_the_stream():
 
     agent = Agent(
         config=_make_config(),
-        tools=[Tool("bad", "Bad tool", bad), Tool("slow", "Slow tool", slow)],
+        tools=[
+            Tool("bad", "Bad tool", bad, READ_ONLY),
+            Tool("slow", "Slow tool", slow, READ_ONLY),
+        ],
     )
     chunks = [
         _tool_call_chunk(0, "{}", id="tc_1", name="bad"),

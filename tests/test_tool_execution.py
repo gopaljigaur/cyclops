@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from cyclops.core.agent import Agent
-from cyclops.core.events import ToolCallFinished
+from cyclops.core.events import ToolCallFinished, ToolCallStarted
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import ToolMiddleware
 from cyclops.toolkit import ImageContent, TextContent, ToolResult, tool
@@ -276,3 +276,40 @@ def test_a_tools_own_timeout_error_is_a_failure():
     _run_round(agent, "flaky")
 
     assert _tool_messages(agent) == ["Error: flaky failed: "]
+
+
+@pytest.mark.asyncio
+async def test_calls_waiting_their_turn_never_start_once_the_step_fails():
+    ran = []
+
+    def make(name):
+        async def run() -> str:
+            ran.append(name)
+            return name
+
+        return Tool(name, name, run)
+
+    class Broken(ToolMiddleware):
+        async def after_tool(self, call, result, error):
+            raise RuntimeError("broke")
+
+    agent = Agent(
+        config=_make_config(middleware=[Broken()]), tools=[make("a"), make("b")]
+    )
+    calls = [_make_tool_call("tc_1", "a", "{}"), _make_tool_call("tc_2", "b", "{}")]
+    response = _make_completion_response(content=None, tool_calls=calls)
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        events = [e async for e in agent.start("go", stream=False)]
+
+    assert ran == ["a"]
+    assert [e.call_id for e in events if isinstance(e, ToolCallStarted)] == ["tc_1"]
+    assert _tool_messages(agent) == ["Error: broke", "Tool call cancelled."]
+
+
+def test_a_tool_timeout_must_be_positive():
+    with pytest.raises(ValueError, match="timeout of tool 'nap' must be positive"):
+
+        @tool(timeout=0)
+        def nap() -> str:
+            """Nap."""
+            return "rested"
