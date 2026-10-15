@@ -33,11 +33,59 @@ await mcp.attach("remote", url="https://example.com/mcp", headers={"Authorizatio
 await mcp.attach("legacy", url="https://example.com/sse", transport="sse")
 ```
 
-### Timeouts and reconnects
+### Timeouts
 
-`connect_timeout` (default 30 seconds) bounds connecting, listing the server's tools, and opening HTTP connections; `call_timeout` (default none) bounds each tool call, and is the only limit on how long a streamable HTTP call may take. A call that times out returns an error result.
+`connect_timeout` (default 30 seconds) bounds connecting, listing the server's tools, and opening HTTP connections. `call_timeout` (default 60 seconds, the TypeScript SDK's default request timeout) bounds each tool call, so a hung server cannot stall a run; it is the only limit on how long a streamable HTTP call may take. Raise it for long running tools, or pass `None` for no limit. A call that times out returns an error result.
 
-When a session drops, the next call reconnects. A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run. Concurrent calls share one reconnect.
+`idle_timeout` (default none) closes a session that no call has used for that many seconds, and the next call opens a new one. It is off by default because a server may keep state per session, which a new session loses; turn it on to stop idle stdio processes or free remote connections.
+
+### Reconnects
+
+A dropped session is seen by the call it breaks; the client does not watch idle sessions. The next call then reconnects, and for a remote server the reconnect starts in the background right away. Calls share one reconnect and wait for it up to `call_timeout`; if it is still running then, the call returns an error result and the reconnect goes on. Attempts back off exponentially with full jitter and stop after `max_retries`. The names follow the TypeScript SDK's reconnection options, in seconds; the defaults are cyclops' own, long enough to ride out a server restart:
+
+```python
+from cyclops.mcp import ReconnectionOptions
+
+await mcp.attach(
+    "remote",
+    url="https://example.com/mcp",
+    reconnection=ReconnectionOptions(
+        initial_reconnection_delay=1.0,     # first retry waits up to 1 second
+        max_reconnection_delay=30.0,        # no retry waits longer than this
+        reconnection_delay_grow_factor=2.0,
+        max_retries=5,
+    ),
+)
+```
+
+A call that was sent before the drop returns an error result instead of being retried, since the tool may already have run. A call that could not be sent, or that a restarted streamable HTTP server refused because it no longer knows the session, is retried once on a new session.
+
+A call can wait for a reconnect twice, each time up to `call_timeout`: once when it starts without a session, and once more when its first attempt hits a closed stream or a terminated session. So the worst case is three times `call_timeout`: two reconnect waits plus the call itself. A server that stays down fails the first wait, so with the defaults it costs each call 60 seconds at most, while the reconnect behind it sleeps up to 31 seconds in all, plus up to `max_retries + 1` times `connect_timeout` against a host that does not answer.
+
+### Status
+
+`status(name)` gives a server's `ServerStatus`: its `state` (`"connecting"`, `"connected"`, `"disconnected"` or `"failed"`) and the `error` behind it. It reflects the last call or reconnect: a server that went away while idle reads `"connected"` until a call finds out. A server is `"disconnected"` after a drop or an idle close, `"connecting"` while reconnecting, and `"failed"` once every retry failed; the next call starts reconnecting again.
+
+```python
+for name in mcp.servers:
+    status = mcp.status(name)
+    print(name, status.state, status.error or "")
+```
+
+### Tool list changes
+
+When a server sends `notifications/tools/list_changed`, the client lists its tools again, and `tools()` returns the new list. Agents built before the change keep the tools they were given, so pass `mcp.tools()` per run to pick up changes.
+
+### Authentication
+
+`auth` takes any `httpx.Auth` for a remote server. For OAuth, pass the MCP SDK's `OAuthClientProvider`: it refreshes an expired access token, and on a 401 response it authorizes again and retries the request once.
+
+```python
+from mcp.client.auth import OAuthClientProvider
+
+oauth = OAuthClientProvider(server_url, client_metadata, storage, redirect_handler, callback_handler)
+await mcp.attach("remote", url=server_url, auth=oauth)
+```
 
 ### Tool names
 

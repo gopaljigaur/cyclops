@@ -1,189 +1,20 @@
 """Async MCP client that manages connections to several MCP servers."""
 
 import asyncio
-import contextlib
-import logging
-from datetime import timedelta
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union
+import functools
+from typing import Any, Dict, List, Optional, Sequence, Union
 
-import anyio
 import httpx
-from mcp import McpError
-from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
-from mcp.types import CONNECTION_CLOSED, CallToolResult, Tool
+from mcp.types import CallToolResult, Tool
 
+from cyclops.mcp.connection import (
+    DEFAULT_CALL_TIMEOUT,
+    _Connection,
+    ReconnectionOptions,
+    ServerStatus,
+    Transport,
+)
 from cyclops.mcp.tools import MCPClientTool
-
-logger = logging.getLogger(__name__)
-
-Transport = Literal["stdio", "http", "sse"]
-
-
-class _Connection:
-    """One server session, owned by a background task on the client's loop.
-
-    The transport is opened and closed inside that task, so connect and close
-    may be awaited from any task on the loop.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        transport: Transport,
-        command: Optional[List[str]],
-        url: Optional[str],
-        env: Optional[Dict[str, str]],
-        headers: Optional[Dict[str, str]],
-        connect_timeout: float,
-        call_timeout: Optional[float],
-    ) -> None:
-        self.name = name
-        self.transport = transport
-        self.command = command
-        self.url = url
-        self.env = env
-        self.headers = headers
-        self.connect_timeout = connect_timeout
-        self.call_timeout = call_timeout
-        self.session: Optional[ClientSession] = None
-        self.loop = asyncio.get_running_loop()
-        self._task: Optional[asyncio.Task] = None
-        self._closing = asyncio.Event()
-        self._lock = asyncio.Lock()
-        self._detached = False
-
-    @contextlib.asynccontextmanager
-    async def _streams(self) -> AsyncIterator[Any]:
-        if self.transport == "stdio":
-            assert self.command
-            params = StdioServerParameters(
-                command=self.command[0], args=self.command[1:], env=self.env
-            )
-            async with stdio_client(params) as (read, write):
-                yield read, write
-        elif self.transport == "http":
-            assert self.url
-            # A call holds its POST open until the result; call_timeout bounds it.
-            timeout = httpx.Timeout(self.connect_timeout, read=None)
-            http = create_mcp_http_client(headers=self.headers, timeout=timeout)
-            async with (
-                http,
-                streamable_http_client(self.url, http_client=http) as (
-                    read,
-                    write,
-                    _,
-                ),
-            ):
-                yield read, write
-        else:
-            assert self.url
-            async with sse_client(
-                self.url, headers=self.headers, timeout=self.connect_timeout
-            ) as (read, write):
-                yield read, write
-
-    async def _run(self, ready: "asyncio.Future[ClientSession]") -> None:
-        try:
-            async with self._streams() as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    if not ready.done():
-                        ready.set_result(session)
-                    await self._closing.wait()
-        except Exception as e:
-            if not ready.done():
-                ready.set_exception(e)
-            else:
-                logger.warning("MCP server %r disconnected: %s", self.name, e)
-
-    async def connect(self) -> None:
-        self._closing = asyncio.Event()
-        ready: asyncio.Future[ClientSession] = (
-            asyncio.get_running_loop().create_future()
-        )
-        self._task = asyncio.create_task(self._run(ready))
-        try:
-            self.session = await asyncio.wait_for(ready, self.connect_timeout)
-        except BaseException:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-            self._task = None
-            raise
-
-    async def close(self) -> None:
-        self._closing.set()
-        task, self._task, self.session = self._task, None, None
-        if task is None:
-            return
-        try:
-            await asyncio.wait({task}, timeout=5)
-        finally:
-            # Also runs if close is cancelled, so the owner task never outlives it.
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-
-    async def detach(self) -> None:
-        async with self._lock:
-            self._detached = True
-            await self.close()
-
-    async def list_tools(self) -> List[Tool]:
-        assert self.session
-        tools: List[Tool] = []
-        cursor: Optional[str] = None
-        while True:
-            page = await self.session.list_tools(cursor=cursor)
-            tools.extend(page.tools)
-            cursor = page.nextCursor
-            if not cursor:
-                return tools
-
-    async def _session(self, stale: Optional[ClientSession]) -> ClientSession:
-        """The live session, reconnecting if there is none or it is ``stale``.
-
-        The lock makes concurrent callers share one reconnect.
-        """
-        async with self._lock:
-            if self._detached:
-                raise RuntimeError(f"MCP server {self.name!r} is detached")
-            if self.session is None or self.session is stale:
-                logger.info("Reconnecting to MCP server %r", self.name)
-                await self.close()
-                await self.connect()
-            assert self.session
-            return self.session
-
-    async def _drop(self, session: ClientSession) -> None:
-        async with self._lock:
-            if self.session is session:
-                await self.close()
-
-    async def call_tool(self, tool: str, arguments: Dict[str, Any]) -> CallToolResult:
-        session = self.session or await self._session(None)
-        try:
-            return await self._call(session, tool, arguments)
-        except McpError as e:
-            # Dropped mid call: the tool may have run, so reconnect on the next call.
-            if e.error.code == CONNECTION_CLOSED:
-                await self._drop(session)
-            raise
-        except (anyio.ClosedResourceError, anyio.BrokenResourceError):
-            # Dropped before sending: safe to retry once.
-            session = await self._session(session)
-            return await self._call(session, tool, arguments)
-
-    async def _call(
-        self, session: ClientSession, tool: str, arguments: Dict[str, Any]
-    ) -> CallToolResult:
-        timeout = (
-            None if self.call_timeout is None else timedelta(seconds=self.call_timeout)
-        )
-        return await session.call_tool(tool, arguments, read_timeout_seconds=timeout)
 
 
 class MCPClient:
@@ -219,21 +50,28 @@ class MCPClient:
         transport: Optional[Transport] = None,
         env: Optional[Dict[str, str]] = None,
         headers: Optional[Dict[str, str]] = None,
+        auth: Optional[httpx.Auth] = None,
         prefix: Union[str, bool] = True,
         connect_timeout: float = 30.0,
-        call_timeout: Optional[float] = None,
+        call_timeout: Optional[float] = DEFAULT_CALL_TIMEOUT,
+        idle_timeout: Optional[float] = None,
+        reconnection: ReconnectionOptions = ReconnectionOptions(),
     ) -> List[MCPClientTool]:
         """Connect to a server and return its tools.
 
         Pass ``command`` for a stdio server or ``url`` for a remote one.
         ``transport`` defaults to ``"stdio"`` for a command and ``"http"``
         (streamable HTTP) for a url; use ``"sse"`` for older servers.
-        ``prefix`` is ``True`` for the server name, a string, or ``False``
-        for none. Attaching an existing name replaces that server. The
-        server's tools must be awaited on the loop that attached it.
+        ``auth`` authenticates a remote server, for example the SDK's
+        ``OAuthClientProvider``. ``prefix`` is ``True`` for the server name,
+        a string, or ``False`` for none. ``call_timeout`` bounds each call;
+        ``idle_timeout`` closes a session no call has used for that long.
+        ``None`` disables either. Attaching an existing name replaces that
+        server. The server's tools must be awaited on the loop that attached it.
         """
         if (command is None) == (url is None):
             raise ValueError("Pass exactly one of command or url")
+        label = name if prefix is True else prefix
         async with self._locks.setdefault(name, asyncio.Lock()):
             await self._detach(name)
             conn = _Connection(
@@ -243,34 +81,43 @@ class MCPClient:
                 url=url,
                 env=env,
                 headers=headers,
+                auth=auth,
                 connect_timeout=connect_timeout,
                 call_timeout=call_timeout,
+                idle_timeout=idle_timeout,
+                reconnection=reconnection,
+                on_tools_changed=functools.partial(self._set_tools, name, label),
             )
-            await conn.connect()
+            session = await conn.connect()
             try:
                 remote_tools = await asyncio.wait_for(
-                    conn.list_tools(), connect_timeout
+                    conn.list_tools(session), connect_timeout
                 )
-                label = name if prefix is True else prefix
-                tools = [
-                    MCPClientTool(
-                        client=self,
-                        server=name,
-                        tool=t,
-                        name=f"{label}__{t.name}" if label else t.name,
-                    )
-                    for t in remote_tools
-                ]
-                taken = {t.name for t in self.tools()}
-                clashes = sorted(taken & {t.name for t in tools})
-                if clashes:
-                    raise ValueError(f"Tool names already attached: {clashes}")
+                tools = self._set_tools(name, label, remote_tools)
             except BaseException:
-                await conn.close()
+                await conn.detach()
                 raise
             self._connections[name] = conn
-            self._tools[name] = tools
             return tools
+
+    def _set_tools(
+        self, name: str, label: Union[str, bool], remote_tools: List[Tool]
+    ) -> List[MCPClientTool]:
+        tools = [
+            MCPClientTool(
+                client=self,
+                server=name,
+                tool=t,
+                name=f"{label}__{t.name}" if label else t.name,
+            )
+            for t in remote_tools
+        ]
+        taken = {t.name for t in self.tools() if t.server != name}
+        clashes = sorted(taken & {t.name for t in tools})
+        if clashes:
+            raise ValueError(f"Tool names already attached: {clashes}")
+        self._tools[name] = tools
+        return tools
 
     async def detach(self, name: str) -> None:
         """Disconnect a server and drop its tools. Unknown names are ignored."""
@@ -290,9 +137,17 @@ class MCPClient:
         await asyncio.gather(*[self.detach(name) for name in list(self._locks)])
 
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]:
-        """Tools of the given servers, or of every attached server."""
+        """Tools of the given servers, or of every attached server.
+
+        A server's tools are listed again when it sends
+        ``notifications/tools/list_changed``.
+        """
         names = self.servers if servers is None else servers
         return [t for name in names for t in self._tools[name]]
+
+    def status(self, server: str) -> ServerStatus:
+        """The connection state of an attached server, and its last error."""
+        return self._connections[server].status
 
     async def call_tool(
         self, server: str, tool: str, arguments: Dict[str, Any]
