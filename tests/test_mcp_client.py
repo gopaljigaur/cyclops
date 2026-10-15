@@ -24,6 +24,7 @@ from cyclops.mcp import (
     ServerStatus,
     to_tool_result,
 )
+from cyclops.mcp import connection
 from cyclops.mcp.connection import _Connection
 from cyclops.mcp.tools import _mcp_schema_to_params
 from cyclops.toolkit.types import ImageContent, TextContent, ToolResult
@@ -261,6 +262,62 @@ async def test_restarted_http_server_gets_a_new_session():
             add = await _tool(client, "remote__add").execute(a=1, b=1)
             assert add.to_message_content() == "2"
             assert client.status("remote") == ServerStatus("connected")
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+async def test_parallel_calls_refused_after_restart_each_run_once(monkeypatch):
+    refused = 0
+
+    async def flag_refused(response):
+        # Hold every 404 after the first, so the first retry's reconnect
+        # starts while the other calls still wait for their answer.
+        nonlocal refused
+        if response.status_code == 404:
+            refused += 1
+            if refused > 1:
+                await asyncio.sleep(0.5)
+        await flag(response)
+
+    flag = connection._flag_refused
+    monkeypatch.setattr(connection, "_flag_refused", flag_refused)
+    port = _free_port()
+    proc = _start("streamable-http", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach("remote", url=_url("streamable-http", port))
+            proc.kill()
+            proc.wait()
+            proc = await asyncio.to_thread(_start, "streamable-http", port)
+            slow = _tool(client, "remote__slow")
+            results = await asyncio.gather(*(slow.execute(seconds=0) for _ in range(6)))
+            started = await _tool(client, "remote__slow_started").execute()
+        assert [r.error for r in results] == [None] * 6
+        assert started.to_message_content() == "6"
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+async def test_calls_cut_off_by_a_restart_are_not_retried():
+    port = _free_port()
+    proc = _start("streamable-http", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach("remote", url=_url("streamable-http", port))
+            slow = _tool(client, "remote__slow")
+            calls = [asyncio.create_task(slow.execute(seconds=30)) for _ in range(3)]
+            started = _tool(client, "remote__slow_started")
+            while (await started.execute()).to_message_content() != "3":
+                await asyncio.sleep(0.05)
+            proc.kill()
+            proc.wait()
+            proc = await asyncio.to_thread(_start, "streamable-http", port)
+            results = await asyncio.gather(*calls)
+            rerun = await started.execute()
+        assert all(r.is_error for r in results)
+        assert rerun.to_message_content() == "0"
     finally:
         proc.kill()
         proc.wait()
