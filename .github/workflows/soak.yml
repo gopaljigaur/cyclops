@@ -1,0 +1,40 @@
+name: Soak
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    # Nightly; on a pull request only once it has the soak label.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'soak')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # One version on pull requests keeps them to a few minutes.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }}
+
+      - name: Run soak tests
+        run: uv run pytest -m soak -n auto --dist worksteal
