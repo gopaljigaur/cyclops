@@ -63,7 +63,14 @@ class Agent:
         With a session, the run reads and extends the session's transcript and
         adds its usage to the session, instead of using this agent's history.
         """
-        return RunHandle(*self._start(input_message, stream, response_model, session))
+        return RunHandle(
+            *self._start(
+                input_message,
+                stream=stream,
+                response_model=response_model,
+                session=session,
+            )
+        )
 
     def run(
         self,
@@ -149,7 +156,13 @@ class Agent:
         raising. The run waits for the caller to take each event; closing the
         iterator early cancels it.
         """
-        run, task = self._start(input_message, True, None, session, paced=True)
+        run, task = self._start(
+            input_message,
+            stream=True,
+            response_model=None,
+            session=session,
+            paced=True,
+        )
         handle = RunHandle(run, task)
         try:
             async with aclosing(handle.__aiter__()) as events:
@@ -162,6 +175,7 @@ class Agent:
     def _start(
         self,
         input_message: str,
+        *,
         stream: bool,
         response_model: Optional[Type],
         session: Optional[Session],
