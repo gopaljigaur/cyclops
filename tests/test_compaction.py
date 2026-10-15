@@ -754,3 +754,165 @@ def test_images_stay_in_a_cut_tool_result():
         "type": "image_url",
         "image_url": {"url": "data:image/png;base64,aGk="},
     }
+
+
+OVERFLOW = "litellm.ContextWindowExceededError"
+
+# Like MODEL, for a provider that takes a thinking budget.
+THINKING_MODEL = "anthropic/cyclops-tiny-window"
+litellm.register_model(
+    {
+        THINKING_MODEL: {
+            "max_input_tokens": 400,
+            "max_output_tokens": 100,
+            "litellm_provider": "anthropic",
+            "mode": "chat",
+            "supports_reasoning": True,
+        }
+    }
+)
+
+
+def _session(tokens: int) -> Session:
+    """A session of about tokens tokens: past the room for 100 output tokens."""
+    return Session(messages=[{"role": "user", "content": _words(tokens)}])
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_an_overflow_is_retried_with_a_max_tokens_that_fits(stream):
+    agent = Agent(AgentConfig(model=MODEL))
+
+    with _replies(OVERFLOW, "Done.") as mock:
+        result = await agent.start("Go on.", stream=stream, session=_session(300))
+
+    assert result.stop_reason == "completed"
+    first, retry = mock.call_args_list
+    assert "max_tokens" not in first.kwargs
+    # 400 input tokens less the request's own: below the model's output limit.
+    assert 0 < retry.kwargs["max_tokens"] < 100
+    assert retry.kwargs["messages"] == first.kwargs["messages"]
+
+
+def test_later_steps_keep_the_lowered_max_tokens():
+    @tool
+    def look() -> str:
+        """Look around."""
+        return "Nothing."
+
+    agent = Agent(AgentConfig(model=MODEL), tools=[look])
+
+    with _replies(OVERFLOW, _call("look"), "Done.") as mock:
+        result = agent.run_with_response("Go on.", session=_session(300))
+
+    assert result.stop_reason == "completed"
+    # The second step is sent within the window at once, without an overflow.
+    assert mock.call_count == 3
+    retry, second = mock.call_args_list[1:]
+    assert 0 < second.kwargs["max_tokens"] < retry.kwargs["max_tokens"]
+
+
+def test_with_compaction_max_tokens_is_lowered_before_any_overflow():
+    agent = Agent(AgentConfig(model=MODEL, compaction=Compaction(threshold=0.9)))
+
+    with _replies("Done.") as mock:
+        agent.run("Go on.", session=_session(300))
+
+    assert 0 < mock.call_args.kwargs["max_tokens"] < 100
+
+
+def test_an_overflow_after_lowering_is_compacted():
+    hooks = _Recorder()
+    agent = Agent(
+        AgentConfig(
+            model=MODEL, compaction=Compaction(threshold=0.9, keep=0.1), hooks=hooks
+        )
+    )
+
+    with _replies(OVERFLOW, "Summary.", "Done.") as mock:
+        events = list(agent.stream_events("Go on.", session=_session(300)))
+
+    lowered, summary, retry = mock.call_args_list
+    assert 0 < lowered.kwargs["max_tokens"] < 100
+    assert _is_summary_request(summary.kwargs)
+    assert retry.kwargs["messages"][0]["content"] == _SUMMARY_PREFIX + "Summary."
+    assert len(hooks.compactions) == 1
+    assert any(isinstance(e, Compacted) for e in events)
+    assert events[-1].result.stop_reason == "completed"
+
+
+async def test_an_overflow_with_no_room_to_lower_is_compacted():
+    agent = Agent(
+        AgentConfig(
+            model=MODEL, max_tokens=50, compaction=Compaction(threshold=0.9, keep=0.1)
+        )
+    )
+
+    with _replies(OVERFLOW, "Summary.", "Done.") as mock:
+        result = await agent.start("Go on.", stream=False, session=_session(300))
+
+    first, summary, retry = mock.call_args_list
+    assert first.kwargs["max_tokens"] == retry.kwargs["max_tokens"] == 50
+    assert _is_summary_request(summary.kwargs)
+    # The summary's completion counts with the step's.
+    assert result.usage.total_tokens == 60
+
+
+@pytest.mark.parametrize(
+    "config, replies",
+    [
+        # Lowered max_tokens, then a second overflow, with no compaction.
+        (AgentConfig(model=MODEL), [OVERFLOW, OVERFLOW]),
+        # Lowered before the request, then compacted, then a third overflow.
+        (
+            AgentConfig(model=MODEL, compaction=Compaction(threshold=0.9, keep=0.1)),
+            [OVERFLOW, "Summary.", OVERFLOW],
+        ),
+        # Lowered after the first overflow, compacted after the second.
+        (
+            AgentConfig(model=MODEL, compaction=Compaction(threshold=0.99, keep=0.1)),
+            [OVERFLOW, "Summary.", OVERFLOW],
+        ),
+    ],
+)
+def test_each_remedy_is_tried_once(config, replies):
+    with _replies(*replies) as mock:
+        result = Agent(config).run_with_response("Go on.", session=_session(300))
+
+    assert mock.call_count == len(replies)
+    assert isinstance(result.error, litellm.ContextWindowExceededError)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        # LiteLLM knows no limits for the model.
+        AgentConfig(model="openai/cyclops-unmapped"),
+        # max_tokens already fits, and there is no compaction.
+        AgentConfig(model=MODEL, max_tokens=50),
+        # The room is within the thinking budget, which max_tokens must exceed.
+        AgentConfig(model=THINKING_MODEL, thinking_budget=95),
+    ],
+)
+def test_an_overflow_without_a_remedy_ends_the_run(config):
+    with _replies(OVERFLOW) as mock:
+        result = Agent(config).run_with_response("Go on.", session=_session(300))
+
+    assert mock.call_count == 1
+    assert isinstance(result.error, litellm.ContextWindowExceededError)
+
+
+def test_a_thinking_budget_sends_an_overflow_to_compaction():
+    config = AgentConfig(
+        model=THINKING_MODEL,
+        compaction=Compaction(threshold=0.9, keep=0.1),
+        thinking_budget=95,
+    )
+
+    with _replies(OVERFLOW, "Summary.", "Done.") as mock:
+        result = Agent(config).run_with_response("Go on.", session=_session(300))
+
+    assert result.stop_reason == "completed"
+    first = mock.call_args_list[0].kwargs
+    assert first["thinking"]["budget_tokens"] == 95
+    assert "max_tokens" not in first
+    assert _is_summary_request(mock.call_args_list[1].kwargs)

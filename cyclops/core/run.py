@@ -16,7 +16,7 @@ from typing import (
 
 import litellm
 
-from cyclops.core.compaction import _ContextWindow
+from cyclops.core.compaction import _context_window, _ContextWindow
 from cyclops.core.completion import (
     _acompletion,
     _build_messages,
@@ -216,9 +216,8 @@ class _RunLoop:
         system_prompt: Optional[str] = None
         executor = _ToolExecutor(self.config, tools.tools_by_name, run)
         compaction = self.config.compaction
-        window = None
-        if compaction is not None:
-            window = _ContextWindow(self.config, compaction, run.spend)
+        # Without compaction the transcript is counted once a request overflows.
+        window = _context_window(self.config, compaction, run.spend)
 
         guard_rounds = 0
         # Guard feedback waiting to be sent once another step is allowed.
@@ -248,16 +247,9 @@ class _RunLoop:
             run.history += [
                 {"role": "user", "content": m} for m in run.steering[:steered]
             ]
-            if window is not None:
-                self._compacted(await window.compact_if_needed(run.history))
-            messages = _build_messages(run.history, system_prompt)
-            response: Any
-            if streamed:
-                response = await _streamed_completion(
-                    self.config, messages, kwargs, run
-                )
-            else:
-                response = await _acompletion(self.config, messages=messages, **kwargs)
+            if window is not None and compaction is not None:
+                self._compacted(await window.compact_if_needed(run.history, compaction))
+            response = await self._complete(window, system_prompt, kwargs, streamed)
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
             del run.steering[:steered]
@@ -325,13 +317,57 @@ class _RunLoop:
 
         result.stop_reason = "max_steps"
 
-    def _compacted(self, event: Optional[Compacted]) -> None:
+    async def _complete(
+        self,
+        window: Optional[_ContextWindow],
+        system_prompt: Optional[str],
+        kwargs: Dict[str, Any],
+        streamed: bool,
+    ) -> Any:
+        """A step's completion, kept within the context window.
+
+        Once the transcript is counted, max_tokens is lowered to the room the
+        request leaves. On an overflow each remedy is tried at most once: a
+        lower max_tokens, then compaction when it is set.
+        """
+        history = self.run.history
+        compaction = self.config.compaction
+        fit = window is not None and window.counting
+        compacted = False
+        while True:
+            request = kwargs
+            max_tokens = None
+            if window is not None and fit:
+                max_tokens = window.fitting_max_tokens(history, kwargs)
+            if max_tokens is not None:
+                request = {**kwargs, "max_tokens": max_tokens}
+            messages = _build_messages(history, system_prompt)
+            try:
+                if streamed:
+                    return await _streamed_completion(
+                        self.config, messages, request, self.run
+                    )
+                return await _acompletion(self.config, messages=messages, **request)
+            except litellm.ContextWindowExceededError:
+                if window is None:
+                    raise
+                if not fit and window.fitting_max_tokens(history, kwargs) is not None:
+                    fit = True
+                    continue
+                if compaction is None or compacted:
+                    raise
+                compacted = fit = True
+                if not self._compacted(await window.compact(history, compaction)):
+                    raise
+
+    def _compacted(self, event: Optional[Compacted]) -> bool:
         """Report a compaction, if there was one, and save the session whole next."""
         if event is None:
-            return
+            return False
         self.run.emit(event)
         if self.saver is not None:
             self.saver.rewritten()
+        return True
 
     async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""
