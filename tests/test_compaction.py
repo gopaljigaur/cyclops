@@ -891,6 +891,8 @@ def test_each_remedy_is_tried_once(config, replies):
         AgentConfig(model=MODEL, max_tokens=50),
         # The room is within the thinking budget, which max_tokens must exceed.
         AgentConfig(model=THINKING_MODEL, thinking_budget=95),
+        # Or within the largest budget LiteLLM makes of a reasoning effort.
+        AgentConfig(model=THINKING_MODEL, reasoning_effort="low"),
     ],
 )
 def test_an_overflow_without_a_remedy_ends_the_run(config):
@@ -901,11 +903,18 @@ def test_an_overflow_without_a_remedy_ends_the_run(config):
     assert isinstance(result.error, litellm.ContextWindowExceededError)
 
 
-def test_a_thinking_budget_sends_an_overflow_to_compaction():
+@pytest.mark.parametrize(
+    "reasoning, sent",
+    [
+        ({"thinking_budget": 95}, "thinking"),
+        ({"reasoning_effort": "low"}, "reasoning_effort"),
+    ],
+)
+def test_a_thinking_budget_sends_an_overflow_to_compaction(reasoning, sent):
     config = AgentConfig(
         model=THINKING_MODEL,
         compaction=Compaction(threshold=0.9, keep=0.1),
-        thinking_budget=95,
+        **reasoning,
     )
 
     with _replies(OVERFLOW, "Summary.", "Done.") as mock:
@@ -913,6 +922,6 @@ def test_a_thinking_budget_sends_an_overflow_to_compaction():
 
     assert result.stop_reason == "completed"
     first = mock.call_args_list[0].kwargs
-    assert first["thinking"]["budget_tokens"] == 95
+    assert sent in first
     assert "max_tokens" not in first
     assert _is_summary_request(mock.call_args_list[1].kwargs)

@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
+from litellm.constants import DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET
 
 from cyclops.core.completion import _acompletion, _completion_kwargs, _usage
 from cyclops.core.events import Compacted
@@ -168,6 +169,10 @@ class _ContextWindow:
         room = self.max_input_tokens - self.tokens(history)
         limit = kwargs.get("max_tokens") or self.max_output_tokens
         budget = (kwargs.get("thinking") or {}).get("budget_tokens") or 0
+        if kwargs.get("reasoning_effort") not in (None, "none"):
+            # LiteLLM turns an effort into a thinking budget for some
+            # providers; this is the largest it uses.
+            budget = max(budget, DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET)
         if budget < room and (limit is None or room < limit):
             return room
         return None
