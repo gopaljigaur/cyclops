@@ -1,12 +1,14 @@
 """Tests for the MCP client, tools, bridge and server against real MCP servers."""
 
 import asyncio
+import gc
 import os
 import signal
 import socket
 import subprocess
 import sys
 import time
+import weakref
 from pathlib import Path
 
 import httpx
@@ -70,6 +72,15 @@ class TestStdio:
         assert result.success
         assert result.content == [TextContent(text="5")]
         assert result.result == {"result": 5}
+
+    async def test_finished_callers_are_not_kept(self, mcp):
+        add = _tool(mcp, "demo__add")
+        callers = [asyncio.create_task(add.execute(a=1, b=1)) for _ in range(10)]
+        await asyncio.wait(callers)
+        kept = [weakref.ref(caller) for caller in callers]
+        del callers
+        gc.collect()
+        assert not [ref for ref in kept if ref() is not None]
 
     async def test_annotations_are_mapped(self, mcp):
         assert _tool(mcp, "demo__add").definition.annotations.read_only is True
@@ -308,6 +319,39 @@ async def test_detach_cancels_background_reconnect():
     await asyncio.wait_for(client.aclose(), 5)
     assert _live_tasks("_Connection._reconnect") == []
     assert _live_sessions() == []
+
+
+async def test_result_arriving_as_the_owner_ends_is_kept():
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    response = loop.create_future()
+
+    class Session:
+        async def call_tool(self, tool, arguments, read_timeout_seconds=None):
+            started.set()
+            return await response
+
+    conn = _Connection(
+        name="demo",
+        transport="stdio",
+        command=COMMAND,
+        url=None,
+        env=None,
+        headers=None,
+        auth=None,
+        connect_timeout=5,
+        call_timeout=None,
+        idle_timeout=None,
+        reconnection=ReconnectionOptions(),
+        on_tools_changed=lambda tools: None,
+    )
+    conn._task = loop.create_future()
+    caller = asyncio.create_task(conn._call(Session(), "add", {}))
+    await started.wait()
+    # In one loop iteration: the owner ends, then the response arrives.
+    conn._task.set_result(None)
+    response.set_result("result")
+    assert await caller == "result"
 
 
 def test_reconnection_delay_grows_with_jitter_up_to_the_cap():

@@ -356,10 +356,22 @@ class _Connection:
             session.call_tool(tool, arguments, read_timeout_seconds=timeout)
         )
         # A failed transport leaves its calls waiting, so also stop with the owner.
-        watch = {call} if self._task is None else {call, self._task}
+        # Through a future of this call: asyncio.wait on the owner itself keeps
+        # every caller alive on 3.14.0 to 3.14.6 (python/cpython#152569).
+        stopped = self.loop.create_future()
+
+        def stop(_: object) -> None:
+            if not stopped.done():
+                stopped.set_result(None)
+
+        owner = self._task
+        if owner is not None:
+            owner.add_done_callback(stop)
         try:
-            await asyncio.wait(watch, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({call, stopped}, return_when=asyncio.FIRST_COMPLETED)
         finally:
+            if owner is not None:
+                owner.remove_done_callback(stop)
             if not call.done():
                 call.cancel()
                 await asyncio.gather(call, return_exceptions=True)
