@@ -279,6 +279,31 @@ def test_a_tools_own_timeout_error_is_a_failure():
 
 
 @pytest.mark.asyncio
+async def test_a_cancel_as_the_tool_returns_stops_the_run():
+    async def finish() -> str:
+        # Lands while the run waits on this call, as the call returns.
+        asyncio.get_running_loop().call_soon(handle.cancel)
+        await asyncio.sleep(0)
+        return "done"
+
+    # A naive call runs in the run's own task, so nothing else sees the cancel.
+    agent = Agent(
+        config=_make_config(tool_mode="naive", tool_timeout=5),
+        tools=[Tool("finish", "Finish", finish)],
+    )
+    responses = [
+        _make_completion_response(json.dumps({"tool": "finish", "args": {}})),
+        _make_completion_response("done"),
+    ]
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as call:
+        handle = agent.start("go", stream=False)
+        result = await handle
+
+    assert result.stop_reason == "cancelled"
+    assert call.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_calls_waiting_their_turn_never_start_once_the_step_fails():
     ran = []
 

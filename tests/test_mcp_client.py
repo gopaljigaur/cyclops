@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 from mcp import types as mt
+from mcp.client.session import ClientSession
 
 from cyclops.mcp import (
     MCPBridge,
@@ -21,6 +22,7 @@ from cyclops.mcp import (
     ServerStatus,
     to_tool_result,
 )
+from cyclops.mcp.connection import _Connection
 from cyclops.mcp.tools import _mcp_schema_to_params
 from cyclops.toolkit.types import ImageContent, TextContent, ToolResult
 
@@ -429,6 +431,40 @@ class TestAttachDetach:
         assert len(client._locks) == 0
         assert len(_live_sessions()) == 1
         await client.aclose()
+        assert _live_sessions() == []
+
+    async def test_cancel_as_the_handshake_ends_cancels_attach(self, monkeypatch):
+        initialize = ClientSession.initialize
+
+        async def initialize_then_cancel(session):
+            result = await initialize(session)
+            attach.cancel()
+            return result
+
+        monkeypatch.setattr(ClientSession, "initialize", initialize_then_cancel)
+        client = MCPClient()
+        attach = asyncio.create_task(client.attach("d", COMMAND))
+        with pytest.raises(asyncio.CancelledError):
+            await attach
+        assert client.servers == []
+        assert _live_sessions() == []
+
+    async def test_cancel_as_the_tool_list_ends_cancels_attach(self, monkeypatch):
+        list_tools = _Connection.list_tools
+
+        async def list_then_cancel(conn, session):
+            tools = await list_tools(conn, session)
+            # Lands while attach waits on this call, as the call returns.
+            asyncio.get_running_loop().call_soon(attach.cancel)
+            await asyncio.sleep(0)
+            return tools
+
+        monkeypatch.setattr(_Connection, "list_tools", list_then_cancel)
+        client = MCPClient()
+        attach = asyncio.create_task(client.attach("d", COMMAND))
+        with pytest.raises(asyncio.CancelledError):
+            await attach
+        assert client.servers == []
         assert _live_sessions() == []
 
     async def test_tool_name_clash_across_servers_raises(self):
