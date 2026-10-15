@@ -1,6 +1,6 @@
 # MCP
 
-The Model Context Protocol (MCP) is an open standard for exposing tools to LLMs. Cyclops ships a client and a server so you can either consume tools from any MCP server or publish your Cyclops tools as an MCP server.
+The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) is an open standard for exposing tools to LLMs. Cyclops ships a client and a server so you can either consume tools from any MCP server or publish your Cyclops tools as an MCP server.
 
 ## MCPClient
 

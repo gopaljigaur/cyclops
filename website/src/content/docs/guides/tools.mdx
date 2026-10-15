@@ -253,10 +253,19 @@ result = asyncio.run(registry.execute_tool("ping", host="example.com"))
 
 ## Using tools with Agent
 
-Pass any iterable of tools (decorated functions or `BaseTool` instances) to the `Agent` constructor. Tool names must be unique; the constructor raises `ValueError` on a duplicate.
+Pass a list of tools (decorated functions or `BaseTool` instances) to the `Agent` constructor. Tool names must be unique; the constructor raises `ValueError` on a duplicate.
 
 ```python
 from cyclops import Agent, AgentConfig
+from cyclops.toolkit import tool
+
+
+@tool
+def calculate(operation: str, a: float, b: float) -> str:
+    """Perform a basic math operation: add, subtract, multiply, divide."""
+    ops = {"add": a + b, "subtract": a - b, "multiply": a * b, "divide": a / b}
+    return str(ops.get(operation, "unknown operation"))
+
 
 config = AgentConfig(model="groq/llama-3.1-8b-instant")
 agent = Agent(config, tools=[get_weather, db_tool, calculate])
