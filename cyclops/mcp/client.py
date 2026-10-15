@@ -1,8 +1,10 @@
 """Async MCP client that manages connections to several MCP servers."""
 
 import asyncio
+import contextlib
 import functools
-from typing import Any, Dict, List, Optional, Sequence, Union
+from collections import Counter
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Union
 
 import httpx
 from mcp.types import CallToolResult, Tool
@@ -33,7 +35,9 @@ class MCPClient:
     def __init__(self) -> None:
         self._connections: Dict[str, _Connection] = {}
         self._tools: Dict[str, List[MCPClientTool]] = {}
+        # Per name attach/detach locks, kept only while a task holds or awaits one.
         self._locks: Dict[str, asyncio.Lock] = {}
+        self._lock_users: Counter[str] = Counter()
 
     async def __aenter__(self) -> "MCPClient":
         return self
@@ -72,7 +76,7 @@ class MCPClient:
         if (command is None) == (url is None):
             raise ValueError("Pass exactly one of command or url")
         label = name if prefix is True else prefix
-        async with self._locks.setdefault(name, asyncio.Lock()):
+        async with self._lock(name):
             await self._detach(name)
             conn = _Connection(
                 name=name,
@@ -121,8 +125,20 @@ class MCPClient:
 
     async def detach(self, name: str) -> None:
         """Disconnect a server and drop its tools. Unknown names are ignored."""
-        async with self._locks.setdefault(name, asyncio.Lock()):
+        async with self._lock(name):
             await self._detach(name)
+
+    @contextlib.asynccontextmanager
+    async def _lock(self, name: str) -> AsyncIterator[None]:
+        lock = self._locks.setdefault(name, asyncio.Lock())
+        self._lock_users[name] += 1
+        try:
+            async with lock:
+                yield
+        finally:
+            self._lock_users[name] -= 1
+            if not self._lock_users[name]:
+                del self._locks[name], self._lock_users[name]
 
     async def _detach(self, name: str) -> None:
         conn = self._connections.get(name)
@@ -134,7 +150,8 @@ class MCPClient:
 
     async def aclose(self) -> None:
         """Disconnect every server, including ones still attaching."""
-        await asyncio.gather(*[self.detach(name) for name in list(self._locks)])
+        names = dict.fromkeys([*self._connections, *self._locks])
+        await asyncio.gather(*[self.detach(name) for name in names])
 
     def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]:
         """Tools of the given servers, or of every attached server.

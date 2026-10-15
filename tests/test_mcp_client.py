@@ -371,6 +371,7 @@ class TestAttachDetach:
         await asyncio.gather(detach, return_exceptions=True)
         assert client.servers == ["d"]
         assert _live_sessions() == []
+        assert client._locks == {}
         await client.aclose()
         assert client.servers == []
 
@@ -381,6 +382,29 @@ class TestAttachDetach:
         await client.aclose()
         await attach
         assert client.servers == []
+        assert _live_sessions() == []
+        assert client._locks == {}
+
+    async def test_unknown_detaches_keep_no_locks(self):
+        client = MCPClient()
+        for i in range(10_000):
+            await client.detach(f"unknown{i}")
+        assert client._locks == {}
+        assert not client._lock_users
+
+    async def test_attach_detach_cycles_keep_no_idle_locks(self):
+        client = MCPClient()
+        await client.attach("kept", COMMAND)
+        for i in range(3):
+            await client.attach(f"s{i}", COMMAND)
+            await asyncio.gather(
+                client.attach(f"s{i}", COMMAND), client.detach(f"s{i}")
+            )
+            await client.detach(f"s{i}")
+        assert client.servers == ["kept"]
+        assert client._locks == {}
+        assert len(_live_sessions()) == 1
+        await client.aclose()
         assert _live_sessions() == []
 
     async def test_tool_name_clash_across_servers_raises(self):
