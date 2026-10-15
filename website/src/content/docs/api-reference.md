@@ -77,6 +77,8 @@ class AgentConfig(BaseModel):
     num_retries: int = 2
     timeout: float = 600   # seconds
     stream_idle_timeout: float = 120   # seconds
+    reasoning_effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]] = None
+    thinking_budget: Optional[int] = None   # tokens
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool | Literal["5m", "1h"] = True
     middleware: List[ToolMiddleware] = []
@@ -103,6 +105,8 @@ class AgentConfig(BaseModel):
 | `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
 | `timeout` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |
+| `reasoning_effort` | `None` | Reasoning effort for models that take it; LiteLLM maps it per provider. See [Reasoning](/guides/agents/#reasoning). |
+| `thinking_budget` | `None` | Most thinking tokens for models that take a budget, in place of `reasoning_effort`. See [Reasoning](/guides/agents/#reasoning). |
 | `completion_kwargs` | `{}` | Extra LiteLLM completion arguments sent with every call. |
 | `prompt_caching` | `True` | Cache breakpoints for providers that cache at markers; `"5m"` or `"1h"` sets the time to live, `False` sends none. See [Prompt caching](/guides/agents/#prompt-caching). |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |

@@ -8,6 +8,9 @@ from cyclops.core.caching import PromptCaching
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import Guard, ToolMiddleware
 
+# LiteLLM's reasoning_effort levels, mapped per provider.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
 
 class AgentConfig(BaseModel):
     """Configuration for an agent"""
@@ -72,8 +75,19 @@ class AgentConfig(BaseModel):
         description="Seconds a stream may go without a chunk after its first; "
         "a stall is retried once while nothing of it has been emitted",
     )
+    reasoning_effort: Optional[ReasoningEffort] = Field(
+        default=None,
+        description="How much the model reasons, sent to models LiteLLM lists "
+        "with reasoning_effort; None sends nothing",
+    )
+    thinking_budget: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Most tokens the model may think, sent as LiteLLM's thinking "
+        "to models that take it, in place of reasoning_effort",
+    )
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
-    # api_base, extra_headers, reasoning_effort, thinking.
+    # api_base, extra_headers.
     completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
     # Mark cache breakpoints for providers that cache at cache_control markers:
     # True, or a time to live of "5m" or "1h"; False sends none.

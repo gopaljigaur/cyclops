@@ -14,6 +14,7 @@ from cyclops.core.caching import _cache_points
 from cyclops.core.events import ReasoningDelta, TextDelta
 from cyclops.core.providers import (
     _every_deployment,
+    _every_deployment_takes,
     _marker_caching_supported,
     _native_schema,
 )
@@ -43,6 +44,9 @@ def _completion_kwargs(
         kwargs.setdefault(
             "cache_control_injection_points", _cache_points(config.prompt_caching)
         )
+    # Reasoning arguments in completion_kwargs replace the typed options.
+    if not {"reasoning_effort", "thinking"} & kwargs.keys():
+        kwargs.update(_reasoning_kwargs(config))
     # With tools only where LiteLLM sends the schema natively: elsewhere it
     # may emulate it with a forced tool call, which blocks the agent's tools.
     if response_model is not None and (
@@ -53,6 +57,17 @@ def _completion_kwargs(
     if mode == "native":
         kwargs["tools"] = [_tool_to_openai_format(t) for t in tools]
     return kwargs
+
+
+def _reasoning_kwargs(config: AgentConfig) -> Dict[str, Any]:
+    """LiteLLM's reasoning arguments for the typed options the model takes."""
+    if config.thinking_budget and _every_deployment_takes(config, "thinking"):
+        return {
+            "thinking": {"type": "enabled", "budget_tokens": config.thinking_budget}
+        }
+    if config.reasoning_effort and _every_deployment_takes(config, "reasoning_effort"):
+        return {"reasoning_effort": config.reasoning_effort}
+    return {}
 
 
 def _tool_to_openai_format(tool) -> Dict[str, Any]:

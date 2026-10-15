@@ -222,7 +222,7 @@ def test_message_round_trips_reasoning():
 
 
 def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
-    """End to end through LiteLLM's Anthropic request builder."""
+    """End to end through LiteLLM's Anthropic request builder, with thinking_budget."""
     replies = [
         {
             "id": "msg_1",
@@ -264,11 +264,8 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
         temperature=1,
         system_prompt="Be brief.",
         prompt_caching=True,
-        completion_kwargs={
-            "api_key": "sk-test",
-            "max_tokens": 4096,
-            "thinking": {"type": "enabled", "budget_tokens": 1024},
-        },
+        thinking_budget=1024,
+        completion_kwargs={"api_key": "sk-test", "max_tokens": 4096},
     )
     with patch.object(AsyncHTTPHandler, "post", post):
         assert Agent(config, tools=[add]).run("1 + 2?") == "3"
@@ -291,6 +288,216 @@ def test_anthropic_request_puts_signed_thinking_before_the_tool_use():
         ],
     }
     assert second["messages"][2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+# ---------------------------------------------------------------------------
+# Reasoning options
+# ---------------------------------------------------------------------------
+
+REPLIES = {
+    "api.openai.com": {
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "o3-mini",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    },
+    "api.anthropic.com": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5",
+        "content": [{"type": "text", "text": "hi"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    },
+    "generativelanguage.googleapis.com": {
+        "candidates": [
+            {
+                "content": {"role": "model", "parts": [{"text": "hi"}]},
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 1,
+            "candidatesTokenCount": 1,
+            "totalTokenCount": 2,
+        },
+    },
+    "bedrock-runtime.us-east-1.amazonaws.com": {
+        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+    },
+}
+
+
+def _request_body(monkeypatch, model, **config):
+    """The body LiteLLM builds for one completion, answered without a network."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AWS_REGION_NAME", "us-east-1")
+    bodies = []
+
+    async def send(self, request, **kwargs):
+        bodies.append(loads(request.content))
+        return httpx.Response(200, json=REPLIES[request.url.host], request=request)
+
+    config = AgentConfig(
+        model=model, temperature=1, completion_kwargs={"api_key": "test"}, **config
+    )
+    with patch.object(httpx.AsyncClient, "send", send):
+        assert Agent(config).run("hello") == "hi"
+    (body,) = bodies
+    return body
+
+
+def test_openai_request_takes_the_reasoning_effort(monkeypatch):
+    body = _request_body(monkeypatch, "o3-mini", reasoning_effort="high")
+
+    assert body["reasoning_effort"] == "high"
+
+
+def test_anthropic_request_turns_the_reasoning_effort_into_a_budget(monkeypatch):
+    body = _request_body(
+        monkeypatch, "anthropic/claude-sonnet-4-5", reasoning_effort="low"
+    )
+
+    assert body["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+
+
+def test_anthropic_request_takes_the_thinking_budget(monkeypatch):
+    body = _request_body(
+        monkeypatch, "anthropic/claude-sonnet-4-5", thinking_budget=2048
+    )
+
+    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+    # LiteLLM leaves room for the answer after the budget.
+    assert body["max_tokens"] > 2048
+
+
+def test_anthropic_request_sends_effort_to_adaptive_thinking_models(monkeypatch):
+    body = _request_body(
+        monkeypatch, "anthropic/claude-opus-4-6", reasoning_effort="high"
+    )
+
+    assert body["thinking"]["type"] == "adaptive"
+    assert body["output_config"] == {"effort": "high"}
+
+
+def test_gemini_request_turns_the_reasoning_effort_into_a_budget(monkeypatch):
+    body = _request_body(monkeypatch, "gemini/gemini-2.5-flash", reasoning_effort="low")
+
+    assert body["generationConfig"]["thinkingConfig"] == {
+        "thinkingBudget": 1024,
+        "includeThoughts": True,
+    }
+
+
+def test_gemini_request_takes_the_thinking_budget(monkeypatch):
+    body = _request_body(monkeypatch, "gemini/gemini-2.5-flash", thinking_budget=2048)
+
+    assert body["generationConfig"]["thinkingConfig"] == {
+        "thinkingBudget": 2048,
+        "includeThoughts": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "option, budget",
+    [({"reasoning_effort": "medium"}, 2048), ({"thinking_budget": 4096}, 4096)],
+)
+def test_bedrock_request_takes_reasoning_options(monkeypatch, option, budget):
+    body = _request_body(
+        monkeypatch, "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0", **option
+    )
+
+    assert body["additionalModelRequestFields"]["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": budget,
+    }
+
+
+def _reasoning_kwargs(model, **config):
+    mock = AsyncMock(return_value=_response("hi"))
+    with patch("litellm.acompletion", new=mock):
+        Agent(AgentConfig(model=model, **config)).run("hello")
+    kwargs = mock.call_args.kwargs
+    return {k: kwargs[k] for k in ("reasoning_effort", "thinking") if k in kwargs}
+
+
+def test_reasoning_options_send_nothing_by_default():
+    assert _reasoning_kwargs("anthropic/claude-sonnet-4-5") == {}
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-4o-mini",
+        "gemini/gemini-2.0-flash",
+        "anthropic/claude-3-5-haiku-20241022",
+        "bedrock/meta.llama3-1-70b-instruct-v1:0",
+    ],
+)
+def test_reasoning_options_are_not_sent_to_models_without_reasoning(model):
+    kwargs = _reasoning_kwargs(model, reasoning_effort="high", thinking_budget=2048)
+
+    assert kwargs == {}
+
+
+def test_thinking_budget_goes_where_the_model_takes_it():
+    options = {"reasoning_effort": "high", "thinking_budget": 2048}
+
+    assert _reasoning_kwargs("gpt-5", **options) == {"reasoning_effort": "high"}
+    assert _reasoning_kwargs("anthropic/claude-sonnet-4-5", **options) == {
+        "thinking": {"type": "enabled", "budget_tokens": 2048}
+    }
+
+
+def test_reasoning_options_need_every_router_deployment():
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "smart", "litellm_params": {"model": "gpt-5"}},
+            {"model_name": "smart", "litellm_params": {"model": "gpt-4o"}},
+        ]
+    )
+    router.acompletion = AsyncMock(return_value=_response("hi"))
+    Agent(AgentConfig(model="smart", router=router, reasoning_effort="low")).run("hi")
+
+    assert "reasoning_effort" not in router.acompletion.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    "completion_kwargs",
+    [
+        {"reasoning_effort": "high"},
+        {"thinking": {"type": "enabled", "budget_tokens": 4096}},
+    ],
+)
+def test_reasoning_options_give_way_to_completion_kwargs(completion_kwargs):
+    kwargs = _reasoning_kwargs(
+        "anthropic/claude-sonnet-4-5",
+        reasoning_effort="low",
+        thinking_budget=2048,
+        completion_kwargs=completion_kwargs,
+    )
+
+    assert kwargs == completion_kwargs
+
+
+@pytest.mark.parametrize(
+    "option", [{"reasoning_effort": "extreme"}, {"thinking_budget": 0}]
+)
+def test_reasoning_options_are_validated(option):
+    with pytest.raises(ValueError):
+        AgentConfig(model="gpt-5", **option)
 
 
 # ---------------------------------------------------------------------------
