@@ -1,11 +1,17 @@
 """MCP Server implementation"""
 
-from typing import Any, Dict, List
+from typing import List, Optional
 
 from mcp import types as mcp_types
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, Tool as MCPTool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    Tool as MCPTool,
+)
 
 from cyclops.toolkit.registry import ToolRegistry
 from cyclops.toolkit.tool import BaseTool
@@ -18,14 +24,14 @@ def _to_call_result(result: ToolResult) -> CallToolResult:
     if result.is_error:
         error = result.error or "tool execution failed"
         return CallToolResult(
-            content=[mcp_types.TextContent(type="text", text=error)], isError=True
+            content=[mcp_types.TextContent(type="text", text=error)], is_error=True
         )
     content: List[mcp_types.ContentBlock] = [
         (
             mcp_types.TextContent(type="text", text=block.text)
             if isinstance(block, TextContent)
             else mcp_types.ImageContent(
-                type="image", data=block.data, mimeType=block.mime_type
+                type="image", data=block.data, mime_type=block.mime_type
             )
         )
         for block in result.content
@@ -49,49 +55,54 @@ class MCPServer:
     ):
         self.name = name
         self.version = version
-        self.server = Server(name)
+        self.server = Server(
+            name,
+            version=version,
+            on_list_tools=self._list_tools,
+            on_call_tool=self._call_tool,
+        )
         self.tool_registry = ToolRegistry()
         self.plugin_manager = PluginManager(self.tool_registry)
 
         if load_plugins:
             self.load_all_plugins()
 
-        self._setup_handlers()
-
     def load_all_plugins(self):
         """Load and register all toolkit plugins"""
         self.plugin_manager.load_plugins()
         self.plugin_manager.register_tools()
 
-    def _setup_handlers(self):
-        @self.server.list_tools()
-        async def handle_list_tools() -> List[MCPTool]:
-            tools = []
-            for tool_name in self.tool_registry.list_tools():
-                tool = self.tool_registry.get_tool(tool_name)
-                if tool is None:
-                    continue
-                mcp_tool = MCPTool(
+    async def _list_tools(
+        self, ctx: ServerRequestContext, params: Optional[PaginatedRequestParams]
+    ) -> ListToolsResult:
+        tools = []
+        for tool_name in self.tool_registry.list_tools():
+            tool = self.tool_registry.get_tool(tool_name)
+            if tool is None:
+                continue
+            tools.append(
+                MCPTool(
                     name=tool.name,
                     description=tool.description,
-                    inputSchema=tool.definition.to_json_schema(),
+                    input_schema=tool.definition.to_json_schema(),
                 )
-                tools.append(mcp_tool)
-            return tools
+            )
+        return ListToolsResult(tools=tools)
 
-        @self.server.call_tool()
-        async def handle_call_tool(
-            name: str, arguments: Dict[str, Any]
-        ) -> CallToolResult:
-            try:
-                result = await self.tool_registry.execute_tool(
-                    tool_name=name, **arguments
-                )
-            except Exception as e:
-                return _to_call_result(ToolResult.error_result(str(e)))
-            if not isinstance(result, ToolResult):
-                result = ToolResult.success_result(result)
-            return _to_call_result(result)
+    async def _call_tool(
+        self, ctx: ServerRequestContext, params: CallToolRequestParams
+    ) -> CallToolResult:
+        # The SDK answers a raised exception as a protocol error, which the
+        # model never sees; an error result carries the text to it instead.
+        try:
+            result = await self.tool_registry.execute_tool(
+                tool_name=params.name, **(params.arguments or {})
+            )
+        except Exception as e:
+            return _to_call_result(ToolResult.error_result(str(e)))
+        if not isinstance(result, ToolResult):
+            result = ToolResult.success_result(result)
+        return _to_call_result(result)
 
     def add_tool(self, tool: BaseTool) -> None:
         """Add a tool to the server"""

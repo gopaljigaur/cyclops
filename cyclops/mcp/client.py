@@ -5,7 +5,7 @@ import functools
 import weakref
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-import httpx
+import httpx2
 from mcp.types import CallToolResult, Tool
 
 from cyclops.mcp.connection import (
@@ -56,7 +56,7 @@ class MCPClient:
         transport: Optional[Transport] = None,
         env: Optional[Dict[str, str]] = None,
         headers: Optional[Dict[str, str]] = None,
-        auth: Optional[httpx.Auth] = None,
+        auth: Optional[httpx2.Auth] = None,
         prefix: Union[str, bool] = True,
         connect_timeout: float = 30.0,
         call_timeout: Optional[float] = DEFAULT_CALL_TIMEOUT,

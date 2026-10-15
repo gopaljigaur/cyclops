@@ -44,25 +44,25 @@ def _mcp_schema_to_params(input_schema: Dict[str, Any]) -> Dict[str, ToolParamet
 def to_tool_result(result: mcp_types.CallToolResult) -> ToolResult:
     """Map an MCP tool result onto a ToolResult.
 
-    Text and images become content blocks and ``structuredContent`` becomes
-    ``result``. ``isError`` gives an error result carrying the text.
+    Text and images become content blocks and ``structured_content`` becomes
+    ``result``. ``is_error`` gives an error result carrying the text.
     """
     blocks: List[ContentBlock] = []
     for content in result.content:
         if isinstance(content, mcp_types.TextContent):
             blocks.append(TextContent(text=content.text))
         elif isinstance(content, mcp_types.ImageContent):
-            blocks.append(ImageContent(data=content.data, mime_type=content.mimeType))
+            blocks.append(ImageContent(data=content.data, mime_type=content.mime_type))
         elif isinstance(content, mcp_types.EmbeddedResource) and isinstance(
             content.resource, mcp_types.TextResourceContents
         ):
             blocks.append(TextContent(text=content.resource.text))
         else:
             blocks.append(TextContent(text=content.model_dump_json()))
-    if result.isError:
+    if result.is_error:
         text = "\n".join(b.text for b in blocks if isinstance(b, TextContent))
         return ToolResult.error_result(text)
-    return ToolResult(result=result.structuredContent, content=blocks)
+    return ToolResult(result=result.structured_content, content=blocks)
 
 
 def _annotations(tool: mcp_types.Tool) -> ToolAnnotations:
@@ -70,10 +70,10 @@ def _annotations(tool: mcp_types.Tool) -> ToolAnnotations:
     if hints is None:
         return ToolAnnotations()
     return ToolAnnotations(
-        read_only=hints.readOnlyHint,
-        destructive=hints.destructiveHint,
-        idempotent=hints.idempotentHint,
-        open_world=hints.openWorldHint,
+        read_only=hints.read_only_hint,
+        destructive=hints.destructive_hint,
+        idempotent=hints.idempotent_hint,
+        open_world=hints.open_world_hint,
     )
 
 
@@ -102,8 +102,8 @@ class MCPClientTool(BaseTool):
         return ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters=_mcp_schema_to_params(self.tool.inputSchema),
-            input_schema=self.tool.inputSchema,
+            parameters=_mcp_schema_to_params(self.tool.input_schema),
+            input_schema=self.tool.input_schema,
             annotations=self.annotations,
         )
 
