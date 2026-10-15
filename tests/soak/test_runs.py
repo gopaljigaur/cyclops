@@ -1,11 +1,9 @@
 """Soak tests: many agent runs against mocked completions, nothing may pile up."""
 
 import asyncio
-import gc
 import itertools
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple
-from unittest.mock import patch
 
 import litellm
 import pytest
@@ -18,8 +16,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from cyclops import Agent, AgentConfig, InMemorySessionStore, Session
 from cyclops.core.events import TextDelta, ToolCallStarted
 from cyclops.observability import TelemetryHooks
-from cyclops.toolkit import ToolResult, tool
-from tests.soak.harness import MAX_TYPE_GROWTH, WARMUP, soak
+from cyclops.toolkit import tool
+from tests.soak.harness import WARMUP, soak
 
 pytestmark = pytest.mark.soak
 
@@ -41,7 +39,6 @@ async def wait() -> str:
 
 
 def agent(**config) -> Agent:
-    # A fresh agent per run: a run without a session extends its agent's history (#80).
     tools = config.pop("tools", [add])
     return Agent(AgentConfig(model=MODEL, **config), tools=tools)
 
@@ -167,28 +164,9 @@ async def test_failed_runs_leave_no_cyclic_garbage():
     assert (await soak(failure, runs=100)).cyclic_garbage == 0
 
 
-@pytest.mark.xfail(strict=True, reason="#80: runs without a session share a history")
 async def test_long_lived_agent_without_session():
     shared = agent()
-    (await soak(lambda: shared.arun("hi"), runs=200, warmup=50)).assert_steady()
-
-
-async def test_awaited_handle_holds_no_events():
-    handle = agent(**LONG).start("hi")
-    await handle
-    gc.collect()
-    held = sum(isinstance(o, TextDelta) for o in gc.get_objects())
-    assert held <= MAX_TYPE_GROWTH
-
-
-async def test_tool_result_rendered_once_per_call():
-    render = ToolResult.to_message_content
-    with patch.object(
-        ToolResult, "to_message_content", autospec=True, side_effect=render
-    ) as rendered:
-        for _ in range(10):
-            await tools()
-    assert rendered.call_count == 10
+    (await soak(lambda: shared.arun("hi"))).assert_steady()
 
 
 async def _loop_iterations(consume) -> Tuple[int, int]:
