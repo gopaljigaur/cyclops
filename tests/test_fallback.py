@@ -138,6 +138,7 @@ async def test_refusal_switches_and_its_usage_is_counted():
     refused = _response(PRIMARY, "", "content_filter")
     mock = AsyncMock(side_effect=[refused, _response(FALLBACK)])
     hooks = MagicMock(spec=AgentHooks)
+    hooks.on_run_start.return_value = None
     with patch("litellm.acompletion", new=mock):
         result = await Agent(_config(hooks=hooks)).arun_with_response("hi")
 

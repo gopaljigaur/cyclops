@@ -767,6 +767,7 @@ def test_failed_run_returns_error_result_with_usage_so_far():
 
 def test_error_result_follows_on_run_error():
     hooks = MagicMock(spec=AgentHooks)
+    hooks.on_run_start.return_value = None
     agent = Agent(config=_make_config(hooks=hooks, num_retries=0))
     error = litellm.APIConnectionError(
         message="down", llm_provider="openai", model="gpt-3.5-turbo"
@@ -1472,6 +1473,8 @@ def test_tool_results_are_rendered_for_the_model():
         return ToolResult.error_result("no access")
 
     hooks = MagicMock(spec=AgentHooks)
+
+    hooks.on_run_start.return_value = None
     hooks.on_tool_start.return_value = "allow"
     agent = Agent(config=_make_config(hooks=hooks), tools=[data, text, fail])
     messages = _run_tool_calls(agent, "data", "text", "fail")
@@ -2034,6 +2037,8 @@ async def test_cancel_closes_tool_calls_and_resolves_cancelled():
         return "done"
 
     hooks = MagicMock(spec=AgentHooks)
+
+    hooks.on_run_start.return_value = None
     hooks.on_tool_start.return_value = "allow"
     agent = Agent(
         config=_make_config(hooks=hooks),

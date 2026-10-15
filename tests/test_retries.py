@@ -204,6 +204,7 @@ def test_router_retries_by_its_own_policy():
 
 def test_each_attempt_fires_the_llm_hooks(delays):
     hooks = MagicMock(spec=AgentHooks)
+    hooks.on_run_start.return_value = None
     error = _overloaded()
     with patch("litellm.acompletion", new=AsyncMock(side_effect=[error, _response()])):
         Agent(AgentConfig(model=MODEL, hooks=hooks)).run("hi")

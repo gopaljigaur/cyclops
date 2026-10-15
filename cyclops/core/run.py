@@ -31,10 +31,10 @@ from cyclops.core.events import (
     TextDelta,
 )
 from cyclops.core.fallback import _complete_with_fallbacks, _Request, _requests
-from cyclops.core.hooks import RUN_STOPPED
+from cyclops.core.hooks import RUN_STOPPED, _call_hook
 from cyclops.core.middleware import GuardContext
 from cyclops.core.providers import _every_deployment, _lacks_tools
-from cyclops.core.content import _Content
+from cyclops.core.content import _Content, _user_content
 from cyclops.core.run_state import _Run
 from cyclops.core.session import _SessionSaver
 from cyclops.core.tool_execution import (
@@ -167,9 +167,10 @@ class _RunLoop:
 
     async def _loop(self, input_message: _Content) -> None:
         run = self.run
-        if self.config.hooks:
-            self.config.hooks.on_run_start(input_message)
         try:
+            replaced = await _call_hook(self.config, "on_run_start", input_message)
+            if replaced is not None:
+                input_message = _user_content(self.config, replaced)
             # Compaction may replace earlier messages too, so the transcript is
             # restored as a whole.
             before = list(run.history)
@@ -188,8 +189,7 @@ class _RunLoop:
                 await self._steps(input_message, "naive")
         except BaseException as e:
             # Failures, cancellation and a stream closed early all end the run here.
-            if self.config.hooks:
-                self.config.hooks.on_run_error(e)
+            await _call_hook(self.config, "on_run_error", e)
             await self._end_session(failed=True)
             raise
         # Steering the run had no step left for waits for the session's next run;
@@ -199,11 +199,9 @@ class _RunLoop:
         try:
             await self._end_session()
         except BaseException as e:
-            if self.config.hooks:
-                self.config.hooks.on_run_error(e)
+            await _call_hook(self.config, "on_run_error", e)
             raise
-        if self.config.hooks:
-            self.config.hooks.on_run_end(run.result.content)
+        await _call_hook(self.config, "on_run_end", run.result.content)
 
     async def _steps(self, input_message: _Content, mode: str) -> None:
         run, agent = self.run, self.agent
@@ -256,8 +254,7 @@ class _RunLoop:
                 result.stop_reason = "budget"
                 return
             model, response, step_usage = answer
-            if self.config.hooks:
-                self.config.hooks.on_llm_end(response)
+            await _call_hook(self.config, "on_llm_end", response)
             del run.steering[:steered]
             result.steps += 1
             run.spend(model, step_usage)

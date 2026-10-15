@@ -10,7 +10,7 @@ import json
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 from cyclops.core.events import ToolCallFinished, ToolCallStarted
-from cyclops.core.hooks import AgentHooks, _tool_call_id
+from cyclops.core.hooks import _call_hook, _tool_call_id
 from cyclops.core.middleware import Deny, ToolCallContext, ToolMiddleware
 from cyclops.core.providers import _every_deployment, _takes_tool_message_images
 from cyclops.core.run_state import _Run
@@ -152,25 +152,38 @@ def _append_tool_result(history: List[Dict[str, Any]], tc, content: Any) -> None
 class _HooksMiddleware(ToolMiddleware):
     """Runs the AgentHooks tool callbacks as the innermost middleware."""
 
-    def __init__(self, hooks: AgentHooks) -> None:
-        self.hooks = hooks
+    def __init__(self, config: AgentConfig) -> None:
+        self.config = config
         # The result on_tool_end saw; each call gets its own instance.
         self.rendered: Optional[_Rendered] = None
 
     async def before_tool(self, call):
-        if self.hooks.on_tool_start(call.tool_name, call.arguments) == "deny":
+        decision = await _call_hook(
+            self.config, "on_tool_start", call.tool_name, call.arguments
+        )
+        if decision == "deny":
             return Deny(f"Tool '{call.tool_name}' was not approved")
         return None
 
     async def after_tool(self, call, result, error):
         if error is not None:
-            self.hooks.on_tool_error(call.tool_name, call.arguments, error)
+            await _call_hook(
+                self.config, "on_tool_error", call.tool_name, call.arguments, error
+            )
             return None
         try:
             rendered = _render(result)
-            self.hooks.on_tool_end(call.tool_name, call.arguments, rendered.text)
+            await _call_hook(
+                self.config,
+                "on_tool_end",
+                call.tool_name,
+                call.arguments,
+                rendered.text,
+            )
         except Exception as e:
-            self.hooks.on_tool_error(call.tool_name, call.arguments, e)
+            await _call_hook(
+                self.config, "on_tool_error", call.tool_name, call.arguments, e
+            )
             return ToolResult.error_result(f"{call.tool_name} failed: {e}")
         self.rendered = rendered
         return None
@@ -368,7 +381,7 @@ class _ToolExecutor:
         middleware = list(self.config.middleware)
         hooks = None
         if self.config.hooks:
-            hooks = _HooksMiddleware(self.config.hooks)
+            hooks = _HooksMiddleware(self.config)
             middleware.append(hooks)
         timeout = self.config.tool_timeout if tool.timeout is None else tool.timeout
         allowed: List[ToolMiddleware] = []
