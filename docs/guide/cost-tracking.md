@@ -51,7 +51,7 @@ asyncio.run(main())
 | `prompt_tokens` | `int \| None` | Tokens in the prompt/context sent to the model, from `usage`. |
 | `completion_tokens` | `int \| None` | Tokens in the generated response, from `usage`. |
 | `cached_tokens` | `int \| None` | Prompt tokens the provider served from its cache, from `usage`. |
-| `cost` | `float \| None` | Estimated USD cost computed by LiteLLM, from `usage`. `None` if LiteLLM can't price a completion of the run. |
+| `cost` | `float \| None` | Estimated USD cost LiteLLM computed for each completion, with the pricing of the deployment that served it. `None` if LiteLLM can't price a completion of the run. |
 
 `tokens_used`, `prompt_tokens`, `completion_tokens`, `cached_tokens` and `cost` are read-only properties over `usage`.
 
@@ -148,5 +148,5 @@ for tc in result.tool_calls:
 ```
 
 /// note
-Cost tracking depends on LiteLLM's internal pricing table. Ollama and other self-hosted models will have `cost=None` since no billing data is available. Token counts are still reported if the server returns usage information.
+Cost tracking depends on LiteLLM's internal pricing table. A `router` deployment's own prices (`input_cost_per_token`, `output_cost_per_token`) or its `model_info.base_model` take precedence, as does a `base_model` in `completion_kwargs`. Ollama and other self-hosted models will have `cost=None` since no billing data is available. Token counts are still reported if the server returns usage information.
 ///

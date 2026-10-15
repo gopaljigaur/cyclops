@@ -651,22 +651,31 @@ def test_cost_budget_counts_steps_after_one_without_pricing():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [False, True])
-async def test_cost_is_litellm_completion_cost(stream):
-    import functools
+async def test_cost_follows_the_router_deployment_pricing(stream):
+    """A deployment's model_info.base_model prices its completions."""
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "smart",
+                "litellm_params": {"model": "openai/my-deployment"},
+                "model_info": {"base_model": "gpt-4o"},
+            }
+        ]
+    )
+    agent = Agent(
+        config=_make_config(
+            "smart", router=router, completion_kwargs={"mock_response": "hello"}
+        )
+    )
 
-    responses = []
+    result = await agent.start("hi", stream=stream)
 
-    class Recorder(AgentHooks):
-        def on_llm_end(self, response):
-            responses.append(response)
-
-    agent = Agent(config=_make_config("gpt-4o-mini", hooks=Recorder()))
-    acompletion = functools.partial(litellm.acompletion, mock_response="hello there")
-    with patch("litellm.acompletion", new=acompletion):
-        result = await agent.start("hi", stream=stream)
-
-    assert result.cost
-    assert result.cost == litellm.completion_cost(completion_response=responses[0])
+    prompt, completion = litellm.cost_per_token(
+        model="gpt-4o",
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+    )
+    assert result.cost == pytest.approx(prompt + completion)
 
 
 @pytest.mark.parametrize("stream", [False, True])
