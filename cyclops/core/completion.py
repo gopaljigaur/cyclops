@@ -262,12 +262,13 @@ async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Outp
             return litellm.stream_chunk_builder(chunks, messages=messages)
 
 
-def _usage(response) -> Optional[Usage]:
-    """Tokens and cost of one completion; None if it reports no usage."""
+def _usage(response, api_duration: float) -> Optional[Usage]:
+    """Tokens, cost and API time of one completion; None if it reports no usage."""
     usage = getattr(response, "usage", None)
     if usage is None:
         return None
-    details = getattr(usage, "prompt_tokens_details", None)
+    prompt = getattr(usage, "prompt_tokens_details", None)
+    completion = getattr(usage, "completion_tokens_details", None)
     # LiteLLM prices the response as it builds it, None if it has no pricing.
     hidden = response._hidden_params
     cost: Optional[float]
@@ -281,7 +282,10 @@ def _usage(response) -> Optional[Usage]:
     return Usage(
         prompt_tokens=usage.prompt_tokens or 0,
         completion_tokens=usage.completion_tokens or 0,
-        cached_tokens=getattr(details, "cached_tokens", None) or 0,
+        cached_tokens=getattr(prompt, "cached_tokens", None) or 0,
+        cache_write_tokens=getattr(prompt, "cache_write_tokens", None) or 0,
+        reasoning_tokens=getattr(completion, "reasoning_tokens", None) or 0,
         total_tokens=usage.total_tokens or 0,
         cost=cost,
+        api_duration=api_duration,
     )

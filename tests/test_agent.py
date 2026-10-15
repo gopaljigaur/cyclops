@@ -55,6 +55,7 @@ def _make_completion_response(
     usage.completion_tokens = 20
     usage.total_tokens = 30
     usage.prompt_tokens_details = None
+    usage.completion_tokens_details = None
 
     response = MagicMock()
     response.choices = [choice]
@@ -692,7 +693,7 @@ def test_usage_reads_the_cost_litellm_set(stream, model):
         response = litellm.stream_chunk_builder(list(response), messages=messages)
 
     with patch("litellm.completion_cost", side_effect=AssertionError):
-        usage = _usage(response)
+        usage = _usage(response, 0.0)
 
     assert usage.cost == response._hidden_params["response_cost"]
     assert (usage.cost is None) == (model == "openai/unpriced-model")
@@ -947,7 +948,9 @@ def test_cached_tokens_are_summed():
         _make_completion_response(content="5"),
     ]
     for response in responses:
-        response.usage.prompt_tokens_details = MagicMock(cached_tokens=4)
+        response.usage.prompt_tokens_details = MagicMock(
+            cached_tokens=4, cache_write_tokens=None
+        )
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
         result = agent.run_with_response("2 + 3?")

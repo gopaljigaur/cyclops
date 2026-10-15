@@ -1,5 +1,6 @@
 """Send a step's completion to the fallback models when a model is down or refuses."""
 
+import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import litellm
@@ -14,7 +15,7 @@ from cyclops.core.completion import (
 )
 from cyclops.core.events import Event, ModelFallback
 from cyclops.core.run_state import _Run
-from cyclops.core.types import AgentConfig
+from cyclops.core.types import AgentConfig, Usage
 
 # A model's config and the arguments of its completions.
 _Request = Tuple[AgentConfig, Dict[str, Any]]
@@ -56,11 +57,15 @@ class _Watched:
 
 async def _send(
     request: _Request, messages: List[Dict[str, Any]], run: _Output, streamed: bool
-) -> Any:
+) -> Tuple[Any, Optional[Usage]]:
+    """A completion and its usage."""
     config, kwargs = request
+    start = time.perf_counter()
     if streamed:
-        return await _streamed_completion(config, messages, kwargs, run)
-    return await _acompletion(config, messages=messages, **kwargs)
+        response = await _streamed_completion(config, messages, kwargs, run)
+    else:
+        response = await _acompletion(config, messages=messages, **kwargs)
+    return response, _usage(response, time.perf_counter() - start)
 
 
 async def _complete_with_fallbacks(
@@ -68,9 +73,9 @@ async def _complete_with_fallbacks(
     messages: List[Dict[str, Any]],
     run: _Run,
     streamed: bool,
-) -> Optional[Tuple[str, Any]]:
-    """The model that answered a step, and its response; None if a refusal
-    spent the run's budget before the next model.
+) -> Optional[Tuple[str, Any, Optional[Usage]]]:
+    """The model that answered a step, its response and usage; None if a
+    refusal spent the run's budget before the next model.
 
     The models are tried in order, each after its own retries. Once a model
     emitted part of a stream, its error or refusal ends the step as without
@@ -80,7 +85,7 @@ async def _complete_with_fallbacks(
         config = request[0]
         watched = _Watched(run)
         try:
-            response = await _send(request, messages, watched, streamed)
+            response, usage = await _send(request, messages, watched, streamed)
         except Exception as e:
             if watched.emitted or not _falls_back(e):
                 raise
@@ -91,12 +96,11 @@ async def _complete_with_fallbacks(
             )
             continue
         if watched.emitted or response.choices[0].finish_reason != "content_filter":
-            return config.model, response
+            return config.model, response, usage
         if config.hooks:
             config.hooks.on_llm_end(response)
         # A refused completion is billed too.
-        usage = _usage(response)
-        run.spend(usage)
+        run.spend(config.model, usage)
         if run.over_budget():
             return None
         run.emit(
@@ -104,4 +108,5 @@ async def _complete_with_fallbacks(
                 model=config.model, fallback_model=fallback.model, usage=usage
             )
         )
-    return requests[-1][0].model, await _send(requests[-1], messages, run, streamed)
+    response, usage = await _send(requests[-1], messages, run, streamed)
+    return requests[-1][0].model, response, usage
