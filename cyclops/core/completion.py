@@ -1,10 +1,15 @@
 """Build a completion's arguments, call LiteLLM, and assemble streamed responses."""
 
 import asyncio
+import sys
 from contextlib import aclosing
-from typing import Any, AsyncGenerator, Dict, List, Optional, Type
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Type
 
 import litellm
+
+# The Router's retry policy and backoff. Imported here so a LiteLLM that
+# renames them fails at import, not inside the retry's except handler.
+from litellm import _calculate_retry_after, _should_retry
 
 from cyclops.core.events import ReasoningDelta, TextDelta
 from cyclops.core.providers import (
@@ -74,8 +79,19 @@ def _build_messages(
     return messages
 
 
-class _StreamStalled(litellm.Timeout):
-    """A stream sent no chunk for config.stream_idle_timeout seconds."""
+class StreamIdleTimeout(litellm.Timeout):
+    """A stream sent no chunk for AgentConfig.stream_idle_timeout seconds."""
+
+
+def _quota_spent(error: Exception) -> bool:
+    """OpenAI's 429 for a spent quota, wherever LiteLLM's mapping kept it."""
+    body = getattr(error, "body", None)
+    if isinstance(body, dict) and body.get("code") == "insufficient_quota":
+        return True
+    # Providers LiteLLM calls over plain HTTP keep the error JSON in the
+    # message; Azure keeps only its text.
+    message = str(error)
+    return "insufficient_quota" in message or "exceeded your current quota" in message
 
 
 def _retry_delay(
@@ -88,13 +104,12 @@ def _retry_delay(
         or retries == config.num_retries
         or status is None
         # 408, 409, 429 and 5xx, as the OpenAI client retries.
-        or not litellm._should_retry(status)
-        # OpenAI reports a spent quota as a rate limit.
-        or "insufficient_quota" in str(error)
+        or not _should_retry(status)
+        or _quota_spent(error)
     ):
         return None
     # Exponential backoff with jitter, or the retry-after header up to 60s.
-    return litellm._calculate_retry_after(
+    return _calculate_retry_after(
         remaining_retries=config.num_retries - retries,
         max_retries=config.num_retries,
         response_headers=getattr(error, "litellm_response_headers", None),
@@ -128,6 +143,19 @@ async def _acompletion(config: AgentConfig, /, **kwargs):
             await asyncio.sleep(delay)
 
 
+if sys.version_info >= (3, 11):
+
+    async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
+        async with asyncio.timeout(timeout):
+            return await chunks.__anext__()
+
+else:
+
+    async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
+        # Before 3.11 there is no asyncio.timeout; wait_for runs a task per chunk.
+        return await asyncio.wait_for(chunks.__anext__(), timeout)
+
+
 async def _astream_completion(
     config: AgentConfig, messages, kwargs
 ) -> AsyncGenerator[Any, None]:
@@ -139,15 +167,16 @@ async def _astream_completion(
         **kwargs,
     )
     try:
-        # The request timeout bounds the wait for the first chunk.
+        # The first chunk may follow minutes of thinking, so the idle timeout
+        # starts after it.
         idle_timeout = None
         while True:
             try:
-                chunk = await asyncio.wait_for(response.__anext__(), idle_timeout)
+                chunk = await _next(response, idle_timeout)
             except StopAsyncIteration:
                 return
             except asyncio.TimeoutError:
-                raise _StreamStalled(
+                raise StreamIdleTimeout(
                     message=f"no stream chunk for {idle_timeout}s",
                     model=config.model,
                     llm_provider=None,
@@ -188,7 +217,7 @@ async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Run)
                         emitted = True
                         run.emit(TextDelta(text=delta.content))
                     await run.taken()
-        except _StreamStalled:
+        except StreamIdleTimeout:
             if emitted or stalled:
                 raise
             stalled = True

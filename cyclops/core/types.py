@@ -52,13 +52,14 @@ class AgentConfig(BaseModel):
     timeout: float = Field(
         default=600,
         gt=0,
-        description="Seconds a completion request may take to respond; "
-        "for a stream, until its first chunk",
+        description="Seconds LiteLLM's HTTP client waits to connect and for "
+        "each read or write; a timeout is retried like other transient errors",
     )
     stream_idle_timeout: float = Field(
         default=120,
         gt=0,
-        description="Seconds a stream may go without a chunk after its first",
+        description="Seconds a stream may go without a chunk after its first; "
+        "a stall is retried once while nothing of it has been emitted",
     )
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
     # api_base, extra_headers, reasoning_effort, thinking.

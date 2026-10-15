@@ -95,7 +95,7 @@ class AgentConfig(BaseModel):
 | `max_concurrent_subagents` | `10` | Most subagent runs one run has going at once. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
 | `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
-| `timeout` | `600` | Seconds a completion request may take to respond; for a stream, until its first chunk. |
+| `timeout` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |

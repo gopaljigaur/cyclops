@@ -8,6 +8,8 @@ import litellm
 import pytest
 from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
 
+from cyclops import StreamIdleTimeout
+from cyclops.core import completion
 from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.types import AgentConfig
@@ -21,10 +23,9 @@ def _response(text: str = "ok"):
     )
 
 
-def _chunk(text: str = ""):
-    return ModelResponseStream(
-        model=MODEL, choices=[StreamingChoices(delta=Delta(content=text))]
-    )
+def _chunk(text: str = "", reasoning=None):
+    delta = Delta(content=text, reasoning_content=reasoning)
+    return ModelResponseStream(model=MODEL, choices=[StreamingChoices(delta=delta)])
 
 
 async def _stream(*items, stall_before=None):
@@ -41,6 +42,18 @@ def _rate_limit(message: str = "slow down"):
     return litellm.RateLimitError(message=message, llm_provider="openai", model=MODEL)
 
 
+_QUOTA_TEXT = (
+    "You exceeded your current quota, please check your plan and billing details."
+)
+
+
+def _quota_spent():
+    """As LiteLLM maps OpenAI's 429: the code is in the body, not the message."""
+    error = _rate_limit(f"OpenAIException - {_QUOTA_TEXT}")
+    error.body = {"type": "insufficient_quota", "code": "insufficient_quota"}
+    return error
+
+
 def _overloaded():
     return litellm.InternalServerError(
         message="Overloaded", llm_provider="anthropic", model=MODEL
@@ -51,13 +64,13 @@ def _overloaded():
 def delays(monkeypatch):
     """The backoff LiteLLM computed for each retry; the retries don't wait."""
     computed = []
-    calculate = litellm._calculate_retry_after
+    calculate = completion._calculate_retry_after
 
     def record(**kwargs):
         computed.append(calculate(**kwargs))
         return 0
 
-    monkeypatch.setattr(litellm, "_calculate_retry_after", record)
+    monkeypatch.setattr(completion, "_calculate_retry_after", record)
     return computed
 
 
@@ -132,7 +145,14 @@ def test_retry_after_header_sets_the_delay(delays):
             response=httpx.Response(403, request=httpx.Request("POST", "http://x")),
         ),
         litellm.BadRequestError(message="bad", llm_provider="openai", model=MODEL),
-        _rate_limit("You exceeded your current quota. 'code': 'insufficient_quota'"),
+        _quota_spent(),
+        # Providers called over plain HTTP keep the error JSON in the message.
+        _rate_limit(
+            'Hosted_vllmException - {"error": {"type": "insufficient_quota", '
+            '"code": "insufficient_quota"}}'
+        ),
+        # Azure keeps only the text.
+        _rate_limit(f"AzureException RateLimitError - {_QUOTA_TEXT}"),
         litellm.BudgetExceededError(current_cost=2.0, max_budget=1.0),
     ],
 )
@@ -212,6 +232,18 @@ async def test_stream_error_after_content_is_raised(delays):
     assert delays == []
 
 
+async def test_stream_error_after_reasoning_is_raised(delays):
+    error = _overloaded()
+    first = _stream(_chunk(reasoning="thinking"), error)
+    mock = AsyncMock(side_effect=[first, _stream(_chunk("hello"))])
+    with patch("litellm.acompletion", new=mock):
+        with pytest.raises(litellm.InternalServerError):
+            await _streamed_text(Agent(AgentConfig(model=MODEL)))
+
+    assert mock.call_count == 1
+    assert delays == []
+
+
 async def test_stalled_stream_is_retried_once():
     config = AgentConfig(model=MODEL, stream_idle_timeout=0.01)
     stalled = _stream(_chunk(), _chunk("never"), stall_before=1)
@@ -227,7 +259,7 @@ async def test_stream_stalled_twice_raises_a_timeout():
     streams = [_stream(_chunk(), _chunk(), stall_before=1) for _ in range(3)]
     mock = AsyncMock(side_effect=streams)
     with patch("litellm.acompletion", new=mock):
-        with pytest.raises(litellm.Timeout):
+        with pytest.raises(StreamIdleTimeout):
             await _streamed_text(Agent(config))
 
     assert mock.call_count == 2
@@ -238,7 +270,7 @@ async def test_stream_stalled_after_content_raises_a_timeout():
     stalled = _stream(_chunk("hel"), _chunk("lo"), stall_before=1)
     mock = AsyncMock(side_effect=[stalled, _stream(_chunk("hello"))])
     with patch("litellm.acompletion", new=mock):
-        with pytest.raises(litellm.Timeout):
+        with pytest.raises(StreamIdleTimeout):
             await _streamed_text(Agent(config))
 
     assert mock.call_count == 1
