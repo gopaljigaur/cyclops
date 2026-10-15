@@ -67,6 +67,7 @@ def test_deny_sends_the_reason_and_skips_the_tool():
     assert ran == []
     assert _tool_message(agent) == "Error: adding is disabled today"
     assert result.tool_calls[0].result == "Error: adding is disabled today"
+    assert [d.reason for d in result.denied_tool_calls] == ["adding is disabled today"]
 
 
 def test_before_tool_can_replace_the_arguments():
@@ -338,10 +339,13 @@ def test_legacy_deny_hook_still_blocks():
 
     hooks = DenyAll()
     agent = Agent(config=_make_config(hooks=hooks), tools=[_make_simple_tool()])
-    _run(agent, _tool_round())
+    result, _ = _run(agent, _tool_round())
 
     assert _tool_message(agent) == "Error: Tool 'add' was not approved"
     assert hooks.ended == []
+    assert [(d.id, d.reason) for d in result.denied_tool_calls] == [
+        ("tc_1", "Tool 'add' was not approved")
+    ]
 
 
 def test_hooks_see_the_arguments_middleware_chose():

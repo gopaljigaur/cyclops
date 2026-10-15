@@ -109,6 +109,45 @@ Middleware run in list order before the call and in reverse order after it. A de
 
 If a tool call is cancelled, `after_tool` runs with the `CancelledError` and its return value is ignored. If middleware raises, the run fails with that exception and the other calls of the same step are cancelled.
 
+## Tool permissions
+
+`ToolPermissions` is a ready-made middleware for allow, ask and deny rules. Each rule is a tool name or an [fnmatch](https://docs.python.org/3/library/fnmatch.html) pattern such as `"github_*"`, matched case-sensitively.
+
+```python
+import asyncio
+
+from cyclops import AgentConfig, Deny, ToolPermissions
+
+
+async def approve(call):
+    answer = await asyncio.to_thread(input, f"Run {call.tool_name}({call.arguments})? [y/N] ")
+    return answer.lower() == "y" or Deny("The user declined this call.")
+
+
+permissions = ToolPermissions(
+    allow=["search_*", "get_*"],
+    ask=["send_email"],
+    deny=["*_delete_*"],
+    approve=approve,
+    default="deny",
+)
+config = AgentConfig(model="gpt-4o-mini", middleware=[permissions])
+```
+
+A call takes the strictest rule it matches: deny, then ask, then allow. A call that matches no rule gets `default` (`"allow"` unless you set it), so allow rules matter when the default is `"ask"` or `"deny"`.
+
+An "ask" call awaits `approve(call)` with the `ToolCallContext`. Return `True` to run the call, `False` to deny it, or `Deny(reason)` to deny it with your own reason. `call.annotations` carries the tool's hints, such as `destructive`, if the callback wants them. `ask` rules or `default="ask"` without `approve` raise `ValueError`. If `approve` raises, the run fails as it does when any middleware raises, and the tool does not run.
+
+Approvals happen where the call would run, so they follow the same parallelism. Calls to tools not marked `read_only` are asked about one at a time, in the model's order, each after the previous one has run. `read_only` calls are asked about concurrently, so a callback that prompts a person, like the one above, should expect overlapping questions for them, or allow read-only tools outright. A call waiting on `approve` holds one of the `max_parallel_tool_calls` slots, and `tool_timeout` does not count the wait.
+
+A denied call reaches the model as an error result, like any `Deny`. `RunResult.denied_tool_calls` lists every call middleware denied in the run, `ToolPermissions` or otherwise, with its `id` (`None` in naive tool mode), `name`, `arguments` and `reason`:
+
+```python
+result = agent.run_with_response("Clean up old branches")
+for denied in result.denied_tool_calls:
+    print(f"{denied.name}: {denied.reason}")
+```
+
 ## End-of-run guards
 
 A guard runs when the model ends its turn without calling a tool. It is an async function that takes a `GuardContext` (`content`, `messages`, `run_id`, `agent_path`) and returns feedback or `None`. Feedback is added as a user message and the model runs again. Guards run in order and the first one with feedback wins. `max_guard_rounds` (default `3`) caps how many times per run guards may send the model back. If a guard still has feedback after that, the run ends with `stop_reason="guard"` and empty `content`. Each guard round is a step, so it counts against `max_steps` and the token and cost budgets; if a limit stops the run first, the feedback is not added to the conversation.

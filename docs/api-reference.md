@@ -123,6 +123,7 @@ Returned by `run_with_response()` and `arun_with_response()`. See [Cost Tracking
 class RunResult(BaseModel):
     content: str
     tool_calls: List[ToolCall]
+    denied_tool_calls: List[DeniedToolCall]
     model: str
     run_id: str
     stop_reason: Literal[
@@ -181,6 +182,16 @@ class ToolCall(BaseModel):
     result: Optional[Any]
 ```
 
+`RunResult.denied_tool_calls` holds a `DeniedToolCall` for each call that middleware denied:
+
+```python
+class DeniedToolCall(BaseModel):
+    id: Optional[str]  # None in naive tool mode
+    name: str
+    arguments: Dict[str, Any]
+    reason: str
+```
+
 ---
 
 ### AgentHooks
@@ -225,6 +236,22 @@ class ToolCallContext:
 @dataclass
 class Deny:
     reason: str
+```
+
+`ToolPermissions` is a `ToolMiddleware` that allows, asks about or denies each call by tool name. See [Tool permissions](guide/hooks.md#tool-permissions).
+
+```python
+class ToolPermissions(ToolMiddleware):
+    def __init__(
+        self,
+        *,
+        allow: Iterable[str] = (),
+        ask: Iterable[str] = (),
+        deny: Iterable[str] = (),
+        approve: Optional[Callable[[ToolCallContext], Awaitable[Union[bool, Deny]]]] = None,
+        default: Literal["allow", "ask", "deny"] = "allow",
+    ): ...
+    def permission(self, tool_name: str) -> Literal["allow", "ask", "deny"]: ...
 ```
 
 A guard is `Callable[[GuardContext], Awaitable[Optional[str]]]`; `GuardContext` has `content`, `messages`, `run_id` and `agent_path`. See [Hooks guide](guide/hooks.md#tool-middleware).
