@@ -5,7 +5,7 @@ from contextlib import aclosing
 from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Type
 
 from cyclops.core.events import Event, RunFinished, TextDelta
-from cyclops.core.run import RunHandle, _AgentLoop
+from cyclops.core.run import RunHandle, _RunLoop
 from cyclops.core.run_state import _Run
 from cyclops.core.session import Session
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
@@ -13,7 +13,7 @@ from cyclops.core.types import AgentConfig, RunResult
 from cyclops.skills import Skills
 
 
-class Agent(_AgentLoop):
+class Agent:
     """LLM agent implementation"""
 
     def __init__(
@@ -66,7 +66,7 @@ class Agent(_AgentLoop):
         history = self._history if session is None else session.messages
         run = _Run(self.config.model, history, session)
         task = asyncio.get_running_loop().create_task(
-            self._execute(input_message, run, stream, response_model)
+            _RunLoop(self, run, stream, response_model).execute(input_message)
         )
         return RunHandle(run, task)
 
@@ -163,3 +163,10 @@ class Agent(_AgentLoop):
         finally:
             handle.cancel()
             await asyncio.wait([handle._task])
+
+    def _get_tool_mode(self) -> str:
+        if not self.tools:
+            return "none"
+        if self.config.tool_mode in ("native", "naive"):
+            return self.config.tool_mode
+        return self._detected_tool_mode or "native"

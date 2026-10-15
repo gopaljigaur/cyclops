@@ -1,7 +1,16 @@
 """The step loop of a run, and the RunHandle that awaits, streams, steers and cancels it."""
 
 import asyncio
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Type
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Type,
+)
 
 import litellm
 
@@ -31,6 +40,9 @@ from cyclops.core.tool_execution import (
 )
 from cyclops.core.types import AgentConfig, RunResult
 from cyclops.skills import Skills
+
+if TYPE_CHECKING:
+    from cyclops.core.agent import Agent
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
@@ -117,29 +129,34 @@ def _assistant_message(msg, content: Optional[str]) -> Dict[str, Any]:
     return message
 
 
-class _AgentLoop:
-    """The step loop of Agent, which sets the attributes declared here."""
+class _RunLoop:
+    """The step loop of one run of an agent."""
 
-    config: AgentConfig
-    tools: List[Any]
-    skills: Optional[Skills]
-    _tools_by_name: Dict[str, Any]
-    _detected_tool_mode: Optional[str]
-
-    async def _execute(
+    def __init__(
         self,
-        input_message: str,
+        agent: "Agent",
         run: _Run,
         stream: bool,
         response_model: Optional[Type] = None,
-    ) -> RunResult:
+    ) -> None:
+        self.agent = agent
+        self.run = run
+        self.stream = stream
+        self.response_model = response_model
+
+    @property
+    def config(self) -> AgentConfig:
+        return self.agent.config
+
+    async def execute(self, input_message: str) -> RunResult:
         """Run one turn and emit its events, ending with RunFinished."""
+        run = self.run
         run.started = True
         try:
             if run.cancelled:
                 # Cancelled before the task started: no hooks, no completion.
                 raise asyncio.CancelledError(RUN_STOPPED)
-            await self._loop(input_message, run, stream, response_model)
+            await self._loop(input_message)
         except asyncio.CancelledError as e:
             if e.args != (RUN_STOPPED,):
                 raise
@@ -157,28 +174,23 @@ class _AgentLoop:
         run.emit(RunFinished(result=run.result))
         return run.result
 
-    async def _loop(
-        self,
-        input_message: str,
-        run: _Run,
-        stream: bool,
-        response_model: Optional[Type],
-    ) -> None:
+    async def _loop(self, input_message: str) -> None:
+        run = self.run
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
         try:
             start = len(run.history)
-            mode = self._get_tool_mode()
+            mode = self.agent._get_tool_mode()
             try:
-                await self._steps(input_message, run, stream, mode, response_model)
+                await self._steps(input_message, mode)
             except litellm.UnsupportedParamsError:
                 if mode != "native" or self.config.tool_mode != "auto":
                     raise
                 if not _tools_unsupported(self.config):
                     raise
-                self._detected_tool_mode = "naive"
+                self.agent._detected_tool_mode = "naive"
                 del run.history[start:]
-                await self._steps(input_message, run, stream, "naive", response_model)
+                await self._steps(input_message, "naive")
         except BaseException as e:
             # Failures, cancellation and a stream closed early all end the run here.
             if self.config.hooks:
@@ -190,22 +202,16 @@ class _AgentLoop:
         if self.config.hooks:
             self.config.hooks.on_run_end(run.result.content)
 
-    async def _steps(
-        self,
-        input_message: str,
-        run: _Run,
-        stream: bool,
-        mode: str,
-        response_model: Optional[Type],
-    ) -> None:
+    async def _steps(self, input_message: str, mode: str) -> None:
+        run, agent = self.run, self.agent
         run.history.append({"role": "user", "content": input_message})
         result = run.result
         naive = mode == "naive"
         # Naive mode never streams deltas: the text may be a tool call.
-        streamed = stream and not naive
-        kwargs = _completion_kwargs(self.config, self.tools, mode, response_model)
-        system_prompt = _system_prompt(self.config, self.skills, self.tools, mode)
-        executor = _ToolExecutor(self.config, self._tools_by_name, run)
+        streamed = self.stream and not naive
+        kwargs = _completion_kwargs(self.config, agent.tools, mode, self.response_model)
+        system_prompt = _system_prompt(self.config, agent.skills, agent.tools, mode)
+        executor = _ToolExecutor(self.config, agent._tools_by_name, run)
 
         # Limits count what is known, even once the reported totals are not.
         spent_tokens, spent_cost = 0, 0.0
@@ -274,7 +280,7 @@ class _AgentLoop:
             else:
                 assistant["content"] = content
                 run.history.append(assistant)
-                feedback = await self._guard_feedback(content, run)
+                feedback = await self._guard_feedback(content)
                 if feedback is None:
                     result.content = content
                     done = True
@@ -298,8 +304,9 @@ class _AgentLoop:
         max_cost = self.config.max_cost
         return max_cost is not None and cost >= max_cost
 
-    async def _guard_feedback(self, content: str, run: _Run) -> Optional[str]:
+    async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""
+        run = self.run
         context = GuardContext(
             content=content, messages=list(run.history), run_id=run.result.run_id
         )
@@ -308,10 +315,3 @@ class _AgentLoop:
             if feedback is not None:
                 return feedback
         return None
-
-    def _get_tool_mode(self) -> str:
-        if not self.tools:
-            return "none"
-        if self.config.tool_mode in ("native", "naive"):
-            return self.config.tool_mode
-        return self._detected_tool_mode or "native"
