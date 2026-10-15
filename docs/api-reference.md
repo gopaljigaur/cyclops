@@ -125,7 +125,11 @@ class RunResult(BaseModel):
     tool_calls: List[ToolCall]
     model: str
     run_id: str
-    stop_reason: Literal["completed", "max_steps", "budget", "guard", "cancelled", "error"]
+    stop_reason: Literal[
+        "completed", "max_tokens", "content_filter",
+        "max_steps", "budget", "guard", "cancelled", "error",
+    ]
+    finish_reason: Optional[str]
     steps: int
     usage: Optional[Usage]
     error: Optional[Exception]
@@ -159,7 +163,7 @@ class ReasoningDelta(Event):   text: str
 class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
-class StepFinished(Event):     step: int; usage: Optional[Usage]
+class StepFinished(Event):     step: int; usage: Optional[Usage]; finish_reason: str
 class RunFinished(Event):      result: RunResult
 ```
 

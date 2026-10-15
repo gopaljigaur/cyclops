@@ -136,7 +136,16 @@ class Usage(BaseModel):
         )
 
 
-StopReason = Literal["completed", "max_steps", "budget", "guard", "cancelled", "error"]
+StopReason = Literal[
+    "completed",
+    "max_tokens",
+    "content_filter",
+    "max_steps",
+    "budget",
+    "guard",
+    "cancelled",
+    "error",
+]
 
 
 class RunResult(BaseModel):
@@ -157,6 +166,11 @@ class RunResult(BaseModel):
     )
     stop_reason: StopReason = Field(
         default="completed", description="Why the run stopped"
+    )
+    finish_reason: Optional[str] = Field(
+        default=None,
+        description="The last completion's finish reason as LiteLLM normalizes "
+        "it (stop, length, tool_calls, content_filter); None before any",
     )
     steps: int = Field(default=0, description="LLM completions made in the run")
     usage: Optional[Usage] = Field(

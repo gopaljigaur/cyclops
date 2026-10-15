@@ -25,7 +25,8 @@ def _response(content=None, tool_calls=None):
     msg.content = content
     msg.tool_calls = tool_calls or []
     response = MagicMock()
-    response.choices = [MagicMock(message=msg)]
+    finish_reason = "tool_calls" if tool_calls else "stop"
+    response.choices = [MagicMock(message=msg, finish_reason=finish_reason)]
     response.usage = None
     return response
 

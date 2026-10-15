@@ -36,13 +36,20 @@ from cyclops.core.tool_execution import (
     _parse_naive_tool_call,
     _ToolExecutor,
 )
-from cyclops.core.types import AgentConfig, RunResult
+from cyclops.core.types import AgentConfig, RunResult, StopReason
 from cyclops.skills import Skills
 
 if TYPE_CHECKING:
     from cyclops.core.agent import Agent
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
+# Finish reasons, as LiteLLM normalizes them, that end a run without an answer.
+# LiteLLM maps Anthropic's refusal and Bedrock's guardrail to content_filter.
+_FINISH_STOP_REASONS: Dict[str, StopReason] = {
+    "length": "max_tokens",
+    "content_filter": "content_filter",
+}
 
 
 def _system_prompt(
@@ -195,7 +202,9 @@ class _RunLoop:
             result.steps += 1
             step_usage = _usage(response)
             run.spend(step_usage)
-            msg = response.choices[0].message
+            choice = response.choices[0]
+            msg = choice.message
+            result.finish_reason = choice.finish_reason
             content = msg.content or ""
             assistant = _assistant_message(msg, msg.content)
             naive_call = _parse_naive_tool_call(content) if naive else None
@@ -206,7 +215,15 @@ class _RunLoop:
                     run.emit(TextDelta(text=content))
 
             done = False
-            if not naive and msg.tool_calls:
+            stop_reason = _FINISH_STOP_REASONS.get(choice.finish_reason)
+            if stop_reason is not None:
+                # Cut or filtered output is no answer, and a cut tool call
+                # can't run, so the turn is kept as text only.
+                assistant["content"] = content
+                run.history.append(assistant)
+                result.stop_reason = stop_reason
+                done = True
+            elif not naive and msg.tool_calls:
                 await executor.run_native_tool_calls(msg, assistant)
             elif naive_call:
                 await executor.run_naive_tool_call(naive_call)
@@ -228,7 +245,13 @@ class _RunLoop:
                 else:
                     guard_rounds += 1
                     run.emit(GuardRejected(feedback=feedback))
-            run.emit(StepFinished(step=result.steps, usage=step_usage))
+            run.emit(
+                StepFinished(
+                    step=result.steps,
+                    usage=step_usage,
+                    finish_reason=choice.finish_reason,
+                )
+            )
             if done:
                 return
 

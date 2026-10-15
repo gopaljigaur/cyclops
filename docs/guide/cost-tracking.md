@@ -41,7 +41,8 @@ asyncio.run(main())
 | `tool_calls` | `List[ToolCall]` | Every tool call made during the run, in order. |
 | `model` | `str` | The model identifier used (from `AgentConfig.model`). |
 | `run_id` | `str` | Unique id of the run, also given to tool middleware and guards. |
-| `stop_reason` | `str` | `"completed"` for a final answer, `"max_steps"` or `"budget"` when the run reached a [limit](agents.md#step-and-budget-limits), `"guard"` when a [guard](hooks.md#end-of-run-guards) still rejected the answer after `max_guard_rounds`, `"cancelled"` when a run handle was cancelled, `"error"` when it failed. |
+| `stop_reason` | `str` | `"completed"` for a final answer, `"max_tokens"` when the output limit cut the last completion, `"content_filter"` when the provider filtered or refused it ([output limit and filtering](agents.md#output-limit-and-filtering)), `"max_steps"` or `"budget"` when the run reached a [limit](agents.md#step-and-budget-limits), `"guard"` when a [guard](hooks.md#end-of-run-guards) still rejected the answer after `max_guard_rounds`, `"cancelled"` when a run handle was cancelled, `"error"` when it failed. |
+| `finish_reason` | `str \| None` | The last completion's finish reason as LiteLLM normalizes it: `"stop"`, `"length"`, `"tool_calls"` or `"content_filter"`. `None` if the run made none. |
 | `steps` | `int` | LLM completions made in the run. |
 | `usage` | `Usage \| None` | Tokens and cost summed over every completion in the run, including those of [subagents](subagents.md) it called. `None` if any completion reported no usage. |
 | `error` | `Exception \| None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |
