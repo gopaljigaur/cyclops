@@ -128,10 +128,7 @@ class _RunLoop:
             if run.cancelled:
                 # Cancelled before the task started: no hooks, no completion.
                 raise asyncio.CancelledError(RUN_STOPPED)
-            try:
-                await self._loop(input_message)
-            finally:
-                await self._end_session()
+            await self._loop(input_message)
         except asyncio.CancelledError as e:
             if e.args != (RUN_STOPPED,):
                 if run.parent is None:
@@ -152,7 +149,7 @@ class _RunLoop:
             raise interrupted
         return run.result
 
-    async def _end_session(self) -> None:
+    async def _end_session(self, failed: bool = False) -> None:
         """Add the run's usage to its session, and save the session if autosaving."""
         session, usage = self.run.session, self.run.result.usage
         if session is None:
@@ -163,7 +160,7 @@ class _RunLoop:
         else:
             session.usage += usage
         if self.saver is not None:
-            await self.saver.end()
+            await self.saver.end(failed)
 
     async def _loop(self, input_message: str) -> None:
         run = self.run
@@ -181,16 +178,25 @@ class _RunLoop:
                     raise
                 self.agent._detected_tool_mode = "naive"
                 del run.history[start:]
+                if self.saver is not None:
+                    self.saver.rewritten()
                 await self._steps(input_message, "naive")
         except BaseException as e:
             # Failures, cancellation and a stream closed early all end the run here.
             if self.config.hooks:
                 self.config.hooks.on_run_error(e)
+            await self._end_session(failed=True)
             raise
         # Steering the run had no step left for waits for the session's next run;
         # without a session it is dropped.
         run.history += [{"role": "user", "content": m} for m in run.steering]
         run.steering.clear()
+        try:
+            await self._end_session()
+        except BaseException as e:
+            if self.config.hooks:
+                self.config.hooks.on_run_error(e)
+            raise
         if self.config.hooks:
             self.config.hooks.on_run_end(run.result.content)
 

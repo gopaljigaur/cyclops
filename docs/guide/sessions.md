@@ -36,6 +36,8 @@ A `SessionStore` keeps sessions between runs or processes. It has four async met
 - `InMemorySessionStore()` keeps sessions in the process.
 - `FileSessionStore(directory)` writes each session to `<directory>/<id>.jsonl`: the saved session on the first line, then one line per `add_messages`. Ids must be letters, digits, `_` or `-`.
 
+Keep one writer per session: a store doesn't lock, so two processes saving the same session can interleave one's `save` with the other's `add_messages` and store a mix of both transcripts.
+
 ```python
 from cyclops import FileSessionStore, Session
 

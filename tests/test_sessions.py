@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import logging
+import threading
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -561,3 +564,180 @@ async def test_file_store_round_trips_added_messages(tmp_path):
     await store.save(session)
     assert len(path.read_text().splitlines()) == 1
     assert await store.load("chat-1") == session
+
+
+@pytest.mark.asyncio
+async def test_file_store_keeps_other_line_breaks_in_messages(tmp_path):
+    store = FileSessionStore(tmp_path)
+    session = Session(messages=[{"role": "user", "content": "a\u2028b\x85c\u2029d\re"}])
+
+    await store.save(session)
+    await store.add_messages(session, [{"role": "assistant", "content": "f\u2028g"}])
+
+    loaded = await store.load(session.id)
+    assert [m["content"] for m in loaded.messages] == [
+        "a\u2028b\x85c\u2029d\re",
+        "f\u2028g",
+    ]
+
+
+def _three_steps():
+    first = _make_tool_call("tc_1", "add", '{"a": 2, "b": 3}')
+    second = _make_tool_call("tc_2", "add", '{"a": 5, "b": 5}')
+    return [
+        _make_completion_response(content=None, tool_calls=[first]),
+        _make_completion_response(content=None, tool_calls=[second]),
+        _make_completion_response("10"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_save_in_progress_finishes_once_when_the_run_is_cancelled(tmp_path):
+    started = threading.Event()
+
+    class SlowStore(FileSessionStore):
+        @staticmethod
+        def _append(path, line):
+            started.set()
+            time.sleep(0.2)
+            FileSessionStore._append(path, line)
+
+    store = SlowStore(tmp_path)
+    agent = Agent(
+        config=_make_config(),
+        tools=[_make_simple_tool()],
+        session_store=store,
+        durability="sync",
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_three_steps())):
+        handle = agent.start("go", stream=False, session=session)
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        handle.cancel()
+        assert (await handle).stop_reason == "cancelled"
+
+    # Long enough for a write the run left behind to land.
+    await asyncio.sleep(0.3)
+    assert await store.load(session.id) == session
+
+
+@pytest.mark.asyncio
+async def test_the_save_after_a_failed_one_stores_the_whole_session():
+    class FlakyStore(_RecordingStore):
+        async def add_messages(self, session, messages):
+            self.calls.append(("add_messages", len(messages)))
+            raise OSError("disk full")
+
+    store = FlakyStore()
+    agent = Agent(
+        config=_make_config(),
+        tools=[_make_simple_tool()],
+        session_store=store,
+        durability="sync",
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_three_steps())):
+        result = await agent.arun_with_response("go", session=session)
+
+    assert isinstance(result.error, OSError)
+    assert store.calls == [("save", 3), ("add_messages", 2), ("save", 5)]
+    assert await store.load(session.id) == session
+
+
+def test_a_failed_run_keeps_its_error_and_logs_a_failed_save(caplog):
+    class BrokenStore(InMemorySessionStore):
+        async def save(self, session):
+            raise OSError("disk full")
+
+    agent = Agent(config=_make_config(), session_store=BrokenStore(), durability="exit")
+    session = Session(id="chat-1")
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=RuntimeError("down"))):
+        with caplog.at_level(logging.ERROR, logger="cyclops.core.session"):
+            with pytest.raises(RuntimeError, match="down"):
+                agent.run("hi", session=session)
+
+    [record] = caplog.records
+    assert "chat-1" in record.getMessage()
+    assert isinstance(record.exc_info[1], OSError)
+
+
+def test_a_failed_end_save_fails_a_run_that_succeeded():
+    from cyclops.core.hooks import AgentHooks
+
+    class BrokenStore(InMemorySessionStore):
+        async def save(self, session):
+            raise OSError("disk full")
+
+    seen = []
+
+    class Hooks(AgentHooks):
+        def on_run_end(self, content):
+            seen.append("end")
+
+        def on_run_error(self, error):
+            seen.append(error)
+
+    agent = Agent(
+        config=_make_config(hooks=Hooks()),
+        session_store=BrokenStore(),
+        durability="exit",
+    )
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("hi")),
+    ):
+        result = agent.run_with_response("hello", session=Session())
+
+    assert result.stop_reason == "error"
+    assert isinstance(result.error, OSError)
+    assert seen == [result.error]
+
+
+@pytest.mark.asyncio
+async def test_a_naive_fallback_stores_the_whole_session_again():
+    store = _RecordingStore()
+    agent = Agent(
+        config=_make_config("ollama/llama2"),
+        tools=[_make_simple_tool()],
+        session_store=store,
+    )
+    session = Session()
+    saver_calls = []
+    responses = [
+        _unsupported_params_error(),
+        _make_completion_response('{"tool": "add", "args": {"a": 1, "b": 2}}'),
+        _make_completion_response("It is 3."),
+    ]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        with patch(
+            "cyclops.core.session._SessionSaver.rewritten",
+            autospec=True,
+            side_effect=lambda saver: saver_calls.append(saver),
+        ):
+            await agent.arun("1 + 2?", session=session)
+
+    assert len(saver_calls) == 1
+    assert await store.load(session.id) == session
+
+
+@pytest.mark.asyncio
+async def test_a_save_after_rewritten_stores_the_whole_session():
+    from cyclops.core.session import _SessionSaver
+
+    store = _RecordingStore()
+    session = Session(messages=[{"role": "user", "content": str(i)} for i in range(3)])
+    saver = _SessionSaver(store, session, "sync")
+
+    await saver.step()
+    session.messages[:2] = [{"role": "user", "content": "summary"}]
+    saver.rewritten()
+    await saver.step()
+
+    assert store.calls == [("save", 3), ("save", 2)]
+    assert await store.load(session.id) == session

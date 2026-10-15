@@ -1,6 +1,7 @@
 """Sessions: a conversation's transcript and usage, and stores to keep them in."""
 
 import asyncio
+import logging
 import os
 import re
 import tempfile
@@ -21,6 +22,8 @@ from typing import (
 from pydantic import BaseModel, Field
 
 from cyclops.core.types import Usage
+
+logger = logging.getLogger(__name__)
 
 # When a run saves its session to the agent's store, as LangGraph names it:
 # after each step, before the next (sync) or while it runs (async), or once
@@ -150,9 +153,10 @@ class FileSessionStore:
             data = await asyncio.to_thread(path.read_text, encoding="utf-8")
         except FileNotFoundError:
             return None
-        lines = data.splitlines(keepends=True)
-        # A crash during an addition leaves its line without the newline.
-        return _replay(line for line in lines if line.endswith("\n"))
+        # Split on newlines only: JSON leaves other line breaks unescaped. The
+        # last piece is empty, or an addition a crash cut short.
+        *lines, _ = data.split("\n")
+        return _replay(lines)
 
     async def save(self, session: Session) -> None:
         await asyncio.to_thread(
@@ -212,15 +216,36 @@ class _SessionSaver:
         if self.durability == "sync":
             await self._wait()
 
-    async def end(self) -> None:
-        """Save at the end of the run, once an earlier save is done."""
-        await self._wait()
-        await self._save()
+    async def end(self, failed: bool = False) -> None:
+        """Save at the end of the run, once an earlier save is done.
+
+        When the run failed, a save error is logged instead, so the run's own
+        error is the one it reports.
+        """
+        try:
+            await self._wait()
+            self._pending = self._save()
+            await self._wait()
+        except Exception:
+            if not failed:
+                raise
+            logger.exception("Could not save session %s", self.session.id)
+
+    def rewritten(self) -> None:
+        """Note that messages already saved were replaced, so the next save is whole."""
+        self._saved = None
 
     async def _wait(self) -> None:
-        pending, self._pending = self._pending, None
-        if pending is not None:
-            await pending
+        pending = self._pending
+        if pending is None:
+            return
+        try:
+            # Shielded: a cancelled run can't stop a write that started, so
+            # it is left to finish and count.
+            await asyncio.shield(pending)
+        finally:
+            if pending.done():
+                self._pending = None
 
     def _save(self) -> "asyncio.Task[None]":
         # What to store is taken now: the run goes on while the task saves.
@@ -230,11 +255,16 @@ class _SessionSaver:
             write = self.store.save(copy)
         else:
             write = self.store.add_messages(self.session, messages[self._saved :])
-        return asyncio.ensure_future(self._stored(write, len(messages)))
+        self._saved = len(messages)
+        return asyncio.ensure_future(self._stored(write))
 
-    async def _stored(self, write: Awaitable[None], count: int) -> None:
-        await write
-        self._saved = count
+    async def _stored(self, write: Awaitable[None]) -> None:
+        try:
+            await write
+        except BaseException:
+            # A write that failed partway leaves the store unknown.
+            self._saved = None
+            raise
 
 
 __all__ = [
