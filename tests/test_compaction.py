@@ -505,6 +505,35 @@ def test_a_summarizing_window_without_room_for_the_conversation_raises():
     assert session.messages == earlier + [{"role": "user", "content": "Go on."}]
 
 
+@pytest.mark.parametrize(
+    "reasoning", [{"thinking_budget": 95}, {"reasoning_effort": "low"}]
+)
+def test_the_summary_is_asked_without_reasoning(reasoning):
+    litellm.register_model(
+        {
+            "anthropic/cyclops-tiny-thinker": {
+                "max_input_tokens": 400,
+                "max_output_tokens": 100,
+                "litellm_provider": "anthropic",
+                "mode": "chat",
+                "supports_reasoning": True,
+            }
+        }
+    )
+    config = AgentConfig(
+        model="anthropic/cyclops-tiny-thinker", compaction=Compaction(), **reasoning
+    )
+
+    with _replies("Summary.", "Done.") as mock:
+        Agent(config).run("Go on.", session=_long_session())
+
+    summary, step = (c.kwargs for c in mock.call_args_list)
+    # Its max_tokens of 80 would be under the thinking budget of 95.
+    assert summary["max_tokens"] == 80
+    assert not {"thinking", "reasoning_effort"} & summary.keys()
+    assert {"thinking", "reasoning_effort"} & step.keys()
+
+
 def test_a_failing_summary_leaves_the_transcript_as_it_was():
     agent = Agent(AgentConfig(model=MODEL, compaction=Compaction(), num_retries=0))
     session = _long_session()

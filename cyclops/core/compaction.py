@@ -226,8 +226,10 @@ class _ContextWindow:
         """
         config = self._summary_config
         kwargs = _completion_kwargs(config, [], "none", None)
-        # A one-off request gains nothing from a cache write.
-        kwargs.pop("cache_control_injection_points", None)
+        # A one-off request gains nothing from a cache write, and its
+        # max_tokens below could fall under a thinking budget.
+        for key in ("cache_control_injection_points", "thinking", "reasoning_effort"):
+            kwargs.pop(key, None)
         model, max_input, max_output = self._summary_window
         # As long as the kept messages at most, so the summary leaves room.
         kwargs["max_tokens"] = int(self.compaction.keep * self.max_input_tokens)
