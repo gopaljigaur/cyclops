@@ -288,6 +288,8 @@ uv run pre-commit install
 uv run pytest
 ```
 
+Soak tests repeat each kind of run a thousand times against mocked completions and fail when memory, objects, tasks, threads, open files or child processes pile up. They are left out of `uv run pytest`; run them with `uv run pytest -m soak -n auto`. CI runs them nightly, and on a pull request once it has the `soak` label.
+
 ## Contributing
 
 Bug reports, feature requests, and pull requests are welcome. Open an issue first for large changes.

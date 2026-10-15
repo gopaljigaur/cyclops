@@ -51,6 +51,8 @@ packages = ["cyclops"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-m 'not soak'"
+markers = ["soak: many runs checking for leaks; run with -m soak"]
 
 [dependency-groups]
 dev = [
@@ -61,4 +63,5 @@ dev = [
     "mypy>=1.18.2",
     "pre-commit>=4.4.0",
     "types-pyyaml>=6.0.12",
+    "pytest-xdist>=3.8.0",
 ]
