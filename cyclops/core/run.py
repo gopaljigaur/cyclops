@@ -34,6 +34,7 @@ from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.middleware import GuardContext
 from cyclops.core.providers import _tools_unsupported
 from cyclops.core.run_state import _Run
+from cyclops.core.session import _SessionSaver
 from cyclops.core.tool_execution import (
     _build_tools_prompt,
     _parse_naive_tool_call,
@@ -107,6 +108,10 @@ class _RunLoop:
         self.run = run
         self.stream = stream
         self.response_model = response_model
+        store = agent.session_store
+        self.saver = None
+        if store is not None and run.session is not None:
+            self.saver = _SessionSaver(store, run.session, agent.durability)
 
     @property
     def config(self) -> AgentConfig:
@@ -139,17 +144,23 @@ class _RunLoop:
             asyncio.get_running_loop().call_soon(_clear_frames, e.__traceback__)
         finally:
             _current_loop.reset(token)
-        session = run.session
-        if session is not None:
-            # Unknown once any run's usage is unknown, like a run's own total.
-            if session.usage is None or run.result.usage is None:
-                session.usage = None
-            else:
-                session.usage += run.result.usage
         run.emit(RunFinished(result=run.result))
         if interrupted is not None:
             raise interrupted
         return run.result
+
+    async def _end_session(self, failed: bool = False) -> None:
+        """Add the run's usage to its session, and save the session if autosaving."""
+        session, usage = self.run.session, self.run.result.usage
+        if session is None:
+            return
+        # Unknown once any run's usage is unknown, like a run's own total.
+        if session.usage is None or usage is None:
+            session.usage = None
+        else:
+            session.usage += usage
+        if self.saver is not None:
+            await self.saver.end(failed)
 
     async def _loop(self, input_message: str) -> None:
         run = self.run
@@ -167,16 +178,25 @@ class _RunLoop:
                     raise
                 self.agent._detected_tool_mode = "naive"
                 del run.history[start:]
+                if self.saver is not None:
+                    self.saver.rewritten()
                 await self._steps(input_message, "naive")
         except BaseException as e:
             # Failures, cancellation and a stream closed early all end the run here.
             if self.config.hooks:
                 self.config.hooks.on_run_error(e)
+            await self._end_session(failed=True)
             raise
         # Steering the run had no step left for waits for the session's next run;
         # without a session it is dropped.
         run.history += [{"role": "user", "content": m} for m in run.steering]
         run.steering.clear()
+        try:
+            await self._end_session()
+        except BaseException as e:
+            if self.config.hooks:
+                self.config.hooks.on_run_error(e)
+            raise
         if self.config.hooks:
             self.config.hooks.on_run_end(run.result.content)
 
@@ -288,6 +308,8 @@ class _RunLoop:
             )
             if done:
                 return
+            if self.saver is not None:
+                await self.saver.step()
 
         result.stop_reason = "max_steps"
 

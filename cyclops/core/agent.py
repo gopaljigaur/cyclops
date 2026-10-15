@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple, T
 from cyclops.core.events import Event, RunFinished, TextDelta
 from cyclops.core.run import _RunLoop
 from cyclops.core.run_state import RunHandle, _Run
-from cyclops.core.session import Session
+from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.tool_search import SEARCH_TOOL_NAME
@@ -24,8 +24,14 @@ class Agent:
         config: AgentConfig,
         tools: Optional[List] = None,
         skills: Optional[Skills] = None,
+        *,
+        session_store: Optional[SessionStore] = None,
+        durability: Durability = "async",
     ):
         self.config = config
+        # Runs with a session save it here as durability says.
+        self.session_store = session_store
+        self.durability = durability
         self.tools = (tools or []) + ([skills.tool] if skills else [])
         self.skills = skills
         self._tools_by_name: Dict[str, Any] = {}

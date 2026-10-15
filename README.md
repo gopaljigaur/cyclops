@@ -69,7 +69,7 @@ print(agent.run("What is Apple's stock price?"))
 | **Structured output** | `agent.run(..., response_model=MyModel)` returns a Pydantic instance |
 | **Cost tracking** | `agent.run_with_response()` returns tokens used and estimated cost |
 | **Skills** | Load instructions from `SKILL.md` folders only when the task needs them |
-| **Sessions** | `Session` transcripts with usage, saved and loaded through a `SessionStore` (in memory or files) |
+| **Sessions** | `Session` transcripts with usage, saved and loaded through a `SessionStore` (in memory or files), automatically after each step or run; forked and truncated |
 | **MCP** | Connect to any MCP server as a tool source, or expose your tools as an MCP server |
 | **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically |
 | **Any LLM** | OpenAI, Anthropic, Groq, Gemini, Ollama, Together AI, Bedrock, and 100+ more via LiteLLM |
@@ -148,6 +148,8 @@ session = await store.load("alice") or Session(id="alice")
 await agent.arun("Where do I work?", session=session)
 await store.save(session)
 ```
+
+Or give the agent the store, `Agent(config, session_store=store)`, and every run with a session saves it as it goes. `session.fork()` copies a session under a new id, and `session.truncate(index)` goes back to an earlier message.
 
 ## MCP
 

@@ -1,16 +1,34 @@
 """Sessions: a conversation's transcript and usage, and stores to keep them in."""
 
 import asyncio
+import logging
 import os
 import re
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Protocol, Union
+from typing import (
+    Any,
+    Awaitable,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    Union,
+)
 
 from pydantic import BaseModel, Field
 
 from cyclops.core.types import Usage
+
+logger = logging.getLogger(__name__)
+
+# When a run saves its session to the agent's store, as LangGraph names it:
+# after each step, before the next (sync) or while it runs (async), or once
+# the run ends (exit).
+Durability = Literal["sync", "async", "exit"]
 
 
 class Session(BaseModel):
@@ -31,6 +49,22 @@ class Session(BaseModel):
         description="Summed over every run; None once a run's usage was unknown",
     )
 
+    def fork(self) -> "Session":
+        """A copy of this session with a new id, which goes on independently."""
+        return self.model_copy(deep=True, update={"id": uuid.uuid4().hex})
+
+    def truncate(self, index: int) -> None:
+        """Keep the messages before index, as to retry from an earlier point.
+
+        Raises ValueError if that would keep tool calls without their results.
+        """
+        rest = self.messages[index:]
+        if rest and rest[0]["role"] == "tool":
+            raise ValueError(
+                f"Message {index} is a tool result; truncate before its tool call"
+            )
+        del self.messages[index:]
+
 
 class SessionStore(Protocol):
     """Where sessions are kept between runs."""
@@ -41,29 +75,68 @@ class SessionStore(Protocol):
     async def save(self, session: Session) -> None:
         """Store the session under its id, replacing any earlier version."""
 
+    async def add_messages(
+        self, session: Session, messages: List[Dict[str, Any]]
+    ) -> None:
+        """Add messages to the end of the stored session and store its usage.
+
+        Called only for a session saved before.
+        """
+
     async def delete(self, session_id: str) -> None:
         """Remove the session with this id, if there is one."""
+
+
+class _Added(BaseModel):
+    """Messages added to a stored session, and its usage after them."""
+
+    messages: List[Dict[str, Any]]
+    usage: Optional[Usage]
+
+
+def _added_json(session: Session, messages: List[Dict[str, Any]]) -> str:
+    return _Added(messages=messages, usage=session.usage).model_dump_json()
+
+
+def _replay(lines: Iterable[str]) -> Session:
+    """A session from its saved JSON followed by the JSON of each addition."""
+    first, *added = lines
+    session = Session.model_validate_json(first)
+    for line in added:
+        addition = _Added.model_validate_json(line)
+        session.messages += addition.messages
+        session.usage = addition.usage
+    return session
 
 
 class InMemorySessionStore:
     """Keeps sessions in this process, as JSON so each load is a fresh copy."""
 
     def __init__(self) -> None:
-        self._sessions: Dict[str, str] = {}
+        # Per session, its saved JSON and then the JSON of each addition.
+        self._sessions: Dict[str, List[str]] = {}
 
     async def load(self, session_id: str) -> Optional[Session]:
-        data = self._sessions.get(session_id)
-        return None if data is None else Session.model_validate_json(data)
+        lines = self._sessions.get(session_id)
+        return None if lines is None else _replay(lines)
 
     async def save(self, session: Session) -> None:
-        self._sessions[session.id] = session.model_dump_json()
+        self._sessions[session.id] = [session.model_dump_json()]
+
+    async def add_messages(
+        self, session: Session, messages: List[Dict[str, Any]]
+    ) -> None:
+        self._sessions[session.id].append(_added_json(session, messages))
 
     async def delete(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
 
 
 class FileSessionStore:
-    """Keeps each session as <directory>/<id>.json."""
+    """Keeps each session as <directory>/<id>.jsonl.
+
+    The first line is the saved session, each line after it one addition.
+    """
 
     def __init__(self, directory: Union[str, Path]) -> None:
         self.directory = Path(directory)
@@ -72,7 +145,7 @@ class FileSessionStore:
         # An id is a file name, so it can't point outside the directory.
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
             raise ValueError(f"Session id {session_id!r} is not a valid file name")
-        return self.directory / f"{session_id}.json"
+        return self.directory / f"{session_id}.jsonl"
 
     async def load(self, session_id: str) -> Optional[Session]:
         path = self._path(session_id)
@@ -80,11 +153,21 @@ class FileSessionStore:
             data = await asyncio.to_thread(path.read_text, encoding="utf-8")
         except FileNotFoundError:
             return None
-        return Session.model_validate_json(data)
+        # Split on newlines only: JSON leaves other line breaks unescaped. The
+        # last piece is empty, or an addition a crash cut short.
+        *lines, _ = data.split("\n")
+        return _replay(lines)
 
     async def save(self, session: Session) -> None:
         await asyncio.to_thread(
-            self._write, self._path(session.id), session.model_dump_json()
+            self._write, self._path(session.id), session.model_dump_json() + "\n"
+        )
+
+    async def add_messages(
+        self, session: Session, messages: List[Dict[str, Any]]
+    ) -> None:
+        await asyncio.to_thread(
+            self._append, self._path(session.id), _added_json(session, messages)
         )
 
     async def delete(self, session_id: str) -> None:
@@ -101,5 +184,93 @@ class FileSessionStore:
             tmp.write(data)
         os.replace(tmp.name, path)
 
+    @staticmethod
+    def _append(path: Path, line: str) -> None:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
-__all__ = ["Session", "SessionStore", "InMemorySessionStore", "FileSessionStore"]
+
+class _SessionSaver:
+    """Saves one run's session to a store after each step or once at its end.
+
+    A run's first save stores the whole session, since it may have changed
+    since the store last saw it; later ones add the messages since.
+    """
+
+    def __init__(
+        self, store: SessionStore, session: Session, durability: Durability
+    ) -> None:
+        self.store = store
+        self.session = session
+        self.durability = durability
+        # How many messages the store has, once this run saved the session.
+        self._saved: Optional[int] = None
+        self._pending: Optional["asyncio.Task[None]"] = None
+
+    async def step(self) -> None:
+        """Save after a step, raising the error of an earlier save that failed."""
+        if self.durability == "exit":
+            return
+        await self._wait()
+        self._pending = self._save()
+        if self.durability == "sync":
+            await self._wait()
+
+    async def end(self, failed: bool = False) -> None:
+        """Save at the end of the run, once an earlier save is done.
+
+        When the run failed, a save error is logged instead, so the run's own
+        error is the one it reports.
+        """
+        try:
+            await self._wait()
+            self._pending = self._save()
+            await self._wait()
+        except Exception:
+            if not failed:
+                raise
+            logger.exception("Could not save session %s", self.session.id)
+
+    def rewritten(self) -> None:
+        """Note that messages already saved were replaced, so the next save is whole."""
+        self._saved = None
+
+    async def _wait(self) -> None:
+        pending = self._pending
+        if pending is None:
+            return
+        try:
+            # Shielded: a cancelled run can't stop a write that started, so
+            # it is left to finish and count.
+            await asyncio.shield(pending)
+        finally:
+            if pending.done():
+                self._pending = None
+
+    def _save(self) -> "asyncio.Task[None]":
+        # What to store is taken now: the run goes on while the task saves.
+        messages = self.session.messages
+        if self._saved is None:
+            copy = self.session.model_copy(update={"messages": list(messages)})
+            write = self.store.save(copy)
+        else:
+            write = self.store.add_messages(self.session, messages[self._saved :])
+        self._saved = len(messages)
+        return asyncio.ensure_future(self._stored(write))
+
+    async def _stored(self, write: Awaitable[None]) -> None:
+        try:
+            await write
+        except BaseException:
+            # A write that failed partway leaves the store unknown.
+            self._saved = None
+            raise
+
+
+__all__ = [
+    "Durability",
+    "Session",
+    "SessionStore",
+    "InMemorySessionStore",
+    "FileSessionStore",
+]

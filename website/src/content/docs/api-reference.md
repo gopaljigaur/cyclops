@@ -16,8 +16,13 @@ class Agent:
         config: AgentConfig,
         tools: Optional[List] = None,
         skills: Optional[Skills] = None,
+        *,
+        session_store: Optional[SessionStore] = None,
+        durability: Literal["sync", "async", "exit"] = "async",
     ): ...
 ```
+
+With a `session_store`, every run with a session saves it there as `durability` says. See [Sessions](/guides/sessions/#saving-automatically).
 
 **Methods** (each run method also takes a keyword-only `session: Optional[Session] = None`)
 
@@ -119,16 +124,19 @@ class Session(BaseModel):
     id: str                        # a random hex id by default
     messages: List[Dict[str, Any]]
     usage: Optional[Usage]
+    def fork(self) -> Session: ...                # a copy with a new id
+    def truncate(self, index: int) -> None: ...   # keep messages[:index]
 
 
 class SessionStore(Protocol):
     async def load(self, session_id: str) -> Optional[Session]: ...
     async def save(self, session: Session) -> None: ...
+    async def add_messages(self, session: Session, messages: List[Dict[str, Any]]) -> None: ...
     async def delete(self, session_id: str) -> None: ...
 
 
 class InMemorySessionStore: ...                  # SessionStore in this process
-class FileSessionStore:                          # <directory>/<id>.json
+class FileSessionStore:                          # <directory>/<id>.jsonl
     def __init__(self, directory: str | Path): ...
 ```
 
