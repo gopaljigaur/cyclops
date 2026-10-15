@@ -16,6 +16,7 @@ from cyclops.mcp.connection import (
     Transport,
 )
 from cyclops.mcp.tools import MCPClientTool
+from cyclops.utils.compat import asyncio_timeout
 
 
 class MCPClient:
@@ -95,9 +96,8 @@ class MCPClient:
             )
             session = await conn.connect()
             try:
-                remote_tools = await asyncio.wait_for(
-                    conn.list_tools(session), connect_timeout
-                )
+                async with asyncio_timeout(connect_timeout):
+                    remote_tools = await conn.list_tools(session)
                 tools = self._set_tools(name, label, remote_tools)
             except BaseException:
                 await conn.detach()

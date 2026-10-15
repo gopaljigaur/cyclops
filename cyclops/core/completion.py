@@ -1,7 +1,6 @@
 """Build a completion's arguments, call LiteLLM, and assemble streamed responses."""
 
 import asyncio
-import sys
 from contextlib import aclosing
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Type
 
@@ -20,12 +19,7 @@ from cyclops.core.providers import (
 )
 from cyclops.core.run_state import _Run
 from cyclops.core.types import AgentConfig, Usage
-
-if sys.version_info >= (3, 11):
-    from asyncio import timeout as asyncio_timeout
-else:
-    # wait_for before 3.11 can drop a cancellation that comes as the chunk arrives.
-    from async_timeout import timeout as asyncio_timeout
+from cyclops.utils.compat import asyncio_timeout
 
 
 def _completion_kwargs(

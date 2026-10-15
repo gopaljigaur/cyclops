@@ -26,6 +26,8 @@ from mcp.types import (
     ToolListChangedNotification,
 )
 
+from cyclops.utils.compat import asyncio_timeout
+
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
 
@@ -228,7 +230,8 @@ class _Connection:
         ready: asyncio.Future[ClientSession] = self.loop.create_future()
         self._task = asyncio.create_task(self._run(ready, self._closing))
         try:
-            self.session = await asyncio.wait_for(ready, self.connect_timeout)
+            async with asyncio_timeout(self.connect_timeout):
+                self.session = await ready
         except BaseException:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)

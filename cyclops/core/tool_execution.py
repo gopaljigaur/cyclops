@@ -16,6 +16,7 @@ from cyclops.core.providers import _tool_message_images_supported
 from cyclops.core.run_state import _Run
 from cyclops.core.types import AgentConfig, ToolCall
 from cyclops.toolkit.types import ToolResult
+from cyclops.utils.compat import asyncio_timeout
 
 _CANCELLED_RESULT = "Tool call cancelled."
 
@@ -335,7 +336,6 @@ class _ToolExecutor:
             hooks = _HooksMiddleware(self.config.hooks)
             middleware.append(hooks)
         timeout = self.config.tool_timeout if tool.timeout is None else tool.timeout
-        loop = asyncio.get_running_loop()
         allowed: List[ToolMiddleware] = []
         error: Optional[Exception] = None
         try:
@@ -348,34 +348,31 @@ class _ToolExecutor:
                     call.arguments = decision
                 allowed.append(m)
             else:
+                # On timeout the call is cancelled; a sync tool's thread runs
+                # on, since a thread cannot be stopped.
                 try:
-                    started = loop.time()
-                    if inspect.iscoroutinefunction(tool.execute):
-                        execution = tool.execute(**call.arguments)
-                    else:
-                        execution = asyncio.to_thread(tool.execute, **call.arguments)
-                    # On timeout wait_for cancels the call; a sync tool's thread
-                    # runs on, since a thread cannot be stopped.
-                    value = await asyncio.wait_for(execution, timeout)
-                    result = (
-                        value
-                        if isinstance(value, ToolResult)
-                        else ToolResult.success_result(value)
-                    )
-                except Exception as e:
+                    async with asyncio_timeout(timeout):
+                        # The tool's own errors, TimeoutError included, end here.
+                        try:
+                            if inspect.iscoroutinefunction(tool.execute):
+                                value = await tool.execute(**call.arguments)
+                            else:
+                                value = await asyncio.to_thread(
+                                    tool.execute, **call.arguments
+                                )
+                            result = (
+                                value
+                                if isinstance(value, ToolResult)
+                                else ToolResult.success_result(value)
+                            )
+                        except Exception as e:
+                            error = e
+                            result = ToolResult.error_result(f"{name} failed: {e}")
+                except asyncio.TimeoutError as e:
                     error = e
-                    # A TimeoutError before the deadline is the tool's own.
-                    timed_out = (
-                        isinstance(e, asyncio.TimeoutError)
-                        and timeout is not None
-                        and loop.time() - started >= timeout
+                    result = ToolResult.error_result(
+                        f"{name} timed out after {timeout:g} seconds"
                     )
-                    outcome = (
-                        f"timed out after {timeout:g} seconds"
-                        if timed_out
-                        else f"failed: {e}"
-                    )
-                    result = ToolResult.error_result(f"{name} {outcome}")
         except asyncio.CancelledError as e:
             cancelled = ToolResult.error_result(_CANCELLED_RESULT)
             await _after_tool(allowed, call, cancelled, e)
