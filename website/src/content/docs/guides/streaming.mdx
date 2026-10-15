@@ -21,7 +21,7 @@ for token in agent.stream("Write a haiku about the ocean."):
 print()  # final newline
 ```
 
-Streamed tokens are accumulated into conversation history, so the next `run()` or `stream()` call correctly sees the full prior assistant reply.
+With a [session](/guides/sessions/), the streamed reply is added to its transcript whole, so the next run on that session sees it.
 
 ## astream(): async streaming
 

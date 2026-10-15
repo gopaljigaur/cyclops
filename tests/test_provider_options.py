@@ -163,11 +163,12 @@ def test_thinking_blocks_are_sent_back_with_the_tool_result():
 
 def test_final_answer_keeps_its_reasoning():
     agent = Agent(AgentConfig(model="deepseek/deepseek-reasoner"))
+    session = Session()
     response = _response("Paris", reasoning_content="The capital is Paris.")
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        agent.run("Capital of France?")
+        agent.run("Capital of France?", session=session)
 
-    assert agent.messages[-1] == {
+    assert session.messages[-1] == {
         "role": "assistant",
         "content": "Paris",
         "reasoning_content": "The capital is Paris.",
@@ -205,10 +206,11 @@ def test_streamed_thinking_blocks_keep_their_signature():
             yield chunk
 
     agent = Agent(AgentConfig(model="anthropic/claude-sonnet-4-5"))
+    session = Session()
     with patch("litellm.acompletion", new=AsyncMock(return_value=stream())):
-        assert "".join(agent.stream("1 + 2?")) == "3"
+        assert "".join(agent.stream("1 + 2?", session=session)) == "3"
 
-    assert agent.messages[-1]["thinking_blocks"] == THINKING
+    assert session.messages[-1]["thinking_blocks"] == THINKING
 
 
 def _sse(*events):
@@ -762,8 +764,9 @@ def test_anthropic_request_marks_system_prompt_and_latest_message():
         completion_kwargs={"api_key": "sk-test"},
     )
     agent = Agent(config, tools=[add])
+    session = Session()
     with patch.object(AsyncHTTPHandler, "post", post):
-        assert agent.run("1 + 2?") == "3"
+        assert agent.run("1 + 2?", session=session) == "3"
 
     control = {"type": "ephemeral", "ttl": "1h"}
     for body in bodies:
@@ -773,7 +776,7 @@ def test_anthropic_request_marks_system_prompt_and_latest_message():
         # The tail marker moves on; earlier ones are not kept in the history.
         assert _cache_markers(body) == 2
     assert bodies[1]["messages"][-1]["content"][-1]["type"] == "tool_result"
-    assert "cache_control" not in dumps(agent.messages)
+    assert "cache_control" not in dumps(session.messages)
 
 
 def test_bedrock_request_marks_system_prompt_and_latest_message(monkeypatch):

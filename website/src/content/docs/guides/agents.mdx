@@ -109,36 +109,20 @@ def answer(question: str) -> str:  # sync code on another thread, e.g. asyncio.t
 
 ## Multi-turn conversations
 
-The agent accumulates every user and assistant message in its internal history. Each call appends a user message and an assistant reply, so follow-up questions automatically have full context.
+Each run without a session starts from a fresh transcript, so an agent keeps no conversation of its own and can serve many callers at once. To continue a conversation, pass the same [session](/guides/sessions/) to each run:
 
 ```python
-agent.run("My name is Alice.")
-agent.run("What is my name?")  # correctly answers "Alice"
+from cyclops import Session
+
+session = Session()
+agent.run("My name is Alice.", session=session)
+agent.run("What is my name?", session=session)  # correctly answers "Alice"
+
+for msg in session.messages:
+    print(msg["role"], ":", msg["content"])
 ```
 
-Inspect the current history at any time with the `messages` property. It returns a shallow copy, so the internal state is not accidentally modified.
-
-```python
-agent.run("My name is Alice.")
-agent.run("What is my name?")
-
-for msg in agent.messages:
-    print(msg["role"], ":", msg["content"][:60])
-```
-
-Each message in `messages` is a plain dict with at least `"role"` and `"content"` keys. Tool messages also include `"tool_call_id"` and `"name"`.
-
-## reset()
-
-Call `reset()` to clear the conversation history and start fresh without creating a new agent.
-
-```python
-agent.run("Remember: the code word is banana.")
-agent.reset()
-
-# History is now empty.
-response = agent.run("What was the code word?")
-```
+Each message in `session.messages` is a plain dict with at least `"role"` and `"content"` keys. Tool messages also include `"tool_call_id"` and `"name"`. A new `Session()` starts a new conversation.
 
 ## run_with_response() and arun_with_response()
 
@@ -184,7 +168,7 @@ async for event in handle:
 result = await handle
 ```
 
-- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the history for the next run (a run that already answered completes with that answer). Steering a run that has finished raises `RuntimeError`.
+- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the session for its next run, and without a session it is dropped (a run that already answered completes with that answer). Steering a run that has finished raises `RuntimeError`.
 - `handle.cancel()` stops the run. Tool calls in progress are cancelled and get a cancelled result, so the conversation stays valid, and awaiting the handle gives `stop_reason="cancelled"`. A completion in progress is dropped. Calling it again does nothing.
 
 Cancelling the task that awaits a handle (or `arun()`) also cancels the run, but as a plain `asyncio.CancelledError`: the await raises it and there is no `"cancelled"` result.

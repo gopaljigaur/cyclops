@@ -124,19 +124,21 @@ print(f"Answer:     {response.content}")
 
 ## Multi-Turn Conversations
 
-History is kept automatically. Call `reset()` to start fresh.
+Each run starts from a fresh transcript. A `Session` carries a conversation from one run to the next:
 
 ```python
+from cyclops import Session
+
 agent = Agent(AgentConfig(model="gpt-4o-mini"))
+session = Session()
 
-agent.run("My name is Alice and I work in Tokyo")
-print(agent.run("Where do I work?"))  # "You work in Tokyo"
+agent.run("My name is Alice and I work in Tokyo", session=session)
+print(agent.run("Where do I work?", session=session))  # "You work in Tokyo"
 
-agent.reset()
-print(agent.run("What's my name?"))   # no memory of Alice
+print(agent.run("What's my name?"))  # no session, no memory of Alice
 ```
 
-To keep conversations apart, or save one and continue it later, pass a `Session`:
+To save a conversation and continue it later, keep its session in a `SessionStore`:
 
 ```python
 from cyclops import FileSessionStore, Session
@@ -240,7 +242,7 @@ agent = Agent(AgentConfig(model="primary", router=router))
 
 ## Why Cyclops?
 
-Most agent frameworks add heavy abstractions, require specific clouds, or make it hard to see what's actually being sent to the LLM. Cyclops doesn't. The `Agent` class is ~400 lines. `_history` is a plain list of dicts in LiteLLM format. Every call goes straight to LiteLLM.
+Most agent frameworks add heavy abstractions, require specific clouds, or make it hard to see what's actually being sent to the LLM. Cyclops doesn't. The `Agent` class is ~400 lines. A session's `messages` is a plain list of dicts in LiteLLM format. Every call goes straight to LiteLLM.
 
 |  | Cyclops | LangChain | smolagents |
 |---|---|---|---|
@@ -263,7 +265,7 @@ See the [`examples/`](./examples) directory:
 | [`streaming_example.py`](examples/streaming_example.py) | `stream()` and `astream()` |
 | [`structured_output.py`](examples/structured_output.py) | `response_model` with Pydantic |
 | [`cost_tracking.py`](examples/cost_tracking.py) | Tokens and cost |
-| [`multi_turn_agent.py`](examples/multi_turn_agent.py) | Conversation history |
+| [`multi_turn_agent.py`](examples/multi_turn_agent.py) | Conversations with `Session` |
 | [`tool_loop_demo.py`](examples/tool_loop_demo.py) | Multi-step tool chains |
 | [`skills_example.py`](examples/skills_example.py) | Skills from `SKILL.md` folders |
 | [`async_agent.py`](examples/async_agent.py) | `arun()` and concurrent calls |

@@ -14,6 +14,7 @@ from cyclops.core.events import (
     ToolCallFinished,
 )
 from cyclops.core.middleware import ToolMiddleware
+from cyclops.core.session import Session
 from cyclops.toolkit.tool import Tool
 from tests.test_agent import (
     _make_completion_response,
@@ -85,8 +86,6 @@ def test_answer_is_the_tool_result():
     assert result.content == "x is 5"
     assert result.tool_calls[0].result == "found: 5"
     assert seen["child"] == [[{"role": "user", "content": "find x"}]]
-    # Each call has a transcript of its own, kept out of the agent's history.
-    assert child.messages == []
 
 
 @pytest.mark.asyncio
@@ -557,15 +556,16 @@ async def test_cancelling_cancels_calls_waiting_for_a_slot():
         started.set()
         await asyncio.sleep(10)
 
+    session = Session()
     with patch("litellm.acompletion", new=acompletion):
-        handle = lead.start("x and y?", stream=False)
+        handle = lead.start("x and y?", stream=False, session=session)
         await started.wait()
         handle.cancel()
         result = await handle
 
     assert result.stop_reason == "cancelled"
     assert children == 1
-    tool_messages = [m["content"] for m in lead.messages if m["role"] == "tool"]
+    tool_messages = [m["content"] for m in session.messages if m["role"] == "tool"]
     assert tool_messages == ["Tool call cancelled.", "Tool call cancelled."]
 
 
@@ -665,12 +665,13 @@ async def test_timeout_cancels_the_nested_run():
             return _make_completion("done")
         return _asks(_call("researcher", "find x"))
 
+    session = Session()
     with patch("litellm.acompletion", new=acompletion):
-        events = [e async for e in lead.start("x?", stream=False)]
+        events = [e async for e in lead.start("x?", stream=False, session=session)]
 
     assert cancelled == [True]
     nested = [e for e in events if isinstance(e, RunFinished) and e.agent_path]
     assert [e.result.stop_reason for e in nested] == ["cancelled"]
-    assert [m["content"] for m in lead.messages if m["role"] == "tool"] == [
+    assert [m["content"] for m in session.messages if m["role"] == "tool"] == [
         "Error: researcher timed out after 0.02 seconds"
     ]

@@ -30,7 +30,7 @@ lead = Agent(
 print(lead.run("Compare the populations of Paris and Berlin."))
 ```
 
-The tool takes one string argument, `input`, the task, so the model has to put everything the subagent needs into it: each call is a run of its own with a fresh transcript, and it doesn't see the lead's conversation. A subagent's runs leave its own history (`messages`) untouched.
+The tool takes one string argument, `input`, the task, so the model has to put everything the subagent needs into it: each call is a run of its own with a fresh transcript, and it doesn't see the lead's conversation.
 
 ## Inside the parent's run
 

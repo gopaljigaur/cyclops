@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from cyclops.core.agent import Agent
+from cyclops.core.session import Session
 from cyclops.core.types import AgentConfig
 from cyclops.skills import Skills
 from cyclops.toolkit.tool import Tool
@@ -185,16 +186,17 @@ def test_agent_lists_skills_and_loads_one(tmp_path):
     )
     first = _response(tool_calls=[_tool_call("load_skill", '{"name": "pdf-forms"}')])
     mock = AsyncMock(side_effect=[first, _response("Done.")])
+    session = Session()
 
     with patch("litellm.acompletion", new=mock):
-        assert agent.run("Fill this form") == "Done."
+        assert agent.run("Fill this form", session=session) == "Done."
 
     kwargs = mock.call_args_list[0].kwargs
     system = kwargs["messages"][0]["content"]
     assert system.startswith("Be brief.")
     assert "- pdf-forms: Fill PDF forms.\n" in system
     assert [t["function"]["name"] for t in kwargs["tools"]] == ["load_skill"]
-    assert agent.messages[2]["content"] == "Use the template.\n"
+    assert session.messages[2]["content"] == "Use the template.\n"
 
 
 def test_agent_without_skills_has_no_listing():

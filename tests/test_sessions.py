@@ -38,7 +38,6 @@ def test_session_keeps_the_transcript_and_usage():
     with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
         assert agent.run("2 + 3?", session=session) == "5"
 
-    assert agent.messages == []
     assert [m["role"] for m in session.messages] == [
         "user",
         "assistant",
@@ -65,6 +64,18 @@ def test_session_keeps_the_transcript_and_usage():
         "user",
     ]
     assert session.usage.total_tokens == 90
+
+
+def test_a_run_without_a_session_starts_a_fresh_transcript():
+    agent = Agent(config=_make_config())
+    responses = [_make_completion_response("one"), _make_completion_response("two")]
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as mock:
+        agent.run("first")
+        agent.run("second")
+
+    sent = mock.call_args.kwargs["messages"]
+    assert [m["content"] for m in sent] == ["second"]
 
 
 def test_session_usage_is_unknown_once_a_run_reports_none():
@@ -110,7 +121,6 @@ async def test_streamed_runs_use_the_session():
 
     assert text == ["Hi", "!"]
     assert session.messages[-1] == {"role": "assistant", "content": "Hi!"}
-    assert agent.messages == []
 
 
 def test_session_json_round_trips_with_a_version():
@@ -257,7 +267,6 @@ def test_naive_fallback_keeps_one_attempt_in_the_session():
         "Tool result: 3",
         "It is 3.",
     ]
-    assert agent.messages == []
 
 
 def test_guards_see_the_session_transcript():

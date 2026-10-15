@@ -7,7 +7,7 @@ description: Complete reference for all public classes and functions in Cyclops.
 
 ### Agent
 
-The main agent class. Wraps an LLM and orchestrates tool calls, conversation history, streaming, and cost tracking.
+The main agent class. Wraps an LLM and orchestrates tool calls, sessions, streaming, and cost tracking.
 
 ```python
 class Agent:
@@ -32,13 +32,6 @@ class Agent:
 | `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
 | `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
 | `as_tool` | `as_tool(name: str, description: str, *, annotations: Optional[ToolAnnotations] = None, timeout: Optional[float] = None) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
-| `reset` | `reset() -> None` | Clear the history of runs without a session. |
-
-**Properties**
-
-| Property | Type | Description |
-|---|---|---|
-| `messages` | `List[Dict[str, Any]]` | Shallow copy of the current conversation history. |
 
 ---
 

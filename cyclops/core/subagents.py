@@ -67,7 +67,8 @@ class AgentTool(BaseTool):
 
     async def _run(self, input_message: str) -> RunResult:
         """Run the agent with a fresh transcript, nested in the calling run if any."""
-        caller = _current_loop.get()
+        ref = _current_loop.get()
+        caller = None if ref is None else ref()
         config = self.agent.config
         if caller is None:
             run = _Run(config, [], None)

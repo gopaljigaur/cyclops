@@ -3,7 +3,7 @@
 Demonstrates automatic fallback between models if one fails or is rate-limited.
 """
 
-from cyclops import Agent, AgentConfig
+from cyclops import Agent, AgentConfig, Session
 from litellm import Router
 
 # Configure router with fallback models
@@ -29,17 +29,18 @@ router = Router(
 # Create agent with router in config
 config = AgentConfig(model="primary-model", router=router)
 agent = Agent(config)
+session = Session()
 
 print("Router with Fallback Example\n")
 print("If qwen3:4b fails, automatically falls back to llama3.2:1b\n")
 
 # Test query
-response = agent.run("What is 2+2?")
+response = agent.run("What is 2+2?", session=session)
 print("Q: What is 2+2?")
 print(f"A: {response}\n")
 
-# Continue conversation
-response = agent.run("Now multiply that by 3")
+# Continue the conversation in the same session
+response = agent.run("Now multiply that by 3", session=session)
 print("Q: Now multiply that by 3")
 print(f"A: {response}\n")
 

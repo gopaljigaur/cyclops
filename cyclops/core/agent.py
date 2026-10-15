@@ -25,7 +25,6 @@ class Agent:
         skills: Optional[Skills] = None,
     ):
         self.config = config
-        self._history: List[Dict[str, Any]] = []
         self.tools = (tools or []) + ([skills.tool] if skills else [])
         self.skills = skills
         self._tools_by_name: Dict[str, Any] = {}
@@ -39,15 +38,6 @@ class Agent:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def reset(self) -> None:
-        """Clear the history of runs without a session."""
-        self._history = []
-
-    @property
-    def messages(self) -> List[Dict[str, Any]]:
-        """A copy of the history of runs without a session."""
-        return list(self._history)
 
     def start(
         self,
@@ -63,7 +53,7 @@ class Agent:
         arrives as one TextDelta. response_model asks the provider for that
         schema when it supports one; the result's content is the raw JSON.
         With a session, the run reads and extends the session's transcript and
-        adds its usage to the session, instead of using this agent's history.
+        adds its usage to the session; without one, it starts a fresh transcript.
         """
         return RunHandle(
             *self._start(
@@ -201,7 +191,7 @@ class Agent:
         paced: bool = False,
     ) -> Tuple[_Run, "asyncio.Task[RunResult]"]:
         """Create a run and start its task on the running event loop."""
-        history = self._history if session is None else session.messages
+        history = [] if session is None else session.messages
         run = _Run(self.config, history, session, paced)
         task = asyncio.get_running_loop().create_task(
             _RunLoop(self, run, stream, response_model).execute(input_message)

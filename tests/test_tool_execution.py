@@ -11,6 +11,7 @@ from cyclops.core.agent import Agent
 from cyclops.core.events import ToolCallFinished, ToolCallStarted
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import ToolMiddleware
+from cyclops.core.session import Session
 from cyclops.toolkit import ImageContent, TextContent, ToolResult, tool
 from cyclops.toolkit.tool import Tool
 from tests.test_agent import (
@@ -21,7 +22,7 @@ from tests.test_agent import (
 )
 
 
-def _run_round(agent: Agent, *names: str):
+def _run_round(agent: Agent, *names: str, session=None):
     """Run one step that calls each named tool, then a final answer."""
     calls = [_make_tool_call(f"tc_{i}", n, "{}") for i, n in enumerate(names)]
     responses = [
@@ -29,11 +30,11 @@ def _run_round(agent: Agent, *names: str):
         _make_completion_response(content="done"),
     ]
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        return agent.run_with_response("go")
+        return agent.run_with_response("go", session=session)
 
 
-def _tool_messages(agent: Agent):
-    return [m["content"] for m in agent.messages if m["role"] == "tool"]
+def _tool_messages(session: Session):
+    return [m["content"] for m in session.messages if m["role"] == "tool"]
 
 
 class _Ends(AgentHooks):
@@ -66,13 +67,14 @@ def test_a_result_is_rendered_once(with_hooks):
     hooks = _Ends() if with_hooks else None
     agent = Agent(config=_make_config(hooks=hooks), tools=[data])
     render = ToolResult.to_message_content
+    session = Session()
     with patch.object(
         ToolResult, "to_message_content", autospec=True, side_effect=render
     ) as spy:
-        result = _run_round(agent, "data")
+        result = _run_round(agent, "data", session=session)
 
     assert spy.call_count == 1
-    assert _tool_messages(agent) == ['{"rows": 2}']
+    assert _tool_messages(session) == ['{"rows": 2}']
     assert result.tool_calls[0].result == '{"rows": 2}'
     if hooks:
         assert hooks.ended == ['{"rows": 2}']
@@ -92,10 +94,11 @@ def test_middleware_sees_its_change_after_the_hooks_rendered():
 
     hooks = _Ends()
     agent = Agent(config=_make_config(hooks=hooks, middleware=[Redact()]), tools=[data])
-    _run_round(agent, "data")
+    session = Session()
+    _run_round(agent, "data", session=session)
 
     assert hooks.ended == ["secret"]
-    assert _tool_messages(agent) == ["[redacted]"]
+    assert _tool_messages(session) == ["[redacted]"]
 
 
 def test_naive_result_is_rendered_once():
@@ -110,16 +113,17 @@ def test_naive_result_is_rendered_once():
         _make_completion_response("done"),
     ]
     render = ToolResult.to_message_content
+    session = Session()
     with (
         patch.object(
             ToolResult, "to_message_content", autospec=True, side_effect=render
         ) as spy,
         patch("litellm.acompletion", new=AsyncMock(side_effect=responses)),
     ):
-        assert agent.run("go") == "done"
+        assert agent.run("go", session=session) == "done"
 
     assert spy.call_count == 1
-    assert agent.messages[-2]["content"] == "Tool result: rows"
+    assert session.messages[-2]["content"] == "Tool result: rows"
 
 
 def _tracked(names, running, peak, log, read_only=True, delay=0.02):
@@ -146,10 +150,11 @@ def test_parallel_tool_calls_are_capped():
     names = ["a", "b", "c", "d", "e"]
     tools = _tracked(names, running, peak, log)
     agent = Agent(config=_make_config(max_parallel_tool_calls=2), tools=tools)
-    _run_round(agent, *names)
+    session = Session()
+    _run_round(agent, *names, session=session)
 
     assert peak[0] == 2
-    assert _tool_messages(agent) == names
+    assert _tool_messages(session) == names
 
 
 def test_read_only_tools_run_concurrently_by_default():
@@ -222,11 +227,12 @@ async def test_a_call_over_the_timeout_is_cancelled_and_fails():
         _make_completion_response(content="done"),
     ]
 
+    session = Session()
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        events = [e async for e in agent.start("go", stream=False)]
+        events = [e async for e in agent.start("go", stream=False, session=session)]
 
     assert cleaned == ["slow"]
-    assert _tool_messages(agent) == [
+    assert _tool_messages(session) == [
         "Error: slow timed out after 0.05 seconds",
         "quick",
     ]
@@ -247,9 +253,10 @@ def test_a_sync_tool_over_the_timeout_fails():
         return "done"
 
     agent = Agent(config=_make_config(), tools=[stuck])
-    _run_round(agent, "stuck")
+    session = Session()
+    _run_round(agent, "stuck", session=session)
 
-    assert _tool_messages(agent) == ["Error: stuck timed out after 0.01 seconds"]
+    assert _tool_messages(session) == ["Error: stuck timed out after 0.01 seconds"]
 
 
 def test_a_tool_timeout_wins_over_the_default():
@@ -261,9 +268,10 @@ def test_a_tool_timeout_wins_over_the_default():
         config=_make_config(tool_timeout=0.01),
         tools=[Tool("nap", "Nap", nap, timeout=1)],
     )
-    _run_round(agent, "nap")
+    session = Session()
+    _run_round(agent, "nap", session=session)
 
-    assert _tool_messages(agent) == ["rested"]
+    assert _tool_messages(session) == ["rested"]
 
 
 def test_a_tools_own_timeout_error_is_a_failure():
@@ -273,9 +281,10 @@ def test_a_tools_own_timeout_error_is_a_failure():
     agent = Agent(
         config=_make_config(tool_timeout=5), tools=[Tool("flaky", "Flaky", flaky)]
     )
-    _run_round(agent, "flaky")
+    session = Session()
+    _run_round(agent, "flaky", session=session)
 
-    assert _tool_messages(agent) == ["Error: flaky failed: "]
+    assert _tool_messages(session) == ["Error: flaky failed: "]
 
 
 @pytest.mark.asyncio
@@ -323,12 +332,13 @@ async def test_calls_waiting_their_turn_never_start_once_the_step_fails():
     )
     calls = [_make_tool_call("tc_1", "a", "{}"), _make_tool_call("tc_2", "b", "{}")]
     response = _make_completion_response(content=None, tool_calls=calls)
+    session = Session()
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        events = [e async for e in agent.start("go", stream=False)]
+        events = [e async for e in agent.start("go", stream=False, session=session)]
 
     assert ran == ["a"]
     assert [e.call_id for e in events if isinstance(e, ToolCallStarted)] == ["tc_1"]
-    assert _tool_messages(agent) == ["Error: broke", "Tool call cancelled."]
+    assert _tool_messages(session) == ["Error: broke", "Tool call cancelled."]
 
 
 def test_a_tool_timeout_must_be_positive():

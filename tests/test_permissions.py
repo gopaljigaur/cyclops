@@ -9,6 +9,7 @@ import pytest
 from cyclops.core.agent import Agent
 from cyclops.core.middleware import Deny, ToolCallContext
 from cyclops.core.permissions import ToolPermissions
+from cyclops.core.session import Session
 from cyclops.core.types import DeniedToolCall
 from cyclops.toolkit.tool import Tool
 from tests.test_agent import (
@@ -37,17 +38,19 @@ def _approver(answer, seen: List[ToolCallContext]):
 
 def test_allowed_call_runs():
     agent = _agent(ToolPermissions(allow=["add"], default="deny"))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "5"
+    assert _tool_message(session) == "5"
     assert result.denied_tool_calls == []
 
 
 def test_denied_call_gives_the_model_an_error_and_is_on_the_result():
     agent = _agent(ToolPermissions(deny=["add"]))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "Error: Tool 'add' is not permitted"
+    assert _tool_message(session) == "Error: Tool 'add' is not permitted"
     assert result.denied_tool_calls == [
         DeniedToolCall(
             id="tc_1",
@@ -60,18 +63,20 @@ def test_denied_call_gives_the_model_an_error_and_is_on_the_result():
 
 def test_unmatched_call_gets_the_default():
     agent = _agent(ToolPermissions(allow=["search_*"], default="deny"))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "Error: Tool 'add' is not permitted"
+    assert _tool_message(session) == "Error: Tool 'add' is not permitted"
     assert [d.name for d in result.denied_tool_calls] == ["add"]
 
 
 def test_ask_approved_runs_the_call():
     seen: List[ToolCallContext] = []
     agent = _agent(ToolPermissions(ask=["add"], approve=_approver(True, seen)))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "5"
+    assert _tool_message(session) == "5"
     assert result.denied_tool_calls == []
     [call] = seen
     assert (call.tool_name, call.arguments, call.call_id) == (
@@ -83,9 +88,10 @@ def test_ask_approved_runs_the_call():
 
 def test_ask_refused_denies_the_call():
     agent = _agent(ToolPermissions(ask=["add"], approve=_approver(False, [])))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "Error: Tool 'add' was not approved"
+    assert _tool_message(session) == "Error: Tool 'add' was not approved"
     assert [d.reason for d in result.denied_tool_calls] == [
         "Tool 'add' was not approved"
     ]
@@ -94,9 +100,10 @@ def test_ask_refused_denies_the_call():
 def test_ask_denied_with_a_reason():
     approve = _approver(Deny("needs a ticket number"), [])
     agent = _agent(ToolPermissions(ask=["add"], approve=approve))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "Error: needs a ticket number"
+    assert _tool_message(session) == "Error: needs a ticket number"
     assert [d.reason for d in result.denied_tool_calls] == ["needs a ticket number"]
 
 
@@ -140,10 +147,11 @@ def test_deny_wins_over_ask_and_allow():
         allow=["*"], ask=["add"], deny=["a?d"], approve=_approver(True, seen)
     )
     agent = _agent(permissions)
-    _run(agent, _tool_round())
+    session = Session()
+    _run(agent, _tool_round(), session=session)
 
     assert seen == []
-    assert _tool_message(agent) == "Error: Tool 'add' is not permitted"
+    assert _tool_message(session) == "Error: Tool 'add' is not permitted"
 
 
 def test_raising_approval_callback_fails_the_run_without_the_call():
@@ -151,11 +159,12 @@ def test_raising_approval_callback_fails_the_run_without_the_call():
         raise RuntimeError("approval service down")
 
     agent = _agent(ToolPermissions(ask=["add"], approve=approve))
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
     assert result.stop_reason == "error"
     assert str(result.error) == "approval service down"
-    assert _tool_message(agent) == "Error: approval service down"
+    assert _tool_message(session) == "Error: approval service down"
     assert result.denied_tool_calls == []
 
 
@@ -284,8 +293,9 @@ async def test_cancelling_during_an_approval_runs_nothing_and_denies_nothing():
         config=_make_config(middleware=[ToolPermissions(ask=["add"], approve=approve)]),
         tools=[Tool("add", "Add", add)],
     )
+    session = Session()
     with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
-        handle = agent.start("go", stream=False)
+        handle = agent.start("go", stream=False, session=session)
         await asking.wait()
         handle.cancel()
         result = await handle
@@ -293,4 +303,4 @@ async def test_cancelling_during_an_approval_runs_nothing_and_denies_nothing():
     assert result.stop_reason == "cancelled"
     assert ran == []
     assert result.denied_tool_calls == []
-    assert _tool_message(agent) == "Tool call cancelled."
+    assert _tool_message(session) == "Tool call cancelled."

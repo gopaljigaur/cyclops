@@ -16,7 +16,7 @@ Swap MODEL below if you only have a local Ollama instance available.
 
 import asyncio
 
-from cyclops import Agent, AgentConfig, RunResult
+from cyclops import Agent, AgentConfig, RunResult, Session
 
 # ---------------------------------------------------------------------------
 # Model configuration
@@ -118,6 +118,7 @@ def demo_cost_accumulation() -> None:
         temperature=0.2,
     )
     agent = Agent(config)
+    session = Session()
 
     questions = [
         "What does the 'yield' keyword do in Python?",
@@ -132,11 +133,11 @@ def demo_cost_accumulation() -> None:
     cost_available = False
 
     print(
-        f"\nAsking {len(questions)} questions to the same agent (history accumulates):\n"
+        f"\nAsking {len(questions)} questions to the same agent (one session, so its transcript grows):\n"
     )
 
     for i, question in enumerate(questions, start=1):
-        response = agent.run_with_response(question)
+        response = agent.run_with_response(question, session=session)
         print_response(f"Q{i}: {question[:50]}...", response)
 
         # Accumulate: guard against None (local models)
