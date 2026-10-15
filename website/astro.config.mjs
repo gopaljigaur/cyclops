@@ -5,7 +5,7 @@ import starlightLlmsTxt from 'starlight-llms-txt';
 export default defineConfig({
   site: 'https://cyclops.gopalji.me',
   redirects: {
-    '/guides/memory': '/guides/sessions',
+    '/guides/memory': '/guides/sessions/#moving-from-memory',
   },
   vite: {
     server: {
