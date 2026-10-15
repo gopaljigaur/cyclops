@@ -44,7 +44,7 @@ You can also place these in a `.env` file and load them with `python-dotenv` or 
 The minimum working example creates an `AgentConfig`, passes it to `Agent`, and calls `run()`.
 
 ```python
-from cyclops import Agent, AgentConfig
+from cyclops import Agent, AgentConfig, Session
 
 config = AgentConfig(
     model="groq/llama-3.1-8b-instant",
@@ -52,11 +52,12 @@ config = AgentConfig(
 )
 agent = Agent(config)
 
-response = agent.run("What is the capital of France?")
+session = Session()
+response = agent.run("What is the capital of France?", session=session)
 print(response)  # "The capital of France is Paris."
 
-# The agent keeps conversation history automatically.
-follow_up = agent.run("And what is its population?")
+# A session carries the conversation on; without one each run starts fresh.
+follow_up = agent.run("And what is its population?", session=session)
 print(follow_up)
 ```
 
@@ -95,16 +96,17 @@ Every synchronous method has an async counterpart (`arun`, `astream`, `arun_with
 
 ```python
 import asyncio
-from cyclops import Agent, AgentConfig
+from cyclops import Agent, AgentConfig, Session
 
 
 async def main():
     config = AgentConfig(model="groq/llama-3.1-8b-instant")
     agent = Agent(config)
 
-    # Sequential async calls share conversation history.
-    answer1 = await agent.arun("Name three planets.")
-    answer2 = await agent.arun("Which of those is largest?")
+    # Sequential async calls on one session share its history.
+    session = Session()
+    answer1 = await agent.arun("Name three planets.", session=session)
+    answer2 = await agent.arun("Which of those is largest?", session=session)
     print(answer1)
     print(answer2)
 

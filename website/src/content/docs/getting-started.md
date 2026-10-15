@@ -50,11 +50,14 @@ agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant"))
 print(agent.run("What is the capital of France?"))
 ```
 
-The agent keeps conversation history automatically. The next call sees the full prior context:
+Each run starts from a fresh transcript. To continue a conversation, pass the same `Session` to each run:
 
 ```python
-agent.run("What is the capital of France?")
-agent.run("And what is its population?")  # knows "it" means Paris
+from cyclops import Session
+
+session = Session()
+agent.run("What is the capital of France?", session=session)
+agent.run("And what is its population?", session=session)  # knows "it" means Paris
 ```
 
 ## First agent with tools
@@ -91,15 +94,16 @@ Every sync method has an async counterpart. Use `arun`, `astream`, and `arun_wit
 
 ```python
 import asyncio
-from cyclops import Agent, AgentConfig
+from cyclops import Agent, AgentConfig, Session
 
 
 async def main():
     agent = Agent(AgentConfig(model="groq/llama-3.1-8b-instant"))
 
-    # Sequential calls share history.
-    await agent.arun("Name three planets.")
-    await agent.arun("Which is largest?")
+    # Sequential calls on one session share its history.
+    session = Session()
+    await agent.arun("Name three planets.", session=session)
+    await agent.arun("Which is largest?", session=session)
 
     # Run two independent agents concurrently.
     a = Agent(AgentConfig(model="groq/llama-3.1-8b-instant"))

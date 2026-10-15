@@ -9,6 +9,7 @@ from cyclops.core.agent import Agent
 from cyclops.core.events import ToolCallFinished, ToolCallStarted
 from cyclops.core.hooks import AgentHooks, current_tool_call_id
 from cyclops.core.middleware import Deny, ToolMiddleware
+from cyclops.core.session import Session
 from cyclops.toolkit import ToolAnnotations, ToolResult, tool
 from tests.test_agent import (
     _make_completion_response,
@@ -30,9 +31,9 @@ def _tool_round(arguments: str = '{"a": 2, "b": 3}', final: str = "done"):
     ]
 
 
-def _run(agent: Agent, responses, message: str = "go"):
+def _run(agent: Agent, responses, message: str = "go", session=None):
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as mock:
-        result = agent.run_with_response(message)
+        result = agent.run_with_response(message, session=session)
     return result, mock
 
 
@@ -44,8 +45,8 @@ class _EndHooks(AgentHooks):
         self.ended.append(content)
 
 
-def _tool_message(agent: Agent) -> str:
-    return next(m["content"] for m in agent.messages if m["role"] == "tool")
+def _tool_message(session: Session) -> str:
+    return next(m["content"] for m in session.messages if m["role"] == "tool")
 
 
 def test_deny_sends_the_reason_and_skips_the_tool():
@@ -62,10 +63,11 @@ def test_deny_sends_the_reason_and_skips_the_tool():
             return Deny("adding is disabled today")
 
     agent = Agent(config=_make_config(middleware=[Block()]), tools=[add])
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
     assert ran == []
-    assert _tool_message(agent) == "Error: adding is disabled today"
+    assert _tool_message(session) == "Error: adding is disabled today"
     assert result.tool_calls[0].result == "Error: adding is disabled today"
     assert [d.reason for d in result.denied_tool_calls] == ["adding is disabled today"]
 
@@ -78,12 +80,13 @@ def test_before_tool_can_replace_the_arguments():
     agent = Agent(
         config=_make_config(middleware=[Double()]), tools=[_make_simple_tool()]
     )
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "10"
+    assert _tool_message(session) == "10"
     assert result.tool_calls[0].arguments == {"a": 4, "b": 6}
     # The transcript keeps what the model sent.
-    assert agent.messages[1]["tool_calls"][0]["function"]["arguments"] == (
+    assert session.messages[1]["tool_calls"][0]["function"]["arguments"] == (
         '{"a": 2, "b": 3}'
     )
 
@@ -96,9 +99,10 @@ def test_after_tool_can_replace_the_result():
     agent = Agent(
         config=_make_config(middleware=[Redact()]), tools=[_make_simple_tool()]
     )
-    _run(agent, _tool_round())
+    session = Session()
+    _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "[redacted]"
+    assert _tool_message(session) == "[redacted]"
 
 
 def test_after_tool_sees_the_tool_error():
@@ -121,12 +125,13 @@ def test_after_tool_sees_the_tool_error():
         ),
         _make_completion_response(content="done"),
     ]
-    _run(agent, responses)
+    session = Session()
+    _run(agent, responses, session=session)
 
     [(success, error)] = seen
     assert success is False
     assert isinstance(error, RuntimeError)
-    assert _tool_message(agent) == "Error: boom failed: disk full"
+    assert _tool_message(session) == "Error: boom failed: disk full"
 
 
 def test_middleware_run_in_order_and_unwind_in_reverse():
@@ -235,9 +240,10 @@ def test_middleware_on_parallel_calls():
     agent = Agent(
         config=_make_config(middleware=[Tag()]), tools=[_make_simple_tool(), slow]
     )
-    result, _ = _run(agent, _parallel_round())
+    session = Session()
+    result, _ = _run(agent, _parallel_round(), session=session)
 
-    tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    tool_messages = [m["content"] for m in session.messages if m["role"] == "tool"]
     assert tool_messages == ["tc_1: 3", "tc_2: ok"]
     assert [c.id for c in result.tool_calls] == ["tc_1", "tc_2"]
 
@@ -261,12 +267,13 @@ def test_raising_middleware_answers_every_call():
     agent = Agent(
         config=_make_config(middleware=[Broken()]), tools=[_make_simple_tool(), slow]
     )
-    result, _ = _run(agent, _parallel_round())
+    session = Session()
+    result, _ = _run(agent, _parallel_round(), session=session)
 
     assert result.stop_reason == "error"
     assert str(result.error) == "policy store down"
     assert finished == []
-    assert [(m["role"], m.get("content")) for m in agent.messages[2:]] == [
+    assert [(m["role"], m.get("content")) for m in session.messages[2:]] == [
         ("tool", "Error: policy store down"),
         ("tool", "Tool call cancelled."),
     ]
@@ -339,9 +346,10 @@ def test_legacy_deny_hook_still_blocks():
 
     hooks = DenyAll()
     agent = Agent(config=_make_config(hooks=hooks), tools=[_make_simple_tool()])
-    result, _ = _run(agent, _tool_round())
+    session = Session()
+    result, _ = _run(agent, _tool_round(), session=session)
 
-    assert _tool_message(agent) == "Error: Tool 'add' was not approved"
+    assert _tool_message(session) == "Error: Tool 'add' was not approved"
     assert hooks.ended == []
     assert [(d.id, d.reason) for d in result.denied_tool_calls] == [
         ("tc_1", "Tool 'add' was not approved")
@@ -407,11 +415,12 @@ def test_guard_sends_the_model_back():
         _make_completion_response("Paris."),
         _make_completion_response("Paris [1]."),
     ]
-    result, mock = _run(agent, responses)
+    session = Session()
+    result, mock = _run(agent, responses, session=session)
 
     assert result.content == "Paris [1]."
     assert mock.call_count == 2
-    assert [(m["role"], m["content"]) for m in agent.messages] == [
+    assert [(m["role"], m["content"]) for m in session.messages] == [
         ("user", "go"),
         ("assistant", "Paris."),
         ("user", "Cite a source."),
@@ -453,7 +462,8 @@ def test_guard_rounds_count_as_steps():
         config=_make_config(guards=[never_happy], max_steps=2, max_guard_rounds=5)
     )
     responses = [_make_completion_response(f"answer {i}") for i in range(2)]
-    result, mock = _run(agent, responses)
+    session = Session()
+    result, mock = _run(agent, responses, session=session)
 
     assert mock.call_count == 2
     assert result.steps == 2
@@ -461,7 +471,7 @@ def test_guard_rounds_count_as_steps():
     # A rejected answer is never the result.
     assert result.content == ""
     # Feedback no step answers is not left in the history.
-    assert agent.messages[-1] == {"role": "assistant", "content": "answer 1"}
+    assert session.messages[-1] == {"role": "assistant", "content": "answer 1"}
 
 
 def test_guard_rounds_are_under_the_budget():
@@ -470,12 +480,13 @@ def test_guard_rounds_are_under_the_budget():
 
     agent = Agent(config=_make_config(guards=[never_happy], max_total_tokens=30))
     responses = [_make_completion_response(f"answer {i}") for i in range(2)]
-    result, mock = _run(agent, responses)
+    session = Session()
+    result, mock = _run(agent, responses, session=session)
 
     assert mock.call_count == 1
     assert result.stop_reason == "budget"
     assert result.content == ""
-    assert agent.messages[-1] == {"role": "assistant", "content": "answer 0"}
+    assert session.messages[-1] == {"role": "assistant", "content": "answer 0"}
 
 
 def test_first_guard_with_feedback_wins():
@@ -509,12 +520,13 @@ async def test_guard_in_a_streamed_run():
         [_text_chunk("The total "), _text_chunk("is 5.")],
     ]
     mock = AsyncMock(side_effect=[_stream(s) for s in steps])
+    session = Session()
 
     with patch("litellm.acompletion", new=mock):
-        chunks = [c async for c in agent.astream("2 + 3?")]
+        chunks = [c async for c in agent.astream("2 + 3?", session=session)]
 
     assert chunks == ["Five.", "The total ", "is 5."]
-    assert [m["role"] for m in agent.messages] == [
+    assert [m["role"] for m in session.messages] == [
         "user",
         "assistant",
         "tool",
@@ -522,7 +534,7 @@ async def test_guard_in_a_streamed_run():
         "user",
         "assistant",
     ]
-    assert agent.messages[4]["content"] == "Give the total."
+    assert session.messages[4]["content"] == "Give the total."
 
 
 @pytest.mark.asyncio
@@ -545,15 +557,16 @@ async def test_cancel_during_before_tool_unwinds_the_allowed_middleware():
         config=_make_config(middleware=[Allow(), Slow()]),
         tools=[_make_simple_tool()],
     )
+    session = Session()
     with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
-        task = asyncio.ensure_future(agent.arun("go"))
+        task = asyncio.ensure_future(agent.arun("go", session=session))
         await waiting.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
     assert seen == [asyncio.CancelledError]
-    assert agent.messages[-1]["content"] == "Tool call cancelled."
+    assert session.messages[-1]["content"] == "Tool call cancelled."
 
 
 def _events(agent: Agent, steps):

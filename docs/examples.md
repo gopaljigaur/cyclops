@@ -8,7 +8,7 @@ All example scripts live in the `examples/` directory of the repository. Each on
 
 **Path:** `examples/basic_agent.py`
 
-The simplest possible agent: create an `AgentConfig`, build an `Agent`, and call `run()` twice. Shows that the agent automatically maintains conversation history, so the second question ("What's the population?") is answered in context of the first ("What is the capital of France?").
+The simplest possible agent: create an `AgentConfig`, build an `Agent`, and call `run()` twice on one `Session`, so the second question ("What's the population?") is answered in context of the first ("What is the capital of France?").
 
 ---
 

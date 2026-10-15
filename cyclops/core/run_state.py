@@ -162,8 +162,8 @@ class RunHandle:
         A message that arrives during a completion goes into the one after,
         once the step's tool calls finish; if that completion was the final
         answer, the run takes another step to answer it when its limits allow,
-        and otherwise leaves it in the history for the next run. Steering a
-        finished run raises RuntimeError.
+        and otherwise leaves it in the session for its next run; without a
+        session it is dropped. Steering a finished run raises RuntimeError.
         """
         if self._task.done():
             raise RuntimeError("The run has finished")

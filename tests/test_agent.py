@@ -17,6 +17,7 @@ from litellm.types.utils import (
 
 from cyclops.core.agent import Agent
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.session import Session
 from cyclops.core.sync import _run_coroutine_sync
 from cyclops.core.types import AgentConfig
 from cyclops.toolkit.types import ToolAnnotations
@@ -109,20 +110,21 @@ def _make_simple_tool(name: str = "add", description: str = "Add two numbers"):
 
 
 def test_run_no_tools():
+    session = Session()
     agent = Agent(config=_make_config())
     response = _make_completion_response("Hello, world!")
 
     with patch(
         "litellm.acompletion", new=AsyncMock(return_value=response)
     ) as mock_comp:
-        result = agent.run("Say hi")
+        result = agent.run("Say hi", session=session)
 
     assert result == "Hello, world!"
     mock_comp.assert_called_once()
     # History should have user + assistant
-    assert agent.messages[0]["role"] == "user"
-    assert agent.messages[1]["role"] == "assistant"
-    assert agent.messages[1]["content"] == "Hello, world!"
+    assert session.messages[0]["role"] == "user"
+    assert session.messages[1]["role"] == "assistant"
+    assert session.messages[1]["content"] == "Hello, world!"
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +134,7 @@ def test_run_no_tools():
 
 def test_run_with_tools_loop():
     """Agent loops through tool calls on first response, then returns final answer."""
+    session = Session()
     tool = _make_simple_tool()
     agent = Agent(config=_make_config(), tools=[tool])
 
@@ -143,15 +146,15 @@ def test_run_with_tools_loop():
         "litellm.acompletion",
         new=AsyncMock(side_effect=[first_response, second_response]),
     ):
-        result = agent.run("What is 2 + 3?")
+        result = agent.run("What is 2 + 3?", session=session)
 
     assert result == "The answer is 5."
 
     # Verify history: user → assistant (with tool_calls) → tool → assistant
-    roles = [m["role"] for m in agent.messages]
+    roles = [m["role"] for m in session.messages]
     assert roles == ["user", "assistant", "tool", "assistant"]
 
-    tool_msg = agent.messages[2]
+    tool_msg = session.messages[2]
     assert tool_msg["tool_call_id"] == "tc_1"
     assert tool_msg["name"] == "add"
     assert tool_msg["content"] == "5"
@@ -164,6 +167,7 @@ def test_run_with_tools_loop():
 
 def test_run_with_tools_multi_iteration():
     """Agent correctly handles two sequential tool call rounds before final answer."""
+    session = Session()
     tool = _make_simple_tool()
     agent = Agent(config=_make_config(), tools=[tool])
 
@@ -177,14 +181,14 @@ def test_run_with_tools_multi_iteration():
         "litellm.acompletion",
         new=AsyncMock(side_effect=[first_response, second_response, third_response]),
     ):
-        result = agent.run("Do two additions")
+        result = agent.run("Do two additions", session=session)
 
     assert result == "Done"
-    roles = [m["role"] for m in agent.messages]
+    roles = [m["role"] for m in session.messages]
     # user, asst(tc1), tool, asst(tc2), tool, asst(final)
     assert roles.count("tool") == 2
     assert roles[-1] == "assistant"
-    assert agent.messages[-1]["content"] == "Done"
+    assert session.messages[-1]["content"] == "Done"
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +198,7 @@ def test_run_with_tools_multi_iteration():
 
 def test_stream_no_tools():
     """stream() yields individual chunks when there are no tools."""
+    session = Session()
     agent = Agent(config=_make_config())
     chunks = ["Hello", ", ", "world", "!"]
 
@@ -201,11 +206,11 @@ def test_stream_no_tools():
         "litellm.acompletion",
         new=AsyncMock(return_value=_stream([_text_chunk(c) for c in chunks])),
     ):
-        result = list(agent.stream("Say hi"))
+        result = list(agent.stream("Say hi", session=session))
 
     assert result == chunks
     # History should record the joined content
-    assert agent.messages[-1]["content"] == "Hello, world!"
+    assert session.messages[-1]["content"] == "Hello, world!"
 
 
 # ---------------------------------------------------------------------------
@@ -233,63 +238,21 @@ def test_run_with_response_model():
 
 
 # ---------------------------------------------------------------------------
-# test_reset
-# ---------------------------------------------------------------------------
-
-
-def test_reset():
-    """reset() clears conversation history."""
-    agent = Agent(config=_make_config())
-    response = _make_completion_response("Hi")
-
-    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        agent.run("Hello")
-
-    assert len(agent.messages) == 2
-    agent.reset()
-    assert agent.messages == []
-
-
-# ---------------------------------------------------------------------------
-# test_conversation_history
-# ---------------------------------------------------------------------------
-
-
-def test_conversation_history():
-    """Multi-turn conversations accumulate history correctly."""
-    agent = Agent(config=_make_config())
-
-    resp1 = _make_completion_response("I'm Claude.")
-    resp2 = _make_completion_response("The sky is blue.")
-
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=[resp1, resp2])):
-        result1 = agent.run("Who are you?")
-        result2 = agent.run("What color is the sky?")
-
-    assert result1 == "I'm Claude."
-    assert result2 == "The sky is blue."
-
-    roles = [m["role"] for m in agent.messages]
-    assert roles == ["user", "assistant", "user", "assistant"]
-    assert agent.messages[0]["content"] == "Who are you?"
-    assert agent.messages[2]["content"] == "What color is the sky?"
-
-
-# ---------------------------------------------------------------------------
 # test_arun_no_tools (async)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_arun_no_tools():
+    session = Session()
     agent = Agent(config=_make_config())
     response = _make_completion_response("Async hello!")
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = await agent.arun("Hi async")
+        result = await agent.arun("Hi async", session=session)
 
     assert result == "Async hello!"
-    assert agent.messages[-1]["content"] == "Async hello!"
+    assert session.messages[-1]["content"] == "Async hello!"
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +262,7 @@ async def test_arun_no_tools():
 
 @pytest.mark.asyncio
 async def test_arun_with_tools_loop():
+    session = Session()
     tool = _make_simple_tool()
     agent = Agent(config=_make_config(), tools=[tool])
 
@@ -310,10 +274,10 @@ async def test_arun_with_tools_loop():
         "litellm.acompletion",
         new=AsyncMock(side_effect=[first_response, second_response]),
     ):
-        result = await agent.arun("What is 10 + 5?")
+        result = await agent.arun("What is 10 + 5?", session=session)
 
     assert result == "Result is 15."
-    roles = [m["role"] for m in agent.messages]
+    roles = [m["role"] for m in session.messages]
     assert "tool" in roles
 
 
@@ -357,6 +321,7 @@ class _RecordingHooks(AgentHooks):
 
 def test_sync_tool_runs_in_worker_thread():
     """A tool with a sync execute runs off the event loop thread."""
+    session = Session()
     import threading
 
     from cyclops.toolkit.tool import BaseTool
@@ -376,9 +341,9 @@ def test_sync_tool_runs_in_worker_thread():
     ]
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        assert agent.run("double 4") == "8"
+        assert agent.run("double 4", session=session) == "8"
 
-    assert agent.messages[2]["content"] == "8"
+    assert session.messages[2]["content"] == "8"
     assert seen and seen[0] != threading.get_ident()
 
 
@@ -422,6 +387,7 @@ def _unsupported_params_error(param: str = "tools"):
 
 def test_fallback_to_naive_on_unsupported_tools():
     """The unsupported-params error switches only this agent to naive mode."""
+    session = Session()
     tool = _make_simple_tool()
     # LiteLLM lists no `tools` support for the ollama provider.
     agent = Agent(config=_make_config("ollama/llama2"), tools=[tool])
@@ -431,12 +397,12 @@ def test_fallback_to_naive_on_unsupported_tools():
     mock = AsyncMock(side_effect=[_unsupported_params_error(), naive_call, final])
 
     with patch("litellm.acompletion", new=mock):
-        assert agent.run("1 + 2?") == "It is 3."
+        assert agent.run("1 + 2?", session=session) == "It is 3."
 
     assert "tools" not in mock.call_args.kwargs
-    user_messages = [m for m in agent.messages if m["content"] == "1 + 2?"]
+    user_messages = [m for m in session.messages if m["content"] == "1 + 2?"]
     assert len(user_messages) == 1
-    assert agent.messages[-2]["content"] == "Tool result: 3"
+    assert session.messages[-2]["content"] == "Tool result: 3"
     assert agent._get_tool_mode() == "naive"
     assert other._get_tool_mode() == "native"
 
@@ -494,6 +460,7 @@ def test_fallback_through_router_checks_the_deployment(deployment, expected_mode
 
 def test_invalid_tool_arguments_return_parse_error():
     """Unparseable arguments do not run the tool; the model sees the parse error."""
+    session = Session()
     tool = MagicMock(wraps=_make_simple_tool())
     tool.name = "add"
     agent = Agent(config=_make_config(), tools=[tool])
@@ -504,14 +471,15 @@ def test_invalid_tool_arguments_return_parse_error():
     ]
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        agent.run("add")
+        agent.run("add", session=session)
 
     tool.execute.assert_not_called()
-    assert "add are not valid JSON" in agent.messages[2]["content"]
+    assert "add are not valid JSON" in session.messages[2]["content"]
 
 
 def test_non_object_tool_arguments_return_error():
     """JSON arguments that are not an object get an error result, not a crash."""
+    session = Session()
     agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
     tc = _make_tool_call("tc_1", "add", "[1, 2]")
     responses = [
@@ -520,16 +488,18 @@ def test_non_object_tool_arguments_return_error():
     ]
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        result = agent.run_with_response("add")
+        result = agent.run_with_response("add", session=session)
 
     assert (
-        agent.messages[2]["content"] == "Error: arguments for add must be a JSON object"
+        session.messages[2]["content"]
+        == "Error: arguments for add must be a JSON object"
     )
     assert result.tool_calls[0].arguments == {}
 
 
 def test_failing_end_hook_becomes_tool_error():
     """An on_tool_end hook that raises yields a tool error and a valid transcript."""
+    session = Session()
 
     class FailingHooks(AgentHooks):
         def on_tool_end(self, tool_name, args, result):
@@ -545,9 +515,9 @@ def test_failing_end_hook_becomes_tool_error():
     ]
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        assert agent.run("add") == "ok"
+        assert agent.run("add", session=session) == "ok"
 
-    assert agent.messages[2]["content"] == "Error: add failed: hook broke"
+    assert session.messages[2]["content"] == "Error: add failed: hook broke"
 
 
 def _tool_call_responses(n):
@@ -562,18 +532,19 @@ def _tool_call_responses(n):
 
 def test_max_steps_sets_stop_reason():
     """Hitting max_steps is a stop reason, not answer text."""
+    session = Session()
     agent = Agent(config=_make_config(max_steps=2), tools=[_make_simple_tool()])
 
     with patch(
         "litellm.acompletion", new=AsyncMock(side_effect=_tool_call_responses(2))
     ):
-        result = agent.run_with_response("loop")
+        result = agent.run_with_response("loop", session=session)
 
     assert result.stop_reason == "max_steps"
     assert result.steps == 2
     assert result.content == ""
     assert len(result.tool_calls) == 2
-    assert agent.messages[-1]["role"] == "tool"
+    assert session.messages[-1]["role"] == "tool"
 
 
 def test_unknown_config_fields_are_rejected():
@@ -585,18 +556,19 @@ def test_unknown_config_fields_are_rejected():
 
 def test_token_budget_ends_the_run_between_steps():
     """Reaching max_total_tokens stops before the next completion."""
+    session = Session()
     agent = Agent(config=_make_config(max_total_tokens=50), tools=[_make_simple_tool()])
     mock = AsyncMock(side_effect=_tool_call_responses(3))
 
     with patch("litellm.acompletion", new=mock):
-        result = agent.run_with_response("loop")
+        result = agent.run_with_response("loop", session=session)
 
     assert result.stop_reason == "budget"
     assert result.steps == 2
     assert result.tokens_used == 60
     assert mock.call_count == 2
     # Every tool call of the last step still has its result.
-    assert agent.messages[-1]["role"] == "tool"
+    assert session.messages[-1]["role"] == "tool"
 
 
 def test_cost_budget_ends_the_run_between_steps():
@@ -675,6 +647,7 @@ def test_cost_budget_counts_steps_after_one_without_pricing():
 
 @pytest.mark.asyncio
 async def test_token_budget_ends_a_streamed_run():
+    session = Session()
     agent = Agent(config=_make_config(max_total_tokens=30), tools=[_make_simple_tool()])
     first = _make_completion_response(
         content=None, tool_calls=[_make_tool_call("tc_1", "add", '{"a": 1, "b": 1}')]
@@ -686,11 +659,11 @@ async def test_token_budget_ends_a_streamed_run():
         patch("litellm.acompletion", new=mock),
         patch("litellm.stream_chunk_builder", return_value=first),
     ):
-        text = [chunk async for chunk in agent.astream("1 + 1?")]
+        text = [chunk async for chunk in agent.astream("1 + 1?", session=session)]
 
     assert text == []
     assert mock.call_count == 1
-    assert agent.messages[-1]["role"] == "tool"
+    assert session.messages[-1]["role"] == "tool"
 
 
 def test_token_budget_ends_a_naive_run():
@@ -772,6 +745,7 @@ async def test_arun_raises_the_run_error():
 @pytest.mark.asyncio
 async def test_cancelled_run_closes_pending_tool_calls():
     """Cancelling during tool execution leaves a result for every tool call."""
+    session = Session()
     import asyncio
 
     from cyclops.toolkit.tool import Tool
@@ -797,13 +771,13 @@ async def test_cancelled_run_closes_pending_tool_calls():
     response = _make_completion_response(content=None, tool_calls=calls)
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        task = asyncio.create_task(agent.arun("go"))
+        task = asyncio.create_task(agent.arun("go", session=session))
         await started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
+    tool_messages = [m for m in session.messages if m["role"] == "tool"]
     assert [(m["tool_call_id"], m["content"]) for m in tool_messages] == [
         ("tc_1", "fast done"),
         ("tc_2", "Tool call cancelled."),
@@ -864,6 +838,7 @@ def test_usage_in_naive_mode():
 @pytest.mark.asyncio
 async def test_astream_with_tools_streams_the_real_loop():
     """Each step is streamed with tools; tool calls are assembled from deltas."""
+    session = Session()
     hooks = _RecordingHooks()
     agent = Agent(config=_make_config(hooks=hooks), tools=[_make_simple_tool()])
     first = [
@@ -875,18 +850,18 @@ async def test_astream_with_tools_streams_the_real_loop():
     mock = AsyncMock(side_effect=[_stream(first), _stream(second)])
 
     with patch("litellm.acompletion", new=mock):
-        chunks = [c async for c in agent.astream("2 + 3?")]
+        chunks = [c async for c in agent.astream("2 + 3?", session=session)]
 
     assert chunks == ["Adding. ", "The answer ", "is 5."]
     assert mock.call_count == 2
     assert all("tools" in call.kwargs for call in mock.call_args_list)
-    roles = [m["role"] for m in agent.messages]
+    roles = [m["role"] for m in session.messages]
     assert roles == ["user", "assistant", "tool", "assistant"]
-    assert agent.messages[1]["tool_calls"][0]["function"]["arguments"] == (
+    assert session.messages[1]["tool_calls"][0]["function"]["arguments"] == (
         '{"a": 2, "b": 3}'
     )
-    assert agent.messages[2]["content"] == "5"
-    assert agent.messages[3]["content"] == "The answer is 5."
+    assert session.messages[2]["content"] == "5"
+    assert session.messages[3]["content"] == "The answer is 5."
     assert hooks.events == [
         ("llm_end", None),
         ("llm_end", None),
@@ -896,6 +871,7 @@ async def test_astream_with_tools_streams_the_real_loop():
 
 def test_stream_with_tools_sync():
     """The sync stream() wrapper drives the same loop."""
+    session = Session()
     agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
     first = [_tool_call_chunk(0, '{"a": 1, "b": 1}', id="tc_1", name="add")]
     second = [_text_chunk("2")]
@@ -904,9 +880,9 @@ def test_stream_with_tools_sync():
         "litellm.acompletion",
         new=AsyncMock(side_effect=[_stream(first), _stream(second)]),
     ):
-        assert list(agent.stream("1 + 1?")) == ["2"]
+        assert list(agent.stream("1 + 1?", session=session)) == ["2"]
 
-    assert agent.messages[2]["content"] == "2"
+    assert session.messages[2]["content"] == "2"
 
 
 def test_cached_tokens_are_summed():
@@ -1027,6 +1003,7 @@ def test_closing_sync_stream_early_closes_the_completion_stream():
 
 def test_sync_run_from_an_async_tool_raises():
     """A sync run started on the shared loop raises instead of deadlocking."""
+    session = Session()
     from cyclops.toolkit.tool import Tool
 
     inner = Agent(config=_make_config())
@@ -1042,14 +1019,15 @@ def test_sync_run_from_an_async_tool_raises():
     ]
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        assert agent.run("go") == "ok"
+        assert agent.run("go", session=session) == "ok"
 
-    assert "Use the async Agent methods" in agent.messages[2]["content"]
+    assert "Use the async Agent methods" in session.messages[2]["content"]
 
 
 @pytest.mark.asyncio
 async def test_tool_raising_cancelled_stops_sibling_calls():
     """A tool that raises CancelledError also stops the calls still running."""
+    session = Session()
     import asyncio
 
     from cyclops.toolkit.tool import Tool
@@ -1083,15 +1061,16 @@ async def test_tool_raising_cancelled_stops_sibling_calls():
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         with pytest.raises(asyncio.CancelledError):
-            await agent.arun("go")
+            await agent.arun("go", session=session)
 
     assert sibling_cancelled.is_set()
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
+    tool_messages = [m for m in session.messages if m["role"] == "tool"]
     assert [m["content"] for m in tool_messages] == ["Tool call cancelled."] * 2
 
 
 def test_interrupted_sync_run_cancels_the_run():
     """An interrupt while run() waits cancels the run and waits for it to unwind."""
+    session = Session()
     import asyncio
     import threading
 
@@ -1131,10 +1110,10 @@ def test_interrupted_sync_run_cancels_the_run():
         patch.object(threading.Event, "wait", interrupted),
     ):
         with pytest.raises(KeyboardInterrupt):
-            agent.run("go")
+            agent.run("go", session=session)
 
     assert cleaned.is_set()
-    assert agent.messages[-1]["content"] == "Tool call cancelled."
+    assert session.messages[-1]["content"] == "Tool call cancelled."
 
 
 def test_max_steps_must_allow_a_completion():
@@ -1167,6 +1146,7 @@ def test_sync_stream_keeps_hook_context():
 
 def test_interrupted_sync_stream_waits_for_cleanup():
     """An interrupt during a sync stream unwinds the run before returning."""
+    session = Session()
     import asyncio
     import queue
     import threading
@@ -1198,10 +1178,10 @@ def test_interrupted_sync_stream_waits_for_cleanup():
         patch.object(queue.Queue, "get", interrupted),
     ):
         with pytest.raises(KeyboardInterrupt):
-            next(agent.stream("go"))
+            next(agent.stream("go", session=session))
 
     assert cleaned.is_set()
-    assert agent.messages[-1]["content"] == "Tool call cancelled."
+    assert session.messages[-1]["content"] == "Tool call cancelled."
 
 
 @pytest.mark.asyncio
@@ -1287,6 +1267,7 @@ def test_forked_child_gets_its_own_loop():
 
 def test_sync_tool_can_run_another_agent():
     """A sync @tool runs in a worker thread, so it may call another agent's run()."""
+    session = Session()
     from cyclops.toolkit import tool
 
     inner = Agent(config=_make_config())
@@ -1305,9 +1286,9 @@ def test_sync_tool_can_run_another_agent():
     ]
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        assert agent.run("Ask about France") == "It is Paris."
+        assert agent.run("Ask about France", session=session) == "It is Paris."
 
-    assert agent.messages[2]["content"] == "Paris"
+    assert session.messages[2]["content"] == "Paris"
 
 
 # ---------------------------------------------------------------------------
@@ -1334,7 +1315,8 @@ def _chart_tool():
 
 
 def _run_tool_calls(agent, *calls):
-    """Run one round of native tool calls followed by a final answer."""
+    """Run one round of native tool calls and a final answer; return the transcript."""
+    session = Session()
     tool_calls = [
         _make_tool_call(f"tc_{i}", name, "{}") for i, name in enumerate(calls)
     ]
@@ -1342,9 +1324,9 @@ def _run_tool_calls(agent, *calls):
         _make_completion_response(content=None, tool_calls=tool_calls),
         _make_completion_response(content="done"),
     ]
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as mock:
-        assert agent.run("go") == "done"
-    return mock
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
+        assert agent.run("go", session=session) == "done"
+    return session.messages
 
 
 def test_duplicate_tool_names_are_rejected():
@@ -1373,9 +1355,9 @@ def test_tool_results_are_rendered_for_the_model():
     hooks = MagicMock(spec=AgentHooks)
     hooks.on_tool_start.return_value = "allow"
     agent = Agent(config=_make_config(hooks=hooks), tools=[data, text, fail])
-    _run_tool_calls(agent, "data", "text", "fail")
+    messages = _run_tool_calls(agent, "data", "text", "fail")
 
-    tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    tool_messages = [m["content"] for m in messages if m["role"] == "tool"]
     assert tool_messages == ['{"rows": 2}', "two rows", "Error: no access"]
     # Parallel tools finish in any order.
     assert sorted(c.args[2] for c in hooks.on_tool_end.call_args_list) == sorted(
@@ -1392,8 +1374,8 @@ def test_raising_tool_is_marked_as_error():
         raise RuntimeError("disk full")
 
     agent = Agent(config=_make_config(), tools=[boom])
-    _run_tool_calls(agent, "boom")
-    assert agent.messages[2]["content"] == "Error: boom failed: disk full"
+    messages = _run_tool_calls(agent, "boom")
+    assert messages[2]["content"] == "Error: boom failed: disk full"
 
 
 def test_tool_images_stay_in_tool_message_when_provider_accepts_them():
@@ -1401,21 +1383,22 @@ def test_tool_images_stay_in_tool_message_when_provider_accepts_them():
         config=_make_config(model="anthropic/claude-3-5-sonnet-latest"),
         tools=[_chart_tool()],
     )
-    _run_tool_calls(agent, "chart")
+    messages = _run_tool_calls(agent, "chart")
 
-    assert [m["role"] for m in agent.messages] == [
+    assert [m["role"] for m in messages] == [
         "user",
         "assistant",
         "tool",
         "assistant",
     ]
-    assert agent.messages[2]["content"] == [
+    assert messages[2]["content"] == [
         {"type": "text", "text": "a chart"},
         _IMAGE_PART,
     ]
 
 
 def test_tool_images_move_to_user_message_for_text_only_tool_messages():
+    session = Session()
     agent = Agent(
         config=_make_config(model="gpt-4o"),
         tools=[_chart_tool(), _make_simple_tool()],
@@ -1429,10 +1412,10 @@ def test_tool_images_move_to_user_message_for_text_only_tool_messages():
         _make_completion_response(content="done"),
     ]
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)) as mock:
-        agent.run("go")
+        agent.run("go", session=session)
 
     # The images follow every tool message of the round
-    assert [m["role"] for m in agent.messages] == [
+    assert [m["role"] for m in session.messages] == [
         "user",
         "assistant",
         "tool",
@@ -1440,32 +1423,34 @@ def test_tool_images_move_to_user_message_for_text_only_tool_messages():
         "user",
         "assistant",
     ]
-    assert agent.messages[2]["content"] == "a chart"
-    assert agent.messages[3]["content"] == "3"
-    assert agent.messages[4]["content"] == [
+    assert session.messages[2]["content"] == "a chart"
+    assert session.messages[3]["content"] == "3"
+    assert session.messages[4]["content"] == [
         {"type": "text", "text": "Images returned by chart:"},
         _IMAGE_PART,
     ]
     sent = mock.call_args_list[1].kwargs["messages"]
-    assert sent[-1] == agent.messages[4]
+    assert sent[-1] == session.messages[4]
 
 
 def test_tool_images_in_naive_mode():
+    session = Session()
     agent = Agent(config=_make_config(tool_mode="naive"), tools=[_chart_tool()])
     responses = [
         _make_completion_response('{"tool": "chart", "args": {}}'),
         _make_completion_response("done"),
     ]
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        agent.run("go")
+        agent.run("go", session=session)
 
-    assert agent.messages[2] == {
+    assert session.messages[2] == {
         "role": "user",
         "content": [{"type": "text", "text": "Tool result: a chart"}, _IMAGE_PART],
     }
 
 
 def test_streamed_run_renders_tool_results():
+    session = Session()
     from cyclops.toolkit import ToolResult, tool
 
     @tool
@@ -1480,9 +1465,9 @@ def test_streamed_run_renders_tool_results():
         "litellm.acompletion",
         new=AsyncMock(side_effect=[_stream(first), _stream(second)]),
     ):
-        assert list(agent.stream("go")) == ["sorry"]
+        assert list(agent.stream("go", session=session)) == ["sorry"]
 
-    assert agent.messages[2]["content"] == "Error: no access"
+    assert session.messages[2]["content"] == "Error: no access"
 
 
 def test_denied_and_unknown_tools_are_reported_as_errors():
@@ -1491,9 +1476,9 @@ def test_denied_and_unknown_tools_are_reported_as_errors():
             return "deny"
 
     agent = Agent(config=_make_config(hooks=Deny()), tools=[_make_simple_tool()])
-    _run_tool_calls(agent, "add", "missing")
+    messages = _run_tool_calls(agent, "add", "missing")
 
-    tool_messages = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    tool_messages = [m["content"] for m in messages if m["role"] == "tool"]
     assert tool_messages == [
         "Error: Tool 'add' was not approved",
         "Error: Tool 'missing' not found",
@@ -1510,6 +1495,7 @@ def test_denied_and_unknown_tools_are_reported_as_errors():
     ],
 )
 def test_tool_image_route_checks_every_router_deployment(deployments, kept):
+    session = Session()
     router = litellm.Router(
         model_list=[
             {"model_name": "smart", "litellm_params": {"model": d}} for d in deployments
@@ -1523,15 +1509,15 @@ def test_tool_image_route_checks_every_router_deployment(deployments, kept):
         ]
     )
     agent = Agent(config=_make_config("smart", router=router), tools=[_chart_tool()])
-    agent.run("go")
+    agent.run("go", session=session)
 
-    roles = [m["role"] for m in agent.messages]
+    roles = [m["role"] for m in session.messages]
     if kept:
         assert roles == ["user", "assistant", "tool", "assistant"]
-        assert agent.messages[2]["content"][1] == _IMAGE_PART
+        assert session.messages[2]["content"][1] == _IMAGE_PART
     else:
         assert roles == ["user", "assistant", "tool", "user", "assistant"]
-        assert agent.messages[2]["content"] == "a chart"
+        assert session.messages[2]["content"] == "a chart"
 
 
 # ---------------------------------------------------------------------------
@@ -1674,6 +1660,7 @@ async def test_invalid_arguments_and_naive_calls_have_tool_events():
 
 @pytest.mark.asyncio
 async def test_closing_events_early_cancels_the_run():
+    session = Session()
     import asyncio
 
     from cyclops.core.events import ToolCallStarted
@@ -1687,13 +1674,13 @@ async def test_closing_events_early_cancels_the_run():
     chunks = [_tool_call_chunk(0, "{}", id="tc_1", name="slow")]
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
-        events = agent.astream_events("go")
+        events = agent.astream_events("go", session=session)
         async for event in events:
             if isinstance(event, ToolCallStarted):
                 break
         await events.aclose()
 
-    assert agent.messages[-1] == {
+    assert session.messages[-1] == {
         "role": "tool",
         "tool_call_id": "tc_1",
         "content": "Tool call cancelled.",
@@ -1845,6 +1832,7 @@ async def test_steer_adds_a_user_message_after_the_tool_calls():
 
 @pytest.mark.asyncio
 async def test_steer_during_the_final_answer_gets_its_own_step():
+    session = Session()
     import asyncio
 
     agent = Agent(config=_make_config())
@@ -1857,14 +1845,14 @@ async def test_steer_during_the_final_answer_gets_its_own_step():
         return _make_completion_response(next(answers))
 
     with patch("litellm.acompletion", new=complete):
-        handle = agent.start("hello", stream=False)
+        handle = agent.start("hello", stream=False, session=session)
         await asked.wait()
         handle.steer("In French, please.")
         result = await handle
 
     assert result.content == "Bonjour."
     assert result.steps == 2
-    assert [m["content"] for m in agent.messages] == [
+    assert [m["content"] for m in session.messages] == [
         "hello",
         "Hi.",
         "In French, please.",
@@ -1877,6 +1865,7 @@ async def test_steer_during_the_final_answer_gets_its_own_step():
 @pytest.mark.asyncio
 async def test_cancel_closes_tool_calls_and_resolves_cancelled():
     """A call cut short gets a cancelled result; a finished one keeps its own."""
+    session = Session()
     import asyncio
 
     from cyclops.core.hooks import RUN_STOPPED
@@ -1905,7 +1894,7 @@ async def test_cancel_closes_tool_calls_and_resolves_cancelled():
     response = _make_completion_response(content=None, tool_calls=calls)
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        handles.append(agent.start("go", stream=False))
+        handles.append(agent.start("go", stream=False, session=session))
         events = [e async for e in handles[0]]
         result = await handles[0]
 
@@ -1918,7 +1907,7 @@ async def test_cancel_closes_tool_calls_and_resolves_cancelled():
         ("tool_end", "tc_1", "Tool call cancelled.", True),
         ("run", "cancelled", ""),
     ]
-    assert [m["content"] for m in agent.messages if m["role"] == "tool"] == [
+    assert [m["content"] for m in session.messages if m["role"] == "tool"] == [
         "Tool call cancelled.",
         "done",
     ]
@@ -1943,6 +1932,7 @@ async def test_cancel_before_the_run_starts():
 
 @pytest.mark.asyncio
 async def test_cancel_during_a_streamed_completion():
+    session = Session()
     import asyncio
 
     from cyclops.core.events import TextDelta
@@ -1954,7 +1944,7 @@ async def test_cancel_during_a_streamed_completion():
 
     agent = Agent(config=_make_config())
     with patch("litellm.acompletion", new=AsyncMock(return_value=stalled())):
-        handle = agent.start("hello")
+        handle = agent.start("hello", session=session)
         async for event in handle:
             if isinstance(event, TextDelta):
                 handle.cancel()
@@ -1962,7 +1952,7 @@ async def test_cancel_during_a_streamed_completion():
 
     assert result.stop_reason == "cancelled"
     assert result.content == ""
-    assert agent.messages == [{"role": "user", "content": "hello"}]
+    assert session.messages == [{"role": "user", "content": "hello"}]
 
 
 @pytest.mark.asyncio
@@ -2099,6 +2089,7 @@ def test_sync_events_caller_that_stops_reading_holds_the_run():
 
 @pytest.mark.asyncio
 async def test_second_cancel_leaves_the_tool_cleanup_alone():
+    session = Session()
     import asyncio
 
     from cyclops.toolkit.tool import Tool
@@ -2121,7 +2112,7 @@ async def test_second_cancel_leaves_the_tool_cleanup_alone():
     response = _make_completion_response(content=None, tool_calls=[tc])
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        handle = agent.start("go", stream=False)
+        handle = agent.start("go", stream=False, session=session)
         await started.wait()
         handle.cancel()
         await asyncio.sleep(0)
@@ -2130,7 +2121,7 @@ async def test_second_cancel_leaves_the_tool_cleanup_alone():
 
     assert result.stop_reason == "cancelled"
     assert cleaned == [1]
-    assert agent.messages[-1]["content"] == "Tool call cancelled."
+    assert session.messages[-1]["content"] == "Tool call cancelled."
 
 
 @pytest.mark.asyncio
@@ -2153,6 +2144,7 @@ async def test_steer_before_the_first_completion_is_in_it():
     "limits", [{"max_steps": 1}, {"max_steps": 5, "max_total_tokens": 30}]
 )
 async def test_steer_without_a_step_left_stays_for_the_next_run(limits):
+    session = Session()
     import asyncio
 
     agent = Agent(config=_make_config(**limits))
@@ -2164,14 +2156,14 @@ async def test_steer_without_a_step_left_stays_for_the_next_run(limits):
         return _make_completion_response("Hi.")
 
     with patch("litellm.acompletion", new=complete):
-        handle = agent.start("hello", stream=False)
+        handle = agent.start("hello", stream=False, session=session)
         await asked.wait()
         handle.steer("In French, please.")
         result = await handle
 
     assert result.stop_reason == "completed"
     assert result.content == "Hi."
-    assert agent.messages[-1] == {"role": "user", "content": "In French, please."}
+    assert session.messages[-1] == {"role": "user", "content": "In French, please."}
 
 
 @pytest.mark.asyncio
@@ -2311,15 +2303,16 @@ def test_finish_reason_is_recorded_on_each_step_and_the_result():
 def test_text_cut_by_the_length_limit_ends_with_max_tokens():
     hooks = _RecordingHooks()
     agent = Agent(config=_make_config(hooks=hooks))
+    session = Session()
     response = _make_completion_response("The answer is", finish_reason="length")
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = agent.run_with_response("Explain.")
+        result = agent.run_with_response("Explain.", session=session)
 
     assert result.stop_reason == "max_tokens"
     assert result.finish_reason == "length"
     assert result.content == ""
-    assert agent.messages[-1] == {"role": "assistant", "content": "The answer is"}
+    assert session.messages[-1] == {"role": "assistant", "content": "The answer is"}
 
 
 def test_guards_do_not_judge_a_cut_answer():
@@ -2346,16 +2339,17 @@ def test_a_tool_call_cut_by_the_length_limit_is_not_run():
         None, tool_calls=[call], finish_reason="length"
     )
     mock = AsyncMock(return_value=response)
+    session = Session()
 
     with patch("litellm.acompletion", new=mock):
-        result = agent.run_with_response("1 + 2?")
+        result = agent.run_with_response("1 + 2?", session=session)
 
     assert result.stop_reason == "max_tokens"
     assert result.error is None
     assert result.tool_calls == []
     assert mock.call_count == 1
     # An empty cut turn is left out, so the conversation needs no tool result.
-    assert agent.messages == [{"role": "user", "content": "1 + 2?"}]
+    assert session.messages == [{"role": "user", "content": "1 + 2?"}]
 
 
 def test_a_complete_call_before_a_cut_one_is_not_run_either():
@@ -2368,12 +2362,14 @@ def test_a_complete_call_before_a_cut_one_is_not_run_either():
         "Adding.", tool_calls=calls, finish_reason="length"
     )
 
+    session = Session()
+
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = agent.run_with_response("1 + 2 and 3 + 4?")
+        result = agent.run_with_response("1 + 2 and 3 + 4?", session=session)
 
     assert result.stop_reason == "max_tokens"
     assert result.tool_calls == []
-    assert agent.messages[-1] == {"role": "assistant", "content": "Adding."}
+    assert session.messages[-1] == {"role": "assistant", "content": "Adding."}
 
 
 @pytest.mark.asyncio
@@ -2384,9 +2380,10 @@ async def test_a_streamed_tool_call_cut_by_the_length_limit_is_not_run():
         _tool_call_chunk(0, '{"a": 1, "b', id="tc_1", name="add"),
         _finish_chunk("length"),
     ]
+    session = Session()
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=_stream(chunks))):
-        events = [e async for e in agent.astream_events("1 + 2?")]
+        events = [e async for e in agent.astream_events("1 + 2?", session=session)]
 
     assert _event_summary(events) == [
         ("text", "Adding. "),
@@ -2394,7 +2391,7 @@ async def test_a_streamed_tool_call_cut_by_the_length_limit_is_not_run():
         ("run", "max_tokens", ""),
     ]
     assert events[-1].result.finish_reason == "length"
-    assert agent.messages[-1] == {"role": "assistant", "content": "Adding. "}
+    assert session.messages[-1] == {"role": "assistant", "content": "Adding. "}
 
 
 def test_a_naive_tool_call_cut_by_the_length_limit_ends_with_max_tokens():

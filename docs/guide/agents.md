@@ -154,38 +154,29 @@ async for event in handle:
 result = await handle
 ```
 
-- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the history for the next run (a run that already answered completes with that answer). Steering a run that has finished raises `RuntimeError`.
+- `handle.steer(message)` adds a user message that the model sees in its next completion. A message that arrives during a completion goes into the one after, once the step's tool calls finish. If that completion was the final answer, the run takes another step to answer the message (guards then judge the new answer); when `max_steps` or a budget leaves no step for it, the message stays at the end of the session for its next run, and without a session it is dropped (a run that already answered completes with that answer). Steering a run that has finished raises `RuntimeError`.
 - `handle.cancel()` stops the run. Tool calls in progress are cancelled and get a cancelled result, so the conversation stays valid, and awaiting the handle gives `stop_reason="cancelled"`. A completion in progress is dropped. Calling it again does nothing.
 
 Cancelling the task that awaits a handle (or `arun()`) also cancels the run, but as a plain `asyncio.CancelledError`: the await raises it and there is no `"cancelled"` result.
 
 `start(input, stream=False)` makes the completions without streaming, so each step's text arrives as one `TextDelta`. `arun()`, `arun_with_response()` and `astream()` are shortcuts over `start()`. Iterating a handle doesn't hold the run back the way `astream_events()` does: events wait in the handle until you read them. Until you start iterating, the handle keeps them in short form: consecutive text or reasoning deltas as one event, and no subagent events. A handle you only await holds a few events per step, not one per token.
 
-## Conversation history
+## Conversations
 
-The agent accumulates every user and assistant message in `_history`. You can inspect the current history at any time via the `messages` property, which returns a shallow copy so the internal state is not accidentally mutated.
-
-```python
-agent.run("My name is Alice.")
-agent.run("What is my name?")
-
-for msg in agent.messages:
-    print(msg["role"], ":", msg["content"][:60])
-```
-
-The history persists across calls as long as the same `Agent` instance is used. Each call appends a user message and an assistant reply (and any tool turns) to the history, so follow-up questions automatically have full context.
-
-## reset()
-
-Call `reset()` to clear the conversation history and start fresh without creating a new agent object.
+Each run without a session starts from a fresh transcript, so an agent keeps no conversation of its own and can serve many callers at once. To continue a conversation, pass the same [session](sessions.md) to each run; its `messages` hold the transcript, tool turns included.
 
 ```python
-agent.run("Remember: the code word is banana.")
-agent.reset()
+from cyclops import Session
 
-# History is now empty; the agent has forgotten the code word.
-response = agent.run("What was the code word?")
+session = Session()
+agent.run("My name is Alice.", session=session)
+agent.run("What is my name?", session=session)
+
+for msg in session.messages:
+    print(msg["role"], ":", msg["content"])
 ```
+
+A new `Session()` starts a new conversation.
 
 ## Provider options
 
@@ -225,11 +216,11 @@ Each attempt fires `on_llm_start`, and `on_llm_error` if it fails. `num_retries=
 
 ## Reasoning in history
 
-When a model returns reasoning, the assistant messages in `agent.messages` keep it as `reasoning_content` and, for Anthropic extended thinking, `thinking_blocks` with their signatures. They are sent back on the next call, which Anthropic requires when thinking is combined with tool use: the signed thinking block has to precede the tool call it led to.
+When a model returns reasoning, the assistant messages in the transcript keep it as `reasoning_content` and, for Anthropic extended thinking, `thinking_blocks` with their signatures. They are sent back on the next call, which Anthropic requires when thinking is combined with tool use: the signed thinking block has to precede the tool call it led to.
 
 ```python
-agent.run("What is 17 * 23? Use the calculator.")
-for msg in agent.messages:
+agent.run("What is 17 * 23? Use the calculator.", session=session)
+for msg in session.messages:
     if "thinking_blocks" in msg:
         print(msg["thinking_blocks"][0]["thinking"])
 ```

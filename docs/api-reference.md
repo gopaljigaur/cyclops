@@ -8,7 +8,7 @@ This page provides a concise reference for every public class and function in Cy
 
 ### Agent
 
-The main agent class. Wraps an LLM and orchestrates tool calls, conversation history, streaming, and cost tracking.
+The main agent class. Wraps an LLM and orchestrates tool calls, sessions, streaming, and cost tracking.
 
 ```python
 class Agent:
@@ -22,11 +22,9 @@ class Agent:
 
 Every run method takes a keyword-only `session: Optional[Session] = None`.
 
-**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `as_tool`, `reset`
+**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `as_tool`
 
 `as_tool(name, description, *, annotations=None, timeout=None) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
-
-**Properties:** `messages`
 
 See [Agents guide](guide/agents.md) for full documentation.
 

@@ -3,7 +3,7 @@ title: Sessions
 description: Keep conversations apart, and save and load them.
 ---
 
-A `Session` holds one conversation: its transcript (user and assistant messages, tool calls, tool results and reasoning blocks), its `id`, and the usage and cost of every run in it. Pass it to any run with `session=`; the agent then reads and extends the session's transcript and leaves its own history alone, so one agent can serve many conversations, also at the same time.
+A `Session` holds one conversation: its transcript (user and assistant messages, tool calls, tool results and reasoning blocks), its `id`, and the usage and cost of every run in it. Pass it to any run with `session=`; the run then reads and extends the session's transcript, so one agent can serve many conversations, also at the same time. A run without a session starts from a fresh transcript and keeps nothing once it ends: sessions are how a conversation continues.
 
 ```python
 from cyclops import Agent, AgentConfig, Session
@@ -17,7 +17,7 @@ print(agent.run("What is my name?", session=session))
 print(session.id, len(session.messages), session.usage)
 ```
 
-Every entry point takes `session=`: `run`, `arun`, `run_with_response`, `arun_with_response`, `stream`, `astream`, `stream_events`, `astream_events` and `start`. Without a session, an agent keeps its own history in `agent.messages` as before.
+Every entry point takes `session=`: `run`, `arun`, `run_with_response`, `arun_with_response`, `stream`, `astream`, `stream_events`, `astream_events` and `start`.
 
 `session.usage` sums the usage of every run, including runs that fail or that `handle.cancel()` stops. Like a run's own `usage`, it becomes `None` once a run reports no usage.
 

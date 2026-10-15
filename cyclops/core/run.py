@@ -154,7 +154,8 @@ class _RunLoop:
             if self.config.hooks:
                 self.config.hooks.on_run_error(e)
             raise
-        # Steering the run had no step left for waits for the next run.
+        # Steering the run had no step left for waits for the session's next run;
+        # without a session it is dropped.
         run.history += [{"role": "user", "content": m} for m in run.steering]
         run.steering.clear()
         if self.config.hooks:

@@ -19,7 +19,7 @@ import json
 import math
 import re
 
-from cyclops import Agent, AgentConfig
+from cyclops import Agent, AgentConfig, Session
 from cyclops.toolkit import tool
 
 # ---------------------------------------------------------------------------
@@ -272,13 +272,14 @@ def demo_sync_tool_loop() -> None:
     print(f"\nTask: {task}\n")
     print("Running agent (watch it chain tools automatically)...\n")
 
-    result = agent.run(task)
+    session = Session()
+    result = agent.run(task, session=session)
 
     print("Final answer:")
     print(result)
 
-    # Show which tools were called (visible in history)
-    tool_turns = [msg for msg in agent.messages if msg.get("role") == "tool"]
+    # Show which tools were called (visible in the session's transcript)
+    tool_turns = [msg for msg in session.messages if msg.get("role") == "tool"]
     print(f"\nTotal tool calls made: {len(tool_turns)}")
     for t in tool_turns:
         print(f"  -> {t.get('name', 'unknown')}")
@@ -322,12 +323,13 @@ async def demo_async_tool_loop() -> None:
     print(f"\nTask: {task}\n")
     print("Running async agent...\n")
 
-    result = await agent.arun(task)
+    session = Session()
+    result = await agent.arun(task, session=session)
 
     print("Final answer:")
     print(result)
 
-    tool_turns = [msg for msg in agent.messages if msg.get("role") == "tool"]
+    tool_turns = [msg for msg in session.messages if msg.get("role") == "tool"]
     print(f"\nTotal tool calls made: {len(tool_turns)}")
     for t in tool_turns:
         print(f"  -> {t.get('name', 'unknown')}")
