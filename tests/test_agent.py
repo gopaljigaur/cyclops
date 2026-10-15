@@ -1,5 +1,9 @@
 """Tests for the Agent class"""
 
+import contextvars
+import gc
+import traceback
+import weakref
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1327,6 +1331,57 @@ def _run_tool_calls(agent, *calls):
     with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
         assert agent.run("go", session=session) == "done"
     return session.messages
+
+
+def test_a_failed_run_is_freed_without_the_cycle_collector():
+    """Its error keeps the message and traceback lines but holds no cycle."""
+
+    async def fail(**kwargs):
+        # Its frame keeps a copy of the run's context, as LiteLLM's frames do.
+        kwargs["context"] = contextvars.copy_context()
+        raise RuntimeError("boom")
+
+    agent = Agent(config=_make_config())
+    gc.disable()
+    try:
+        with patch("litellm.acompletion", new=fail):
+            result = agent.run_with_response("hi")
+        assert str(result.error) == "boom"
+        assert "in fail" in "".join(traceback.format_exception(result.error))
+        freed = weakref.ref(result)
+        del result
+        assert freed() is None
+    finally:
+        gc.enable()
+
+
+@pytest.mark.asyncio
+async def test_a_reused_error_leaves_frames_of_its_earlier_raise_alone():
+    """Frames past the run's own, as of a caller that caught it, keep running."""
+    import asyncio
+
+    error = RuntimeError("down")
+
+    async def fail(**kwargs):
+        raise error
+
+    async def caught_then_waits(release):
+        try:
+            raise error
+        except RuntimeError:
+            pass
+        await release
+        return "running"
+
+    release = asyncio.get_running_loop().create_future()
+    waiter = asyncio.create_task(caught_then_waits(release))
+    await asyncio.sleep(0)
+    with patch("litellm.acompletion", new=fail):
+        result = await Agent(config=_make_config()).arun_with_response("hi")
+    assert result.error is error
+    await asyncio.sleep(0)
+    release.set_result(None)
+    assert await waiter == "running"
 
 
 def test_duplicate_tool_names_are_rejected():

@@ -1,7 +1,10 @@
 """The step loop of a run: completions, tool calls, guards and limits."""
 
 import asyncio
+import traceback
+import weakref
 from contextvars import ContextVar
+from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -76,6 +79,19 @@ def _assistant_message(msg, content: Optional[str]) -> Dict[str, Any]:
     return message
 
 
+def _clear_frames(tb: Optional[TracebackType]) -> None:
+    """Clear a failed run's own frames, which lead its error's traceback.
+
+    The frames past them, of the code that raised the error and of any earlier
+    raise of it, are left: before Python 3.13 clearing a suspended frame closes
+    its coroutine.
+    """
+    for frame, _ in traceback.walk_tb(tb):
+        if not frame.f_globals["__name__"].startswith("cyclops."):
+            break
+        frame.clear()
+
+
 class _RunLoop:
     """The step loop of one run of an agent."""
 
@@ -100,7 +116,7 @@ class _RunLoop:
         run = self.run
         run.started = True
         # Tools called in this run see it, so a subagent can nest its run in it.
-        token = _current_loop.set(self)
+        token = _current_loop.set(weakref.ref(self))
         interrupted: Optional[asyncio.CancelledError] = None
         try:
             if run.cancelled:
@@ -118,6 +134,8 @@ class _RunLoop:
         except Exception as e:
             run.result.stop_reason = "error"
             run.result.error = e
+            # Its frames hold the run in a cycle; clear them once this returns.
+            asyncio.get_running_loop().call_soon(_clear_frames, e.__traceback__)
         finally:
             _current_loop.reset(token)
         session = run.session
@@ -279,7 +297,8 @@ class _RunLoop:
         return None
 
 
-# The loop of the run in progress in this context.
-_current_loop: ContextVar[Optional[_RunLoop]] = ContextVar(
+# The loop of the run in progress in this context. Weak, since contexts copied
+# during the run (by tasks, or LiteLLM) can outlive it.
+_current_loop: ContextVar[Optional["weakref.ref[_RunLoop]"]] = ContextVar(
     "cyclops_current_loop", default=None
 )
