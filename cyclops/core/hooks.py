@@ -1,7 +1,7 @@
 """Agent lifecycle hooks — standard event callbacks for the agent run loop."""
 
 from contextvars import ContextVar
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 _tool_call_id: ContextVar[Optional[str]] = ContextVar(
     "cyclops_tool_call_id", default=None
@@ -30,8 +30,11 @@ class AgentHooks:
     block the tool call; any other return value (including None) allows it.
     """
 
-    def on_run_start(self, input_message: str) -> None:
-        """Fired once when agent.run / agent.stream is called."""
+    def on_run_start(self, input_message: Union[str, List[Dict[str, Any]]]) -> None:
+        """Fired once when agent.run / agent.stream is called.
+
+        input_message is the run's text, or its list of content parts.
+        """
 
     def on_run_end(self, content: str) -> None:
         """Fired when a run completes, streamed or not."""

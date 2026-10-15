@@ -31,6 +31,7 @@ from cyclops.core.fallback import _complete_with_fallbacks, _Request, _requests
 from cyclops.core.hooks import RUN_STOPPED
 from cyclops.core.middleware import GuardContext
 from cyclops.core.providers import _every_deployment, _lacks_tools
+from cyclops.core.content import _Content
 from cyclops.core.run_state import _Run
 from cyclops.core.session import _SessionSaver
 from cyclops.core.tool_execution import (
@@ -115,7 +116,7 @@ class _RunLoop:
     def config(self) -> AgentConfig:
         return self.agent.config
 
-    async def execute(self, input_message: str) -> RunResult:
+    async def execute(self, input_message: _Content) -> RunResult:
         """Run one turn and emit its events, ending with RunFinished."""
         run = self.run
         run.started = True
@@ -160,7 +161,7 @@ class _RunLoop:
         if self.saver is not None:
             await self.saver.end(failed)
 
-    async def _loop(self, input_message: str) -> None:
+    async def _loop(self, input_message: _Content) -> None:
         run = self.run
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
@@ -200,7 +201,7 @@ class _RunLoop:
         if self.config.hooks:
             self.config.hooks.on_run_end(run.result.content)
 
-    async def _steps(self, input_message: str, mode: str) -> None:
+    async def _steps(self, input_message: _Content, mode: str) -> None:
         run, agent = self.run, self.agent
         run.history.append({"role": "user", "content": input_message})
         result = run.result
