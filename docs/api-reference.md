@@ -62,6 +62,9 @@ class AgentConfig(BaseModel):
     max_subagent_depth: int = 5
     max_concurrent_subagents: int = 10
     hooks: Optional[AgentHooks] = None
+    num_retries: int = 2
+    timeout: float = 600   # seconds
+    stream_idle_timeout: float = 120   # seconds
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool = False
     middleware: List[ToolMiddleware] = []

@@ -72,6 +72,9 @@ class AgentConfig(BaseModel):
     max_subagent_depth: int = 5
     max_concurrent_subagents: int = 10
     hooks: Optional[AgentHooks] = None
+    num_retries: int = 2
+    timeout: float = 600   # seconds
+    stream_idle_timeout: float = 120   # seconds
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
@@ -91,6 +94,9 @@ class AgentConfig(BaseModel):
 | `max_subagent_depth` | `5` | Most levels of subagent runs below one run. |
 | `max_concurrent_subagents` | `10` | Most subagent runs one run has going at once. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
+| `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
+| `timeout` | `600` | Seconds a completion request may take to respond; for a stream, until its first chunk. |
+| `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
 | `max_guard_rounds` | `3` | How many times per run guards may send the model back. |

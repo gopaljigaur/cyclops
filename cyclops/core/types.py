@@ -43,8 +43,25 @@ class AgentConfig(BaseModel):
     max_guard_rounds: int = Field(
         default=3, description="Most times per run guards may send the model back"
     )
+    num_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Retries of a completion after a rate limit, overload, 5xx, "
+        "timeout or connection error, before any of it has streamed",
+    )
+    timeout: float = Field(
+        default=600,
+        gt=0,
+        description="Seconds a completion request may take to respond; "
+        "for a stream, until its first chunk",
+    )
+    stream_idle_timeout: float = Field(
+        default=120,
+        gt=0,
+        description="Seconds a stream may go without a chunk after its first",
+    )
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
-    # api_base, extra_headers, num_retries, timeout, reasoning_effort, thinking.
+    # api_base, extra_headers, reasoning_effort, thinking.
     completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
     # Mark the system prompt and the latest message as cache breakpoints, for
     # providers that cache at cache_control markers.

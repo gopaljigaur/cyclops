@@ -715,7 +715,7 @@ def test_former_token_fields_are_rejected():
 
 
 def test_failed_run_returns_error_result_with_usage_so_far():
-    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    agent = Agent(config=_make_config(num_retries=0), tools=[_make_simple_tool()])
     error = litellm.APIConnectionError(
         message="down", llm_provider="openai", model="gpt-3.5-turbo"
     )
@@ -733,7 +733,7 @@ def test_failed_run_returns_error_result_with_usage_so_far():
 
 def test_error_result_follows_on_run_error():
     hooks = MagicMock(spec=AgentHooks)
-    agent = Agent(config=_make_config(hooks=hooks))
+    agent = Agent(config=_make_config(hooks=hooks, num_retries=0))
     error = litellm.APIConnectionError(
         message="down", llm_provider="openai", model="gpt-3.5-turbo"
     )
@@ -750,7 +750,7 @@ def test_error_result_follows_on_run_error():
 async def test_arun_raises_the_run_error():
     import asyncio
 
-    agent = Agent(config=_make_config())
+    agent = Agent(config=_make_config(num_retries=0))
     error = litellm.APIConnectionError(
         message="down", llm_provider="openai", model="gpt-3.5-turbo"
     )
@@ -1582,7 +1582,7 @@ def test_stream_events_carries_usage_of_every_step():
 
 @pytest.mark.asyncio
 async def test_failed_run_ends_events_with_error_and_astream_raises():
-    agent = Agent(config=_make_config())
+    agent = Agent(config=_make_config(num_retries=0))
     error = litellm.APIConnectionError(
         message="down", llm_provider="openai", model="gpt-3.5-turbo"
     )

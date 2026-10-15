@@ -85,7 +85,7 @@ def test_answer_is_the_tool_result():
 
 def test_failed_run_gives_an_error_result():
     lead, _ = _agents()
-    error = litellm.APIConnectionError(
+    error = litellm.BadRequestError(
         message="down", llm_provider="openai", model="gpt-3.5-turbo"
     )
     acompletion, _ = _scripted(
