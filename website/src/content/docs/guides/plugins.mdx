@@ -62,7 +62,7 @@ manager = PluginManager(registry)
 manager.register(WeatherToolkit())
 ```
 
-An optional `name` argument overrides the class name used as the plugin key.
+An optional `name` argument overrides the class name used as the plugin key. A name already in use raises `ValueError`, so pass `name` to register two toolkits of the same class.
 
 ### load_plugins
 
@@ -72,7 +72,7 @@ Discovers, instantiates and registers every toolkit under the `"cyclops.toolkits
 manager.load_plugins()
 ```
 
-Call this once at startup.
+Call this once per manager at startup, since a second call raises `ValueError` on the names it already registered.
 
 ### register_tools
 

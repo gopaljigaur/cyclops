@@ -546,8 +546,8 @@ class PluginManager:
 | Method | Description |
 |---|---|
 | `__init__(registry)` | Create a manager. Uses a fresh `ToolRegistry` if none is provided. |
-| `register(plugin, name)` | Manually register a `Toolkit` instance. `name` defaults to the class name. |
-| `load_plugins()` | Discover and load all toolkits registered under the `"cyclops.toolkits"` entry-point group. |
+| `register(plugin, name)` | Manually register a `Toolkit` instance. `name` defaults to the class name; a name already in use raises `ValueError`. |
+| `load_plugins()` | Instantiate and register every toolkit under the `"cyclops.toolkits"` entry-point group. Call once per manager. |
 | `register_tools()` | Push all tools from loaded plugins into the registry. |
 | `get_plugin_names()` | Return a list of registered plugin names. |
 

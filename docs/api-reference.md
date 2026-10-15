@@ -454,8 +454,8 @@ Loads and manages `Toolkit` plugins; populates a `ToolRegistry`.
 ```python
 class PluginManager:
     def __init__(self, registry: Optional[ToolRegistry] = None): ...
-    def register(self, plugin: Toolkit, name: Optional[str] = None) -> None: ...
-    def load_plugins(self) -> None: ...       # instantiates entry-point toolkits
+    def register(self, plugin: Toolkit, name: Optional[str] = None) -> None: ...  # raises ValueError on a used name
+    def load_plugins(self) -> None: ...       # instantiates entry-point toolkits; call once
     def register_tools(self) -> None: ...     # pushes tools into registry
     def get_plugin_names(self) -> List[str]: ...
 ```
