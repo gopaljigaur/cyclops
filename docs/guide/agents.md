@@ -26,7 +26,7 @@ config = AgentConfig(
 | `system_prompt` | `str \| None` | `None` | System instruction prepended to every conversation. |
 | `tool_mode` | `str` | `"auto"` | `"auto"` uses native function calling and switches this agent to `"naive"` if LiteLLM reports the model does not support tools; `"native"` forces it; `"naive"` uses prompt-based tool parsing (works with any model). |
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
-| `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds included; at least 1. |
+| `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds and output retries included; at least 1. |
 | `max_total_tokens` | `int \| None` | `None` | Most tokens one run may use, checked between steps. |
 | `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
 | `max_subagent_depth` | `int` | `5` | Most levels of [subagent](subagents.md) runs below one run. |

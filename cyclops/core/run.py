@@ -16,12 +16,14 @@ from typing import (
 )
 
 import litellm
+from pydantic import ValidationError
 
 from cyclops.core.compaction import _context_window, _ContextWindow
 from cyclops.core.completion import _build_messages, _usage
 from cyclops.core.events import (
     Compacted,
     GuardRejected,
+    OutputRejected,
     ReasoningDelta,
     RunFinished,
     StepFinished,
@@ -216,8 +218,8 @@ class _RunLoop:
         # Without compaction the transcript is counted once a request overflows.
         window = _context_window(self.config, compaction, run.spend)
 
-        guard_rounds = 0
-        # Guard feedback waiting to be sent once another step is allowed.
+        guard_rounds = output_retries = 0
+        # Feedback waiting to be sent once another step is allowed.
         feedback: Optional[str] = None
         limit = self.config.max_steps
         for step in range(limit):
@@ -295,8 +297,17 @@ class _RunLoop:
             else:
                 assistant["content"] = content
                 run.history.append(assistant)
-                feedback = await self._guard_feedback(content)
-                if feedback is None:
+                feedback = self._validation_feedback(content)
+                if feedback is not None:
+                    if output_retries == self.config.output_retries:
+                        # The last answer stays the content, for the caller to see.
+                        result.content = content
+                        result.stop_reason = "output_validation"
+                        done = True
+                    else:
+                        output_retries += 1
+                        run.emit(OutputRejected(feedback=feedback))
+                elif (feedback := await self._guard_feedback(content)) is None:
                     result.content = content
                     done = True
                 elif guard_rounds == self.config.max_guard_rounds:
@@ -372,6 +383,25 @@ class _RunLoop:
         if self.saver is not None:
             self.saver.rewritten()
         return True
+
+    def _validation_feedback(self, content: str) -> Optional[str]:
+        """The answer's response_model validation errors as a retry prompt, else None."""
+        if self.response_model is None:
+            return None
+        try:
+            self.response_model.model_validate_json(content)
+        except ValidationError as e:
+            # The model has the answer, so the errors leave out its input.
+            errors = e.json(
+                include_url=False, include_context=False, include_input=False, indent=2
+            )
+            count = e.error_count()
+            plural = "s" if count != 1 else ""
+            return (
+                f"{count} validation error{plural}:\n```json\n{errors}\n```\n\n"
+                "Fix the errors and try again."
+            )
+        return None
 
     async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""

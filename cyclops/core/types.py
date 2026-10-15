@@ -71,7 +71,8 @@ class AgentConfig(BaseModel):
     max_steps: int = Field(
         default=10,
         ge=1,
-        description="Most LLM completions in one run, guard rounds included",
+        description="Most LLM completions in one run, guard rounds and output "
+        "retries included",
     )
     max_total_tokens: Optional[int] = Field(
         default=None, description="Most tokens one run may use, checked between steps"
@@ -100,6 +101,12 @@ class AgentConfig(BaseModel):
     guards: List[Guard] = Field(default_factory=list)
     max_guard_rounds: int = Field(
         default=3, description="Most times per run guards may send the model back"
+    )
+    output_retries: int = Field(
+        default=1,
+        ge=0,
+        description="Most times per run an answer that fails response_model "
+        "validation is sent back with the errors",
     )
     num_retries: int = Field(
         default=2,
@@ -236,6 +243,7 @@ StopReason = Literal[
     "max_steps",
     "budget",
     "guard",
+    "output_validation",
     "cancelled",
     "error",
 ]
@@ -248,7 +256,9 @@ class RunResult(BaseModel):
     model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     content: str = Field(
-        default="", description="The final answer; empty unless the run completed"
+        default="",
+        description="The final answer; empty unless the run completed, or the "
+        "last answer when it failed response_model validation",
     )
     tool_calls: List[ToolCall] = Field(
         default_factory=list, description="Tools called during the run"

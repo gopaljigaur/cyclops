@@ -69,7 +69,10 @@ class Agent:
         starts.
         With stream=False the completions aren't streamed, so each step's text
         arrives as one TextDelta. response_model asks the provider for that
-        schema when it supports one; the result's content is the raw JSON.
+        schema when it supports one; the result's content is the raw JSON. An
+        answer that fails its validation is sent back with the errors up to
+        config.output_retries times, then the run ends with stop_reason
+        "output_validation" and that answer as its content.
         With a session, the run reads and extends the session's transcript and
         adds its usage to the session; without one, it starts a fresh transcript.
         """
@@ -101,7 +104,11 @@ class Agent:
         *,
         session: Optional[Session] = None,
     ) -> Any:
-        """Run the agent asynchronously. Returns str or Pydantic model instance."""
+        """Run the agent asynchronously. Returns str or Pydantic model instance.
+
+        An answer that still fails response_model validation after
+        config.output_retries retries raises pydantic.ValidationError.
+        """
         result = await self.start(
             input_message,
             stream=False,

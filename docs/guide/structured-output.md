@@ -39,7 +39,7 @@ Agents with tools send the schema only when LiteLLM's model map lists native str
 
 Nothing is added to the prompt. Without a schema (a model without `supports_response_schema`, or a tool agent whose model lacks native structured output), the reply is only validated, so ask for JSON matching the model in the system prompt.
 
-Either way the reply is passed to `response_model.model_validate_json(content)`. If the JSON is valid the instance is returned; if it is invalid a `pydantic.ValidationError` is raised.
+Either way the run validates each answer with `response_model.model_validate_json(content)` before it ends, and sends an answer that fails back to the model with the errors (see [Retries](#retries)).
 
 ## Examples with various model shapes
 
@@ -131,9 +131,38 @@ async def main():
 asyncio.run(main())
 ```
 
+## Retries
+
+An answer that fails validation is kept in the conversation and followed by a user message with the validation errors, the way [guard](hooks.md#end-of-run-guards) feedback is, and the model answers again:
+
+````text
+1 validation error:
+```json
+[
+  {
+    "type": "float_parsing",
+    "loc": [
+      "temperature_f"
+    ],
+    "msg": "Input should be a valid number, unable to parse string as a number"
+  }
+]
+```
+
+Fix the errors and try again.
+````
+
+`AgentConfig.output_retries` (default `1`) caps how many times per run that happens. If the answer still fails after that, the run ends with `stop_reason="output_validation"` and the last answer as `content`, and `run()` and `arun()` raise its `pydantic.ValidationError`. With `output_retries=0` the first invalid answer ends the run.
+
+```python
+config = AgentConfig(model="groq/llama-3.1-8b-instant", output_retries=3)
+```
+
+Each retry is a step, so it counts against `max_steps` and the token and cost budgets; if a limit stops the run first, the run ends with that limit's stop reason and the errors are not added to the conversation. Guards judge only an answer that validates. In a streamed run the invalid answer has already streamed when an `OutputRejected` [event](streaming.md) marks it, and the retry streams after it.
+
 ## Error handling
 
-If the model returns malformed JSON, `model_validate_json` raises `pydantic.ValidationError`. Catch it and retry or fall back to plain text:
+When the retries run out, `run()` and `arun()` raise the last answer's `pydantic.ValidationError`. Catch it to fall back to plain text:
 
 ```python
 from pydantic import ValidationError
@@ -145,6 +174,8 @@ except ValidationError as e:
     # Optionally fall back:
     text = agent.run("...")
 ```
+
+`agent.start(..., response_model=MyModel)` raises nothing: the result has `stop_reason="output_validation"` and the last answer as `content`.
 
 /// note
 Not all models reliably produce valid JSON on the first attempt. This matters most where no schema is sent. For smaller models, add `"Respond with valid JSON only."` to the system prompt.

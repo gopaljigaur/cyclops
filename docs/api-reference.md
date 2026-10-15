@@ -82,6 +82,7 @@ class AgentConfig(BaseModel):
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
+    output_retries: int = 1
 ```
 
 ---
@@ -155,7 +156,7 @@ class RunResult(BaseModel):
     run_id: str
     stop_reason: Literal[
         "completed", "max_tokens", "content_filter",
-        "max_steps", "budget", "guard", "cancelled", "error",
+        "max_steps", "budget", "guard", "output_validation", "cancelled", "error",
     ]
     finish_reason: Optional[str]
     steps: int
@@ -191,6 +192,7 @@ class ReasoningDelta(Event):   text: str
 class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
+class OutputRejected(Event):   feedback: str
 class ModelFallback(Event):    model: str; fallback_model: str; error: Optional[Exception]; usage: Optional[Usage]
 class StepFinished(Event):     step: int; model: Optional[str]; usage: Optional[Usage]; finish_reason: Optional[str]
 class Compacted(Event):        summary: str; replaced_messages: int; tokens_before: int; tokens_after: int
