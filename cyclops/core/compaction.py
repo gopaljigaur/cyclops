@@ -4,7 +4,10 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
-from litellm.constants import DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET
+from litellm.constants import (
+    DEFAULT_IMAGE_TOKEN_COUNT,
+    DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET,
+)
 
 from cyclops.core.completion import _acompletion, _completion_kwargs, _usage
 from cyclops.core.events import Compacted
@@ -140,6 +143,9 @@ class _ContextWindow:
             messages=[message],
             count_response_tokens=True,
             use_default_image_token_count=True,
+            # Content LiteLLM can't count, such as input_audio parts, counts
+            # as one image does.
+            default_token_count=DEFAULT_IMAGE_TOKEN_COUNT,
         )
 
     def tokens(self, history: List[Dict[str, Any]]) -> int:

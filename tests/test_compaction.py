@@ -159,6 +159,21 @@ def test_a_request_below_the_threshold_is_sent_as_it_is():
     assert len(session.messages) == 3
 
 
+def test_audio_input_is_counted():
+    agent = Agent(AgentConfig(model=MODEL, compaction=Compaction()))
+    audio = {
+        "type": "input_audio",
+        "input_audio": {"data": "UklGRg==", "format": "wav"},
+    }
+
+    with _replies("Heard it.") as mock:
+        assert (
+            agent.run([{"type": "text", "text": "Transcribe."}, audio]) == "Heard it."
+        )
+
+    assert mock.call_count == 1
+
+
 def test_without_compaction_nothing_is_summarized():
     agent = Agent(AgentConfig(model=MODEL))
     session = _long_session()
