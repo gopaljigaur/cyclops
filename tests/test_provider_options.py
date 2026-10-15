@@ -1149,3 +1149,21 @@ def test_every_deployment_asks_litellm_once_per_model_and_provider():
             _every_deployment(AgentConfig(model="gpt-4o-mini"), _lacks_tools)
 
     assert lookup.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "model, fallback",
+    [
+        ("anthropic/claude-sonnet-4-5", "gpt-4o-mini"),
+        ("gpt-4o-mini", "anthropic/claude-sonnet-4-5"),
+        ("anthropic/claude-sonnet-4-5", "gemini/gemini-2.5-flash"),
+    ],
+)
+def test_every_deployment_counts_fallback_models_when_asked(model, fallback):
+    config = AgentConfig(model=model, fallback_models=[fallback])
+    check = _takes_tool_message_images
+
+    assert _every_deployment(config, check, fallbacks=True) is (
+        check(model, None) and check(fallback, None)
+    )
+    assert _every_deployment(config, check) is check(model, None)
