@@ -15,6 +15,7 @@ class Agent:
         self,
         config: AgentConfig,
         tools: Optional[List] = None,
+        skills: Optional[Skills] = None,
     ): ...
 ```
 
@@ -27,7 +28,7 @@ class Agent:
 | `arun` | `arun(input_message: str, response_model: Optional[Type] = None) -> Any` | Run asynchronously. |
 | `run_with_response` | `run_with_response(input_message: str) -> RunResult` | Run synchronously; return the result, stop reason, usage and cost. |
 | `arun_with_response` | `arun_with_response(input_message: str) -> RunResult` | Run asynchronously; return the result, stop reason, usage and cost. |
-| `stream` | `stream(input_message: str) -> Iterator[str]` | Sync token stream. True streaming for no-tools agents; tool loop then stream for tool agents. |
+| `stream` | `stream(input_message: str) -> Iterator[str]` | Sync token stream of every completion in the run, including steps that call tools. |
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
 | `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
 | `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
@@ -320,6 +321,44 @@ class Message(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    thinking_blocks: Optional[List[Dict[str, Any]]] = None
+```
+
+---
+
+## cyclops.skills
+
+### Skills
+
+Skills found in the subfolders of one or more directories. Each skill is a folder with a `SKILL.md`. Raises `FileNotFoundError` for a missing directory and `ValueError` for a duplicate name.
+
+```python
+class Skills:
+    def __init__(self, *dirs: Union[str, Path]): ...
+    skills: Dict[str, Skill]
+    tool: Tool  # load_skill
+    def prompt(self) -> str: ...
+    def load(self, name: str, file: Optional[str] = None) -> str: ...
+```
+
+See [Skills guide](/guides/skills/) for full documentation.
+
+---
+
+### Skill
+
+One parsed `SKILL.md`. Extra frontmatter fields are ignored.
+
+```python
+class Skill(BaseModel):
+    name: str          # lowercase letters, digits and hyphens; matches the folder
+    description: str   # 1 to 1024 characters
+    path: Path         # the skill's folder
+    body: str          # the markdown after the frontmatter
+
+    @classmethod
+    def from_file(cls, file: Path) -> "Skill": ...
 ```
 
 ---
@@ -403,9 +442,47 @@ class Tool(BaseTool):
 
 ---
 
+### ToolResult
+
+What a tool may return instead of a plain value. See [Tool results](/guides/tools/#tool-results).
+
+```python
+class ToolResult(BaseModel):
+    success: bool = True
+    result: Any = None                   # structured data
+    error: Optional[str] = None
+    content: List[TextContent | ImageContent] = []
+
+    @property
+    def is_error(self) -> bool: ...
+    @classmethod
+    def success_result(cls, result: Any) -> "ToolResult": ...
+    @classmethod
+    def error_result(cls, error: str, result: Any = None) -> "ToolResult": ...
+    def to_message_content(self) -> Union[str, List[Dict[str, Any]]]: ...
+    @staticmethod
+    def message_text(content: Union[str, List[Dict[str, Any]]]) -> str: ...   # without images
+```
+
+---
+
+### ToolAnnotations
+
+Behaviour hints mirroring MCP tool annotations. Each field defaults to `None`.
+
+```python
+class ToolAnnotations(BaseModel):
+    read_only: Optional[bool] = None
+    destructive: Optional[bool] = None
+    idempotent: Optional[bool] = None
+    open_world: Optional[bool] = None
+```
+
+---
+
 ### ToolRegistry
 
-Named collection of tools with lookup and execution helpers.
+Named collection of tools with lookup and execution helpers. `register()` raises `ValueError` for a name that is already registered.
 
 ```python
 class ToolRegistry:
@@ -421,7 +498,7 @@ class ToolRegistry:
 
 | Method | Description |
 |---|---|
-| `register(tool)` | Add a `BaseTool` instance to the registry. |
+| `register(tool)` | Add a `BaseTool` instance to the registry. Raises `ValueError` if the name is taken. |
 | `register_function(name, description, func)` | Wrap a function in a `Tool` and register it. |
 | `get_tool(name)` | Return the named tool, or `None` if not found. |
 | `list_tools()` | Return a list of all registered tool names. |
@@ -472,34 +549,104 @@ class PluginManager:
 
 ### MCPClient
 
-Connects to an external MCP server over stdio.
+Async client for MCP servers over stdio, streamable HTTP or SSE, running on the caller's event loop.
 
 ```python
 class MCPClient:
-    async def connect_stdio(
-        self, command: List[str], env: Optional[Dict[str, str]] = None
-    ) -> None: ...
-    async def disconnect(self) -> None: ...
-    async def list_tools(self) -> List[Dict[str, Any]]: ...
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> str: ...
+    async def attach(
+        self,
+        name: str,
+        command: Optional[List[str]] = None,
+        *,
+        url: Optional[str] = None,
+        transport: Optional[Literal["stdio", "http", "sse"]] = None,
+        env: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        auth: Optional[httpx.Auth] = None,
+        prefix: Union[str, bool] = True,
+        connect_timeout: float = 30.0,
+        call_timeout: Optional[float] = 60.0,
+        idle_timeout: Optional[float] = None,
+        reconnection: ReconnectionOptions = ReconnectionOptions(),
+    ) -> List[MCPClientTool]: ...
+    async def detach(self, name: str) -> None: ...
+    async def aclose(self) -> None: ...
+    def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
+    def status(self, server: str) -> ServerStatus: ...
+    async def call_tool(
+        self, server: str, tool: str, arguments: Dict[str, Any]
+    ) -> CallToolResult: ...
 
     @property
-    def is_connected(self) -> bool: ...
+    def servers(self) -> List[str]: ...
+```
+
+`MCPClient` is an async context manager; leaving it calls `aclose()`.
+
+| Method / Property | Description |
+|---|---|
+| `attach(name, command, *, url, ...)` | Connect to a server and return its tools. Pass `command` for stdio or `url` for streamable HTTP (`transport="sse"` for SSE). Attaching an existing name replaces that server. |
+| `detach(name)` | Disconnect a server and drop its tools. Unknown names are ignored. |
+| `aclose()` | Disconnect every server. |
+| `tools(servers)` | Tools of the given servers, or of every attached server. |
+| `status(server)` | The server's `ServerStatus`: its connection state and last error. |
+| `call_tool(server, tool, arguments)` | Call a tool by its remote name and return the raw `CallToolResult`. |
+| `servers` | Names of the attached servers. |
+
+```python
+@dataclass(frozen=True)
+class ReconnectionOptions:
+    initial_reconnection_delay: float = 1.0
+    max_reconnection_delay: float = 30.0
+    reconnection_delay_grow_factor: float = 2.0
+    max_retries: int = 5
+
+
+@dataclass(frozen=True)
+class ServerStatus:
+    state: Literal["connecting", "connected", "disconnected", "failed"]
+    error: Optional[str] = None
+```
+
+---
+
+### MCPClientTool
+
+A `BaseTool` for one tool on an attached server. Await `execute()` on the loop that attached the server. It returns a `ToolResult`: an error result when the server sets `isError` or the call fails, otherwise text and image `content` blocks with `structuredContent` as `result`. `definition.input_schema` is the server's input schema, unchanged.
+
+---
+
+### MCPBridge
+
+Sync wrapper that runs an `MCPClient` on a background event loop. Its tools run each call on that loop, so they can be awaited from any loop.
+
+```python
+class MCPBridge:
+    client: MCPClient
+    def attach(self, name: str, command: Optional[List[str]] = None, **kwargs) -> List[MCPClientTool]: ...
+    def detach(self, name: str) -> None: ...
+    def tools(self, servers: Optional[Sequence[str]] = None) -> List[MCPClientTool]: ...
+    def status(self, name: str) -> ServerStatus: ...
+    def stop(self) -> None: ...
+
+    @property
+    def connected_names(self) -> List[str]: ...
 ```
 
 | Method / Property | Description |
 |---|---|
-| `connect_stdio(command, env)` | Connect to an MCP server via a subprocess command. `env` overrides environment variables. |
-| `disconnect()` | Cleanly shut down the connection and release the subprocess. |
-| `list_tools()` | Return available tools as a list of dicts with `"name"`, `"description"`, and `"input_schema"`. |
-| `call_tool(name, arguments)` | Call a tool and return its result as a string. |
-| `is_connected` | `True` if currently connected to a server. |
+| `attach(name, command, **kwargs)` | Sync `MCPClient.attach`; takes the same arguments. |
+| `detach(name)` | Disconnect a server and drop its tools. |
+| `tools(servers)` | Tools of the given servers, or of every attached server. |
+| `status(name)` | The server's `ServerStatus`. |
+| `stop()` | Disconnect every server and stop the background loop. |
+| `connected_names` | Names of the attached servers. |
 
 ---
 
 ### MCPServer
 
-Exposes Cyclops tools as an MCP server over stdio.
+Exposes Cyclops tools as an MCP server over stdio. A tool's `ToolResult` content blocks are served as MCP text and image content; a tool that raises or returns an error result is served with `isError` set.
 
 ```python
 class MCPServer:
