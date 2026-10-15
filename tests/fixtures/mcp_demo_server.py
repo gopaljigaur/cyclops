@@ -1,8 +1,11 @@
 """Small MCPServer for the client tests.
 
-Usage: mcp_demo_server.py [stdio | streamable-http PORT | sse PORT | no-get PORT]
+Usage: mcp_demo_server.py [stdio | streamable-http PORT | sse PORT | no-get PORT
+                          | refuse PORT]
 
-``no-get`` serves streamable HTTP but answers every GET with 404.
+``no-get`` serves streamable HTTP but answers every GET with 404. ``refuse``
+serves streamable HTTP but answers a call to ``refused`` with 404, as a server
+that forgot the session while its other calls go on.
 """
 
 import asyncio
@@ -90,6 +93,39 @@ def no_get(app):
     return serve
 
 
+def refuse(app):
+    async def serve(scope, receive, send):
+        if scope["type"] != "http" or scope["method"] != "POST":
+            return await app(scope, receive, send)
+        body, more = b"", True
+        while more:
+            message = await receive()
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+        if b'"name":"refused"' in body.replace(b" ", b""):
+            await send({"type": "http.response.start", "status": 404, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if replayed:
+                return await receive()
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await app(scope, replay, send)
+
+    return serve
+
+
+@mcp.tool()
+def refused() -> str:
+    """Answered 404 by a ``refuse`` server"""
+    return "ran"
+
+
 @mcp.tool()
 def pid() -> int:
     """The server's process id"""
@@ -117,10 +153,11 @@ def crash() -> str:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["no-get"]:
+    if sys.argv[1:2] in (["no-get"], ["refuse"]):
         import uvicorn
 
-        uvicorn.run(no_get(mcp.streamable_http_app()), port=int(sys.argv[2]))
+        wrap = no_get if sys.argv[1] == "no-get" else refuse
+        uvicorn.run(wrap(mcp.streamable_http_app()), port=int(sys.argv[2]))
     elif len(sys.argv) > 2:
         mcp.run(sys.argv[1], port=int(sys.argv[2]))
     else:
