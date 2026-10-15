@@ -245,9 +245,11 @@ class _RunLoop:
             ]
             if window is not None and compaction is not None:
                 self._compacted(await window.compact_if_needed(run.history, compaction))
-            model, response = await self._complete(
-                window, system_prompt, requests, streamed
-            )
+            answer = await self._complete(window, system_prompt, requests, streamed)
+            if answer is None:
+                result.stop_reason = "budget"
+                return
+            model, response = answer
             if self.config.hooks:
                 self.config.hooks.on_llm_end(response)
             del run.steering[:steered]
@@ -322,9 +324,10 @@ class _RunLoop:
         system_prompt: Optional[str],
         requests: List[_Request],
         streamed: bool,
-    ) -> Tuple[str, Any]:
+    ) -> Optional[Tuple[str, Any]]:
         """The model that answered a step, and its completion, kept within the
-        context window of the configured model.
+        context window of the configured model; None if a refusal spent the
+        run's budget before the next model.
 
         Once the transcript is counted, max_tokens is lowered to the room the
         request leaves. On an overflow each remedy is tried at most once: a

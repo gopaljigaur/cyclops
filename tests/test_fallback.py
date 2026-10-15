@@ -1,5 +1,6 @@
 """Fallback models: when a step's completion goes to the next model."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -11,6 +12,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 from opentelemetry.trace import StatusCode
+from pydantic import BaseModel
 
 from cyclops.core import completion
 from cyclops.core.agent import Agent
@@ -19,6 +21,7 @@ from cyclops.core.hooks import AgentHooks
 from cyclops.core.types import AgentConfig
 from cyclops.observability import TelemetryHooks
 from cyclops.toolkit.tool import Tool
+from cyclops.toolkit.types import ImageContent, TextContent, ToolResult
 
 PRIMARY = "gpt-4o-mini"
 FALLBACK = "gpt-4o"
@@ -48,6 +51,28 @@ async def _stream(*items):
         if isinstance(item, BaseException):
             raise item
         yield item
+
+
+def _tool_call(name: str):
+    return litellm.ModelResponse(
+        model=FALLBACK,
+        choices=[
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": name, "arguments": "{}"},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    )
 
 
 def _overloaded():
@@ -155,25 +180,7 @@ async def test_cost_and_step_are_the_answering_models():
 
 async def test_every_step_starts_with_the_model():
     tool = Tool("work", "Does work", lambda: "done")
-    call = litellm.ModelResponse(
-        model=FALLBACK,
-        choices=[
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "c1",
-                            "type": "function",
-                            "function": {"name": "work", "arguments": "{}"},
-                        }
-                    ],
-                },
-                "finish_reason": "tool_calls",
-            }
-        ],
-    )
+    call = _tool_call("work")
     mock = AsyncMock(side_effect=[_quota_spent(), call, _response(PRIMARY)])
     with patch("litellm.acompletion", new=mock):
         events = await _events(Agent(_config(), tools=[tool]))
@@ -298,3 +305,76 @@ async def test_telemetry_spans_name_the_answering_model():
 def test_fallback_models_and_a_router_are_not_both_set():
     with pytest.raises(ValueError, match="router"):
         AgentConfig(model=PRIMARY, fallback_models=[FALLBACK], router=MagicMock())
+
+
+async def test_tool_images_stay_in_the_tool_message_only_if_every_model_takes_them():
+    photo = Tool(
+        "photo",
+        "An image",
+        lambda: ToolResult(
+            content=[
+                TextContent(text="a pixel"),
+                ImageContent(data="AAAA", mime_type="image/png"),
+            ]
+        ),
+    )
+    sent = []
+    for fallbacks in ([], [FALLBACK]):
+        config = AgentConfig(
+            model="anthropic/claude-sonnet-4-5", fallback_models=fallbacks
+        )
+        mock = AsyncMock(side_effect=[_tool_call("photo"), _response(PRIMARY)])
+        with patch("litellm.acompletion", new=mock):
+            await Agent(config, tools=[photo]).arun("hi")
+        messages = mock.call_args_list[1].kwargs["messages"]
+        (tool_message,) = [m for m in messages if m["role"] == "tool"]
+        sent.append(tool_message["content"])
+
+    alone, chained = sent
+    assert isinstance(alone, list)
+    assert chained == "a pixel"
+
+
+async def test_refusal_past_the_budget_stops_the_run():
+    refused = _response(PRIMARY, "", "content_filter")
+    mock = AsyncMock(side_effect=[refused, _response(FALLBACK)])
+    with patch("litellm.acompletion", new=mock):
+        events = await _events(Agent(_config(max_total_tokens=1000)))
+
+    result = events[-1].result
+    assert result.stop_reason == "budget"
+    assert result.usage.total_tokens == USAGE["total_tokens"]
+    assert _models(mock) == [PRIMARY]
+    assert not any(isinstance(e, ModelFallback) for e in events)
+
+
+async def test_cancel_during_a_fallback_attempt():
+    started = asyncio.Event()
+
+    async def complete(**kwargs):
+        if kwargs["model"] == PRIMARY:
+            raise _quota_spent()
+        started.set()
+        await asyncio.Event().wait()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=complete)):
+        handle = Agent(_config()).start("hi", stream=False)
+        await started.wait()
+        handle.cancel()
+        result = await handle
+
+    assert result.stop_reason == "cancelled"
+
+
+async def test_each_model_gets_the_response_format_it_supports():
+    class Answer(BaseModel):
+        text: str
+
+    config = AgentConfig(model=PRIMARY, fallback_models=["gpt-4"], num_retries=0)
+    mock = AsyncMock(side_effect=[_quota_spent(), _response("gpt-4", '{"text": "ok"}')])
+    with patch("litellm.acompletion", new=mock):
+        await Agent(config).arun("hi", response_model=Answer)
+
+    first, second = (call.kwargs for call in mock.call_args_list)
+    assert first["response_format"] is Answer
+    assert "response_format" not in second

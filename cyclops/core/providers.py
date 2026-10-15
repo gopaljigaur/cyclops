@@ -86,8 +86,9 @@ def _tools_unsupported(config: AgentConfig) -> bool:
 
 
 def _tool_message_images_supported(config: AgentConfig) -> bool:
-    """True if every deployment of the model takes images in a tool message."""
-    params = _deployments(config)
+    """True if every deployment of the model and every fallback model takes
+    images in a tool message, since they all read the same history."""
+    params = _deployments(config) + [{"model": m} for m in config.fallback_models]
     return bool(params) and all(
         _takes_tool_message_images(
             *litellm.get_llm_provider(

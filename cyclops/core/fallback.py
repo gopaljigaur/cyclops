@@ -68,8 +68,9 @@ async def _complete_with_fallbacks(
     messages: List[Dict[str, Any]],
     run: _Run,
     streamed: bool,
-) -> Tuple[str, Any]:
-    """The model that answered a step, and its response.
+) -> Optional[Tuple[str, Any]]:
+    """The model that answered a step, and its response; None if a refusal
+    spent the run's budget before the next model.
 
     The models are tried in order, each after its own retries. Once a model
     emitted part of a stream, its error or refusal ends the step as without
@@ -96,6 +97,8 @@ async def _complete_with_fallbacks(
         # A refused completion is billed too.
         usage = _usage(response)
         run.spend(usage)
+        if run.over_budget():
+            return None
         run.emit(
             ModelFallback(
                 model=config.model, fallback_model=fallback.model, usage=usage
