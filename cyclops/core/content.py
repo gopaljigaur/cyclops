@@ -73,9 +73,10 @@ def _user_content(config: AgentConfig, content: UserContent) -> _Content:
         # Fallback models read the same history.
         if not _every_deployment(config, _takes_input, flag, fallbacks=True):
             raise ValueError(
-                f"{config.model} can't take {kind} input: LiteLLM's model map sets "
-                f"{flag} to false for it, a deployment or a fallback model; if "
-                "that is wrong, correct the entry with litellm.register_model"
+                f"{config.model}, one of its deployments or one of its fallback "
+                f"models can't take {kind} input: LiteLLM's model map sets {flag} "
+                "to false for one of them; if that is wrong, correct its entry with "
+                "litellm.register_model at startup"
             )
     return parts
 
