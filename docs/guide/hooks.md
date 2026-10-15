@@ -39,6 +39,7 @@ agent.run("What is the weather in London?")
 | `on_llm_start(messages)` | Before each LiteLLM completion call | `None` |
 | `on_llm_end(response)` | After each LiteLLM completion; for a stream, with the assembled response | `None` |
 | `on_llm_error(error)` | When a LiteLLM call raises an exception | `None` |
+| `on_compaction(summary, tokens_before, tokens_after)` | After a summary replaced older messages, in a run or through `agent.compact()`. See [Context window](agents.md#context-window). | `None` |
 | `on_tool_start(tool_name, args)` | Before each tool execution | `"deny"` to block, anything else to allow |
 | `on_tool_end(tool_name, args, result)` | After a tool executes successfully; `result` is the tool's result as text | `None` |
 | `on_tool_error(tool_name, args, error)` | When a tool raises an exception or is cancelled | `None` |

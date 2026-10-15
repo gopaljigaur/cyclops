@@ -16,6 +16,7 @@ from typing import (
 
 import litellm
 
+from cyclops.core.compaction import _ContextWindow
 from cyclops.core.completion import (
     _acompletion,
     _build_messages,
@@ -24,6 +25,7 @@ from cyclops.core.completion import (
     _usage,
 )
 from cyclops.core.events import (
+    Compacted,
     GuardRejected,
     ReasoningDelta,
     RunFinished,
@@ -167,7 +169,9 @@ class _RunLoop:
         if self.config.hooks:
             self.config.hooks.on_run_start(input_message)
         try:
-            start = len(run.history)
+            # Compaction may replace earlier messages too, so the transcript is
+            # restored as a whole.
+            before = list(run.history)
             mode = self.agent._get_tool_mode()
             try:
                 await self._steps(input_message, mode)
@@ -177,7 +181,7 @@ class _RunLoop:
                 if not _tools_unsupported(self.config):
                     raise
                 self.agent._detected_tool_mode = "naive"
-                del run.history[start:]
+                run.history[:] = before
                 if self.saver is not None:
                     self.saver.rewritten()
                 await self._steps(input_message, "naive")
@@ -211,6 +215,10 @@ class _RunLoop:
         kwargs: Dict[str, Any] = {}
         system_prompt: Optional[str] = None
         executor = _ToolExecutor(self.config, tools.tools_by_name, run)
+        compaction = self.config.compaction
+        window = None
+        if compaction is not None:
+            window = _ContextWindow(self.config, compaction, run.spend)
 
         guard_rounds = 0
         # Guard feedback waiting to be sent once another step is allowed.
@@ -229,6 +237,8 @@ class _RunLoop:
                 system_prompt = _system_prompt(
                     self.config, agent.skills, tools.loaded, mode
                 )
+                if window is not None:
+                    window.request(system_prompt, kwargs.get("tools"))
             if feedback is not None:
                 run.history.append({"role": "user", "content": feedback})
                 feedback = None
@@ -238,6 +248,8 @@ class _RunLoop:
             run.history += [
                 {"role": "user", "content": m} for m in run.steering[:steered]
             ]
+            if window is not None:
+                self._compacted(await window.compact_if_needed(run.history))
             messages = _build_messages(run.history, system_prompt)
             response: Any
             if streamed:
@@ -312,6 +324,14 @@ class _RunLoop:
                 await self.saver.step()
 
         result.stop_reason = "max_steps"
+
+    def _compacted(self, event: Optional[Compacted]) -> None:
+        """Report a compaction, if there was one, and save the session whole next."""
+        if event is None:
+            return
+        self.run.emit(event)
+        if self.saver is not None:
+            self.saver.rewritten()
 
     async def _guard_feedback(self, content: str) -> Optional[str]:
         """Feedback from the first guard that has some, else None."""

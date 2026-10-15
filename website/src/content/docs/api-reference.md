@@ -37,6 +37,7 @@ With a `session_store`, every run with a session saves it there as `durability` 
 | `astream` | `astream(input_message: str) -> AsyncIterator[str]` | Async token stream. |
 | `stream_events` | `stream_events(input_message: str) -> Iterator[Event]` | Sync stream of typed run events, ending with `RunFinished`. |
 | `astream_events` | `astream_events(input_message: str) -> AsyncIterator[Event]` | Async stream of typed run events. |
+| `compact` | `compact(session: Session) -> bool` | Summarize the session's older messages now; `acompact` is the async form. See [Context window](/guides/agents/#context-window). |
 | `as_tool` | `as_tool(name: str, description: str, *, annotations: Optional[ToolAnnotations] = None, timeout: Optional[float] = None) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
 
 ---
@@ -80,6 +81,8 @@ class AgentConfig(BaseModel):
     thinking_budget: Optional[int] = None   # tokens
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool | Literal["5m", "1h"] = True
+    compaction: Optional[Compaction] = None
+    max_tool_output_chars: Optional[int] = None
     middleware: List[ToolMiddleware] = []
     guards: List[Guard] = []
     max_guard_rounds: int = 3
@@ -107,10 +110,26 @@ class AgentConfig(BaseModel):
 | `reasoning_effort` | `None` | Reasoning effort for models that take it; LiteLLM maps it per provider. See [Reasoning](/guides/agents/#reasoning). |
 | `thinking_budget` | `None` | Thinking tokens for models that take a budget; not with `reasoning_effort`. See [Reasoning](/guides/agents/#reasoning). |
 | `completion_kwargs` | `{}` | Extra LiteLLM completion arguments sent with every call. |
+| `compaction` | `None` | Summarize older messages once a request nears the model's input limit. See [Context window](/guides/agents/#context-window). |
+| `max_tool_output_chars` | `None` | Longest tool result text sent to the model; longer text is cut in the middle. |
 | `prompt_caching` | `True` | Cache breakpoints for providers that cache at markers; `"5m"` or `"1h"` sets the time to live, `False` sends none. See [Prompt caching](/guides/agents/#prompt-caching). |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
 | `max_guard_rounds` | `3` | How many times per run guards may send the model back. |
+
+---
+
+### Compaction
+
+When a run summarizes the older part of its transcript, and how. See [Context window](/guides/agents/#context-window).
+
+```python
+class Compaction(BaseModel):
+    threshold: float = 0.8   # of the model's max input tokens
+    keep: float = 0.2        # of the model's max input tokens, below threshold
+    model: Optional[str] = None   # the agent's model when None
+    prompt: str = ...        # the summarizing instruction
+```
 
 ---
 
@@ -206,6 +225,7 @@ class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dic
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
 class StepFinished(Event):     step: int; usage: Optional[Usage]; finish_reason: Optional[str]
+class Compacted(Event):        summary: str; replaced_messages: int; tokens_before: int; tokens_after: int
 class RunFinished(Event):      result: RunResult
 ```
 
@@ -254,6 +274,7 @@ class AgentHooks:
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
     def on_llm_end(self, response: Any) -> None: ...
     def on_llm_error(self, error: Exception) -> None: ...
+    def on_compaction(self, summary: str, tokens_before: int, tokens_after: int) -> None: ...
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]: ...
     def on_tool_end(self, tool_name: str, args: Dict[str, Any], result: str) -> None: ...
     def on_tool_error(self, tool_name: str, args: Dict[str, Any], error: BaseException) -> None: ...
@@ -267,6 +288,7 @@ class AgentHooks:
 | `on_llm_start` | Before each LiteLLM completion call | `None` |
 | `on_llm_end` | After each completion; for a stream, with the assembled response | `None` |
 | `on_llm_error` | When a LiteLLM call raises an exception | `None` |
+| `on_compaction` | After a summary replaced older messages | `None` |
 | `on_tool_start` | Before each tool execution | `"deny"` to block, anything else to allow |
 | `on_tool_end` | After a tool executes successfully | `None` |
 | `on_tool_error` | When a tool raises an exception or is cancelled | `None` |

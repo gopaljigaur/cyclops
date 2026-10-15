@@ -25,6 +25,8 @@ A run that fails or is cancelled leaves what it got to in the transcript: the us
 
 Don't run the same session twice at once: both runs would append to one transcript.
 
+A long session eventually outgrows the model's context window. With `compaction` set in the `AgentConfig`, a run replaces the session's older messages with a summary once a request nears the model's input limit, and `agent.compact(session)` (or `await agent.acompact(session)`) does it on demand, for example before saving. The summary is a message in the transcript, so a saved session stays compacted. See [Context window](/guides/agents/#context-window).
+
 ## Saving and loading
 
 A session is a Pydantic model with a stable JSON format that carries a `version` field (currently `1`):

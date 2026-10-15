@@ -63,6 +63,15 @@ class StepFinished(Event):
     )
 
 
+class Compacted(Event):
+    """The older part of the transcript was replaced by a summary of it."""
+
+    summary: str
+    replaced_messages: int = Field(description="Messages the summary replaced")
+    tokens_before: int = Field(description="Request tokens before, as counted")
+    tokens_after: int = Field(description="Request tokens after, as counted")
+
+
 class RunFinished(Event):
     """The run ended; always the last event."""
 
@@ -77,5 +86,6 @@ __all__ = [
     "ToolCallFinished",
     "GuardRejected",
     "StepFinished",
+    "Compacted",
     "RunFinished",
 ]

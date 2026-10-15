@@ -4,14 +4,16 @@ import asyncio
 from contextlib import aclosing
 from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple, Type
 
+from cyclops.core.compaction import _ContextWindow
+from cyclops.core.completion import _tool_to_openai_format
 from cyclops.core.events import Event, RunFinished, TextDelta
-from cyclops.core.run import _RunLoop
+from cyclops.core.run import _RunLoop, _system_prompt
 from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
-from cyclops.core.tool_search import SEARCH_TOOL_NAME
-from cyclops.core.types import AgentConfig, RunResult
+from cyclops.core.tool_search import SEARCH_TOOL_NAME, _ToolSearch
+from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolAnnotations
 
@@ -176,6 +178,37 @@ class Agent:
         finally:
             handle.cancel()
             await asyncio.wait([task])
+
+    def compact(self, session: Session) -> bool:
+        """Summarize the session's older messages now. See acompact."""
+        return _run_coroutine_sync(self.acompact, session)
+
+    async def acompact(self, session: Session) -> bool:
+        """Summarize the session's older messages now, as a run does past its threshold.
+
+        Uses config.compaction, or the Compaction defaults when it is None, and
+        adds the summary's usage to the session. Returns False, changing
+        nothing, when nothing but an earlier summary would be summarized.
+        Raises ValueError when LiteLLM knows no input limit for the model.
+        """
+
+        def spend(usage: Optional[Usage]) -> None:
+            if session.usage is None or usage is None:
+                session.usage = None
+            else:
+                session.usage += usage
+
+        mode = self._get_tool_mode()
+        # The tools a run starts with: deferred ones only once found.
+        loaded = _ToolSearch(self.tools, self._tools_by_name).loaded
+        window = _ContextWindow(
+            self.config, self.config.compaction or Compaction(), spend
+        )
+        tools = None
+        if mode == "native":
+            tools = [_tool_to_openai_format(t) for t in loaded]
+        window.request(_system_prompt(self.config, self.skills, loaded, mode), tools)
+        return await window.compact(session.messages) is not None
 
     def as_tool(
         self,

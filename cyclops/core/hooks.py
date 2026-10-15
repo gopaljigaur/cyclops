@@ -52,6 +52,11 @@ class AgentHooks:
     def on_llm_error(self, error: Exception) -> None:
         """Fired when a LiteLLM call raises."""
 
+    def on_compaction(
+        self, summary: str, tokens_before: int, tokens_after: int
+    ) -> None:
+        """Fired when a summary replaced the older part of the transcript."""
+
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         """Fired before each tool execution.
 
