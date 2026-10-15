@@ -10,7 +10,7 @@ import threading
 import tracemalloc
 from collections import Counter
 from dataclasses import astuple, dataclass
-from typing import Awaitable, Callable, Dict
+from typing import Awaitable, Callable, Dict, List
 
 from cyclops.core import sync
 
@@ -18,8 +18,8 @@ RUNS = 1000
 # On Python 3.10 LiteLLM fills caches of its own over about the first thousand runs.
 WARMUP = 1000 if sys.version_info < (3, 11) else 100
 
-# Thresholds of #89, on counts only.
-MAX_TRACED_BYTES_PER_RUN = 200
+# Thresholds of #89, on counts only; passing runs measure under 20 B per run.
+MAX_TRACED_BYTES_PER_RUN = 50
 MAX_TYPE_GROWTH = 50
 
 
@@ -37,6 +37,7 @@ class Resources:
 @dataclass
 class Soak:
     traced_bytes_per_run: float
+    top_growth: List[str]
     grown_types: Dict[str, int]
     cyclic_garbage: int
     before: Resources
@@ -86,6 +87,23 @@ async def settle() -> None:
             return
 
 
+async def _runs(run: Callable[[], Awaitable[object]], runs: int) -> int:
+    """Do runs, then return the cyclic garbage they left once collected."""
+    for _ in range(runs):
+        await run()
+    await asyncio.sleep(0.1)
+    garbage = gc.collect()
+    # Also lets the loop run what collecting finalized, such as generator closes.
+    await settle()
+    return garbage
+
+
+def _snapshot() -> tracemalloc.Snapshot:
+    return tracemalloc.take_snapshot().filter_traces(
+        [tracemalloc.Filter(False, tracemalloc.__file__)]
+    )
+
+
 async def soak(
     run: Callable[[], Awaitable[object]], runs: int = RUNS, warmup: int = WARMUP
 ) -> Soak:
@@ -99,20 +117,23 @@ async def soak(
     tracemalloc.start()
     gc.disable()
     try:
-        for _ in range(runs):
-            await run()
-        await asyncio.sleep(0.1)
-        cyclic_garbage = gc.collect()
-        gc.enable()
-        # Also lets the loop run what collecting finalized, such as generator closes.
-        await settle()
-        traced = tracemalloc.get_traced_memory()[0]
+        # Diff snapshots after a first slice, so objects only replaced during
+        # the runs, such as a cache entry rewritten, don't count as growth.
+        cyclic_garbage = await _runs(run, runs // 4)
+        first = _snapshot()
+        cyclic_garbage += await _runs(run, runs - runs // 4)
+        growth = _snapshot().compare_to(first, "lineno")
+        measured = runs - runs // 4
+        bytes_per_run = sum(s.size_diff for s in growth) / measured
+        top_growth = [str(s) for s in growth[:5]]
+        del first, growth
     finally:
         gc.enable()
         tracemalloc.stop()
     types_after = type_counts()
     return Soak(
-        traced_bytes_per_run=traced / runs,
+        traced_bytes_per_run=bytes_per_run,
+        top_growth=top_growth,
         grown_types={
             name: grown
             for name, count in types_after.items()
