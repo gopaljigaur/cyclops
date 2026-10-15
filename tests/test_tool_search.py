@@ -10,6 +10,7 @@ import pytest
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
 from cyclops.core.agent import Agent
+from cyclops.core.permissions import ToolPermissions
 from cyclops.core.session import Session
 from cyclops.core.tool_search import _ToolSearch
 from cyclops.mcp import MCPBridge, MCPClient
@@ -40,8 +41,8 @@ send_email = Tool(
 )
 
 
-def _call(name, **args):
-    return _make_tool_call(f"tc_{name}", name, json.dumps(args))
+def _call(name, id=None, **args):
+    return _make_tool_call(id or f"tc_{name}", name, json.dumps(args))
 
 
 def _sent_tools(mock):
@@ -134,6 +135,62 @@ async def test_search_ranks_by_keywords_and_ignores_the_rest():
         "send_email",
         "read_file",
     ]
+
+
+def test_searches_in_one_step_each_add_their_tools_once():
+    agent = Agent(_make_config(), tools=[read_file, send_email])
+
+    mock = _run(
+        agent,
+        [
+            _call("search_tools", id="tc_1", query="file"),
+            _call("search_tools", id="tc_2", query="email or file"),
+        ],
+    )
+
+    assert _sent_tools(mock)[1] == ["search_tools", "read_file", "send_email"]
+
+
+async def test_tools_not_loaded_rank_ahead_of_loaded_ones():
+    tools = _ToolSearch([read_file, send_email], {})
+    await tools.search("send email message")
+
+    found = await tools.search("send email message text file")
+
+    assert found.splitlines()[1:] == [
+        "- read_file: Read a text file.",
+        "- send_email: Send an email message.",
+    ]
+    assert [t.name for t in tools.loaded] == ["search_tools", "send_email", "read_file"]
+
+
+async def test_a_search_returns_at_most_ten_tools():
+    deferred = [
+        Tool(f"report_{i}", "Build a report.", lambda: "", defer_loading=True)
+        for i in range(12)
+    ]
+    tools = _ToolSearch(deferred, {})
+
+    found = await tools.search("report")
+
+    assert len(found.splitlines()) == 11
+    assert len(tools.loaded) == 11
+
+
+@pytest.mark.parametrize("allow", [["read_*"], ["read_*", "search_tools"]])
+def test_search_tools_needs_allowing_under_a_deny_default(allow):
+    permissions = ToolPermissions(default="deny", allow=allow)
+    agent = Agent(_make_config(middleware=[permissions]), tools=[read_file])
+
+    mock = _run(agent, [_call("search_tools", query="file")])
+
+    result = next(m["content"] for m in agent.messages if m["role"] == "tool")
+    if "search_tools" in allow:
+        assert result.endswith("- read_file: Read a text file.")
+        assert _sent_tools(mock)[1] == ["search_tools", "read_file"]
+    else:
+        assert result == "Error: Tool 'search_tools' is not permitted"
+        assert _sent_tools(mock)[1] == ["search_tools"]
 
 
 def test_no_search_tool_without_deferred_tools():

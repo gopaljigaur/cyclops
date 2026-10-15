@@ -74,8 +74,9 @@ class MCPClient:
         a string, or ``False`` for none. ``call_timeout`` bounds each call;
         ``idle_timeout`` closes a session no call has used for that long.
         ``None`` disables either. ``defer_loading`` defers every tool of the
-        server, so the model finds them with the agent's search tool. Attaching an existing name replaces that
-        server. The server's tools must be awaited on the loop that attached it.
+        server, so the model finds them with the agent's search tool.
+        Attaching an existing name replaces that server. The server's tools
+        must be awaited on the loop that attached it.
         """
         if (command is None) == (url is None):
             raise ValueError("Pass exactly one of command or url")

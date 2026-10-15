@@ -8,8 +8,8 @@ from cyclops.toolkit.types import ToolAnnotations
 
 SEARCH_TOOL_NAME = "search_tools"
 
-# Most tools one search loads.
-_MAX_RESULTS = 5
+# Most tools one search returns, as Pydantic AI's keyword search.
+_MAX_RESULTS = 10
 
 _DESCRIPTION = (
     "Search for more tools by keywords that describe what you need. The "
@@ -55,11 +55,12 @@ class _ToolSearch:
         """
         words = _words(query)
         scores = [(len(words & tool_words), t) for t, tool_words in self._index]
-        found = [
-            t
-            for score, t in sorted(scores, key=lambda s: -s[0])[:_MAX_RESULTS]
-            if score
-        ]
+        # Tools not loaded yet first, so loaded ones never crowd them out.
+        ranked = sorted(
+            ((score, t) for score, t in scores if score),
+            key=lambda s: (s[1] in self.loaded, -s[0]),
+        )
+        found = [t for _, t in ranked[:_MAX_RESULTS]]
         if not found:
             return f"No tools match '{query}'."
         new = [t for t in found if t not in self.loaded]

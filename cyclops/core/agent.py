@@ -9,8 +9,8 @@ from cyclops.core.run import _RunLoop
 from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Session
 from cyclops.core.subagents import AgentTool
-from cyclops.core.tool_search import SEARCH_TOOL_NAME
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
+from cyclops.core.tool_search import SEARCH_TOOL_NAME
 from cyclops.core.types import AgentConfig, RunResult
 from cyclops.skills import Skills
 from cyclops.toolkit.types import ToolAnnotations
