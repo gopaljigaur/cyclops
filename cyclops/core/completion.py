@@ -20,6 +20,12 @@ from cyclops.core.providers import (
 from cyclops.core.run_state import _Run
 from cyclops.core.types import AgentConfig, Usage
 
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as asyncio_timeout
+else:
+    # wait_for before 3.11 can drop a cancellation that comes as the chunk arrives.
+    from async_timeout import timeout as asyncio_timeout
+
 # Cache the system prompt (with the tools before it) and the conversation so far.
 _CACHE_POINTS = [
     {"location": "message", "role": "system"},
@@ -141,17 +147,9 @@ async def _acompletion(config: AgentConfig, /, **kwargs):
             await asyncio.sleep(delay)
 
 
-if sys.version_info >= (3, 11):
-
-    async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
-        async with asyncio.timeout(timeout):
-            return await chunks.__anext__()
-
-else:
-
-    async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
-        # Before 3.11 there is no asyncio.timeout; wait_for runs a task per chunk.
-        return await asyncio.wait_for(chunks.__anext__(), timeout)
+async def _next(chunks: AsyncIterator[Any], timeout: Optional[float]) -> Any:
+    async with asyncio_timeout(timeout):
+        return await chunks.__anext__()
 
 
 async def _astream_completion(
