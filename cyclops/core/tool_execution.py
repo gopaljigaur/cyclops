@@ -27,6 +27,8 @@ class _Rendered(NamedTuple):
     content: Union[str, List[Dict[str, Any]]]
     text: str
     is_error: bool
+    # The reason middleware gave for denying the call, if it did.
+    denied: Optional[str] = None
 
 
 def _render(result: ToolResult) -> _Rendered:
@@ -189,7 +191,8 @@ class _ToolExecutor:
 
     async def run_naive_tool_call(self, call: Dict[str, Any]) -> None:
         name = call["tool"]
-        _, rendered = await self._call_tool(None, name, call.get("args", {}))
+        args, rendered = await self._call_tool(None, name, call.get("args", {}))
+        self._record_denial(None, name, args, rendered)
         history = self.run.history
         history.append({"role": "assistant", "content": f"[Used tool: {name}]"})
         message: Any = f"Tool result: {rendered.text}"
@@ -232,6 +235,7 @@ class _ToolExecutor:
                     result=rendered.text,
                 )
             )
+            self._record_denial(tc.id, tc.function.name, args, rendered)
             content = rendered.content
             images = _images(content)
             if images and not _tool_message_images_supported(self.config):
@@ -242,6 +246,20 @@ class _ToolExecutor:
         # Must follow all tool messages of the round
         if moved_images:
             run.history.append({"role": "user", "content": moved_images})
+
+    def _record_denial(
+        self,
+        call_id: Optional[str],
+        name: str,
+        args: Dict[str, Any],
+        rendered: _Rendered,
+    ) -> None:
+        if rendered.denied is not None:
+            self.run.result.denied_tool_calls.append(
+                DeniedToolCall(
+                    id=call_id, name=name, arguments=args, reason=rendered.denied
+                )
+            )
 
     async def _execute_tool_call(self, tool_call) -> Tuple[Dict[str, Any], _Rendered]:
         """Parse a native tool call's arguments and run it once it may start.
@@ -338,18 +356,12 @@ class _ToolExecutor:
         timeout = self.config.tool_timeout if tool.timeout is None else tool.timeout
         allowed: List[ToolMiddleware] = []
         error: Optional[Exception] = None
+        denied: Optional[str] = None
         try:
             for m in middleware:
                 decision = await m.before_tool(call)
                 if isinstance(decision, Deny):
-                    self.run.result.denied_tool_calls.append(
-                        DeniedToolCall(
-                            id=call_id,
-                            name=name,
-                            arguments=call.arguments,
-                            reason=decision.reason,
-                        )
-                    )
+                    denied = decision.reason
                     result = ToolResult.error_result(decision.reason)
                     break
                 if decision is not None:
@@ -389,4 +401,4 @@ class _ToolExecutor:
         # Other middleware may change the result after the hooks rendered it.
         if hooks and hooks.rendered and not self.config.middleware:
             return call.arguments, hooks.rendered
-        return call.arguments, _render(result)
+        return call.arguments, _render(result)._replace(denied=denied)
