@@ -326,6 +326,25 @@ The run reads each completion's `finish_reason`, as LiteLLM normalizes it across
 
 A long conversation, or a large tool result, eventually outgrows the model's context window. Two settings keep requests within it: compaction summarizes older messages, and `max_tool_output_chars` caps each tool result. A request that still overflows is retried with what fits. Both are off by default, as in other agent libraries, since compaction makes an extra completion and replaces what the model saw with a summary.
 
+Compaction and overflow recovery take the model's limits from LiteLLM. For Ollama, Lemonade and Hugging Face models Cyclops reads only LiteLLM's model map, since LiteLLM's `get_model_info` would ask the provider's server and block the run. A model the map lacks, such as `ollama/qwen3:4b`, gets no limits: compaction raises `ValueError` and an overflow is not retried. Register its limits at startup, keyed by the exact model string, with the context length your server runs it with:
+
+```python
+import litellm
+
+litellm.register_model(
+    {
+        "ollama/qwen3:4b": {
+            "max_input_tokens": 32768,
+            "max_output_tokens": 8192,
+            "litellm_provider": "ollama",
+            "mode": "chat",
+        }
+    }
+)
+```
+
+Registering it also stops LiteLLM's own `/api/show` requests: for an Ollama model its map lacks, LiteLLM prices each completion by asking the server, four or five requests per completion, sent to `OLLAMA_API_BASE` or localhost even when the model has its own `api_base`.
+
 ### Compaction
 
 ```python
@@ -347,7 +366,7 @@ The summary is an ordinary message in the transcript, so a [session](sessions.md
 
 The summarizing request carries the older messages as a plain text transcript, and its `max_tokens` is `keep` of the window, capped at the summarizing model's output limit, so the summary fits where the summarized messages were. It is sent without the agent's reasoning options, whose thinking budget that limit could fall under. When the transcript doesn't fit the rest of the summarizing model's window, the oldest messages are left out, with a note of how many; a window with no room for any of it raises a `RuntimeError`. A summary that comes back empty, cut by its output limit or filtered raises a `RuntimeError` and leaves the transcript as it was; its usage still counts. An earlier summary is not summarized again on its own, and when a compaction leaves the request past the threshold, as with a long summary or a long kept tail, the run logs a warning and does not compact again.
 
-Token counts are LiteLLM's: close for OpenAI models and an estimate for others, so the threshold leaves room. Through a `router`, the deployment with the smallest `max_input_tokens` sets the limit. Compaction needs that limit: with `compaction` set, a model LiteLLM has no `max_input_tokens` for ends the run with a `ValueError` at its first step, as LangChain's summarization does; `litellm.register_model` adds the limits. The same goes for the summarizing `model`. For Ollama, Lemonade and Hugging Face models Cyclops reads only LiteLLM's model map, since `get_model_info` would ask the provider's server (Ollama's only for a model the map lacks) and block the run; register a local model's limits the same way.
+Token counts are LiteLLM's: close for OpenAI models and an estimate for others, so the threshold leaves room. Through a `router`, the deployment with the smallest `max_input_tokens` sets the limit. Compaction needs that limit: with `compaction` set, a model LiteLLM has no `max_input_tokens` for ends the run with a `ValueError` at its first step, as LangChain's summarization does; `litellm.register_model` adds the limits. The same goes for the summarizing `model`.
 
 With a `session_store`, the save after a compaction stores the whole session, since earlier messages changed.
 

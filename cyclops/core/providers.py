@@ -62,12 +62,16 @@ def _model_info(model: str, custom_llm_provider: Optional[str] = None) -> Any:
     """LiteLLM's info for the model; empty if it has none.
 
     Where LiteLLM would ask the provider's server, its model map is read
-    instead, under provider/model, else model.
+    instead: the entry under provider/model, else model, if it is for that
+    provider or none, as LiteLLM matches them.
     """
     if _asks_server(model, custom_llm_provider):
         name, provider = litellm.get_llm_provider(model, custom_llm_provider)[:2]
-        costs = litellm.model_cost
-        return costs.get(f"{provider}/{name}") or costs.get(name) or {}
+        for key in (f"{provider}/{name}", name):
+            info = litellm.model_cost.get(key)
+            if info is not None and info.get("litellm_provider") in (None, provider):
+                return info
+        return {}
     try:
         return litellm.get_model_info(model, custom_llm_provider)
     except Exception:  # not mapped
@@ -109,16 +113,11 @@ def _lacks_tools(model: str, custom_llm_provider: Optional[str]) -> bool:
 
 
 def _takes_input(model: str, custom_llm_provider: Optional[str], flag: str) -> bool:
-    """False only if LiteLLM's model map sets `flag` to false for the model.
+    """False only if LiteLLM's info sets `flag` to false for the model.
 
-    Most entries leave the flags out. The entry is read from litellm.model_cost
-    under provider/model, else model: get_model_info asks some providers
-    (Ollama) over the network.
+    Most entries leave the flags out.
     """
-    model, provider = litellm.get_llm_provider(model, custom_llm_provider)[:2]
-    costs = litellm.model_cost
-    info = costs.get(f"{provider}/{model}") or costs.get(model) or {}
-    return info.get(flag) is not False
+    return _model_info(model, custom_llm_provider).get(flag) is not False
 
 
 def _deployments(config: AgentConfig) -> List[Dict[str, Any]]:

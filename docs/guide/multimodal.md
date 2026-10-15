@@ -49,13 +49,13 @@ As LiteLLM 1.105 sends them: Anthropic gets `image` and `document` blocks, with 
 
 ## Models that can't take the input
 
-Before the run starts, Cyclops reads LiteLLM's model map (`litellm.model_cost`, the entry under `provider/model`, else `model`) for the model, each of its deployments in a `router` (not the router's fallback groups) and each of its `fallback_models`, since they all read the same history. If the entry sets `supports_vision` to false and an image is sent, `supports_pdf_input` to false and a PDF is sent, or `supports_audio_input` to false and audio is sent, the run raises `ValueError`, so nothing is sent and no part is dropped:
+Before the run starts, Cyclops reads LiteLLM's model info (`litellm.get_model_info`, or for Ollama, Lemonade and Hugging Face only its model map, so no provider is asked over the network) for the model, each of its deployments in a `router` (not the router's fallback groups) and each of its `fallback_models`, since they all read the same history. If the entry sets `supports_vision` to false and an image is sent, `supports_pdf_input` to false and a PDF is sent, or `supports_audio_input` to false and audio is sent, the run raises `ValueError`, so nothing is sent and no part is dropped:
 
 ```text
 o3-mini, one of its deployments or one of its fallback models can't take image input: LiteLLM's model map sets supports_vision to false for one of them; if that is wrong, correct its entry with litellm.register_model at startup
 ```
 
-Only an explicit false counts. Most entries leave these flags out, and a model with no entry at all, such as one on a custom OpenAI compatible endpoint, gets the parts and its provider decides, as in Pydantic AI, the OpenAI Agents SDK and the Vercel AI SDK, which don't check. The check reads only `litellm.model_cost`, the map LiteLLM ships plus any entries registered in this process, never a provider over the network. Capability checks are cached per process, so call `litellm.register_model` at startup, before the first run. A file whose media type is unknown (a `file_id` without `format`) is not checked.
+Only an explicit false counts. Most entries leave these flags out, and a model with no entry at all, such as one on a custom OpenAI compatible endpoint, gets the parts and its provider decides, as in Pydantic AI, the OpenAI Agents SDK and the Vercel AI SDK, which don't check. The check reads only the map LiteLLM ships plus any entries registered in this process, never a provider over the network. Capability checks are cached per process, so call `litellm.register_model` at startup, before the first run. A file whose media type is unknown (a `file_id` without `format`) is not checked.
 
 ## Steering, sessions and guards
 

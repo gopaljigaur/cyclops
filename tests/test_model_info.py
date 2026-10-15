@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from cyclops import Agent, AgentConfig, Compaction, Session, tool
 from cyclops.core.compaction import _window
-from cyclops.core.providers import _holds
+from cyclops.core.providers import _holds, _model_info
 
 # LiteLLM's lookups ask these providers' servers (Ollama's for unmapped models).
 SERVER_PROVIDERS = ["ollama", "ollama_chat", "lemonade", "huggingface"]
@@ -133,6 +133,17 @@ def test_the_capability_checks_ask_no_server(config, requests, tools):
     assert requests == []
 
 
+def test_the_input_check_asks_no_server(config, requests):
+    image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
+    content = [{"type": "text", "text": "What is this?"}, image]
+
+    with _complete(config, _response("A cat.")) as mock:
+        assert Agent(config).run(content) == "A cat."
+
+    assert mock.call_args.kwargs["messages"][-1]["content"] == content
+    assert requests == []
+
+
 def test_an_overflow_without_known_limits_ends_the_run(config, requests):
     with _complete(config, _overflow(config.model)) as mock:
         result = Agent(config).run_with_response("Go on.")
@@ -167,6 +178,13 @@ def test_a_summarizing_model_without_known_limits_raises(requests):
 
     mock.assert_not_called()
     assert isinstance(result.error, ValueError)
+    assert requests == []
+
+
+def test_another_providers_entry_is_not_read(requests):
+    # The bare name has an OpenAI entry.
+    assert _model_info("ollama/gpt-4o") == {}
+    assert _model_info("ollama/llama2")["max_input_tokens"]
     assert requests == []
 
 
