@@ -1,8 +1,9 @@
 """Tests for completion kwargs, reasoning history, prompt caching and response schemas"""
 
+import sys
 from base64 import b64decode
 from json import dumps, loads
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import litellm
@@ -1026,7 +1027,12 @@ def test_response_model_sends_no_emulated_schema_alongside_tools():
 def test_response_model_sends_no_schema_through_vertex_ai_where_it_is_emulated():
     # The Anthropic entry lists this model as native, the Vertex AI one does not.
     token = ("token", "project")
-    with patch.object(VertexBase, "_ensure_access_token", return_value=token):
+    # LiteLLM before 1.105 imports the optional Vertex AI SDK here, unused.
+    sdk = {"vertexai": MagicMock()}
+    with (
+        patch.object(VertexBase, "_ensure_access_token", return_value=token),
+        patch.dict(sys.modules, sdk),
+    ):
         bodies = _anthropic_bodies(
             "vertex_ai/claude-sonnet-4-5",
             vertex_project="project",
