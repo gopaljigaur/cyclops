@@ -108,10 +108,12 @@ async def soak(
     run: Callable[[], Awaitable[object]], runs: int = RUNS, warmup: int = WARMUP
 ) -> Soak:
     """Warm up, then do runs with the cyclic collector off and measure."""
-    type_counts()  # The first count fills caches of its own.
     for _ in range(warmup):
         await run()
     await settle()
+    # The first count fills ABC caches of its own. It comes after the warmup,
+    # since an import that registers an ABC empties those caches again.
+    type_counts()
     before = resources()
     types_before = type_counts()
     tracemalloc.start()
