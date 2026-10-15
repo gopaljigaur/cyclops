@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import aclosing
-from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Type
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple, Type
 
 from cyclops.core.events import Event, RunFinished, TextDelta
 from cyclops.core.run import _RunLoop
@@ -63,12 +63,7 @@ class Agent:
         With a session, the run reads and extends the session's transcript and
         adds its usage to the session, instead of using this agent's history.
         """
-        history = self._history if session is None else session.messages
-        run = _Run(self.config.model, history, session)
-        task = asyncio.get_running_loop().create_task(
-            _RunLoop(self, run, stream, response_model).execute(input_message)
-        )
-        return RunHandle(run, task)
+        return RunHandle(*self._start(input_message, stream, response_model, session))
 
     def run(
         self,
@@ -154,15 +149,31 @@ class Agent:
         raising. The run waits for the caller to take each event; closing the
         iterator early cancels it.
         """
-        handle = self.start(input_message, session=session)
-        handle._run.paced = True
+        run, task = self._start(input_message, True, None, session, paced=True)
+        handle = RunHandle(run, task)
         try:
             async with aclosing(handle.__aiter__()) as events:
                 async for event in events:
                     yield event
         finally:
             handle.cancel()
-            await asyncio.wait([handle._task])
+            await asyncio.wait([task])
+
+    def _start(
+        self,
+        input_message: str,
+        stream: bool,
+        response_model: Optional[Type],
+        session: Optional[Session],
+        paced: bool = False,
+    ) -> Tuple[_Run, "asyncio.Task[RunResult]"]:
+        """Create a run and start its task on the running event loop."""
+        history = self._history if session is None else session.messages
+        run = _Run(self.config.model, history, session, paced)
+        task = asyncio.get_running_loop().create_task(
+            _RunLoop(self, run, stream, response_model).execute(input_message)
+        )
+        return run, task
 
     def _get_tool_mode(self) -> str:
         if not self.tools:
