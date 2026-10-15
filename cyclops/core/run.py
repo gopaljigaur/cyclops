@@ -1,12 +1,10 @@
-"""The step loop of a run, and the RunHandle that awaits, streams, steers and cancels it."""
+"""The step loop of a run: completions, tool calls, guards and limits."""
 
 import asyncio
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncGenerator,
     Dict,
-    Generator,
     List,
     Optional,
     Type,
@@ -22,7 +20,6 @@ from cyclops.core.completion import (
     _usage,
 )
 from cyclops.core.events import (
-    Event,
     GuardRejected,
     ReasoningDelta,
     RunFinished,
@@ -45,65 +42,6 @@ if TYPE_CHECKING:
     from cyclops.core.agent import Agent
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
-
-
-class RunHandle:
-    """A run started with Agent.start().
-
-    Await it for the RunResult, and iterate it (once) for the run's events.
-    """
-
-    def __init__(self, run: _Run, task: "asyncio.Task[RunResult]") -> None:
-        self._run = run
-        self._task = task
-        self._iterated = False
-        # Marks the end of a run that stopped without RunFinished.
-        task.add_done_callback(run.events.put_nowait)
-
-    def __await__(self) -> Generator[Any, None, RunResult]:
-        return self._task.__await__()
-
-    def __aiter__(self) -> AsyncGenerator[Event, None]:
-        if self._iterated:
-            raise RuntimeError("A run's events can be iterated only once")
-        self._iterated = True
-        return self._events()
-
-    async def _events(self) -> AsyncGenerator[Event, None]:
-        events = self._run.events
-        while True:
-            event = await events.get()
-            if event is self._task:
-                self._task.result()
-            yield event
-            events.task_done()
-            if isinstance(event, RunFinished):
-                return
-
-    def steer(self, message: str) -> None:
-        """Add a user message that the model sees in its next completion.
-
-        A message that arrives during a completion goes into the one after,
-        once the step's tool calls finish; if that completion was the final
-        answer, the run takes another step to answer it when its limits allow,
-        and otherwise leaves it in the history for the next run. Steering a
-        finished run raises RuntimeError.
-        """
-        if self._task.done():
-            raise RuntimeError("The run has finished")
-        self._run.steering.append(message)
-
-    def cancel(self) -> None:
-        """Stop the run; awaiting it then gives stop_reason "cancelled".
-
-        Tool calls in progress are cancelled and get a cancelled result. A
-        second call does nothing.
-        """
-        if self._run.cancelled:
-            return
-        self._run.cancelled = True
-        if self._run.started:
-            self._task.cancel(RUN_STOPPED)
 
 
 def _system_prompt(

@@ -5,8 +5,8 @@ from contextlib import aclosing
 from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Type
 
 from cyclops.core.events import Event, RunFinished, TextDelta
-from cyclops.core.run import RunHandle, _RunLoop
-from cyclops.core.run_state import _Run
+from cyclops.core.run import _RunLoop
+from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Session
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.types import AgentConfig, RunResult
