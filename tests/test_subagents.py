@@ -124,6 +124,23 @@ def test_run_without_an_answer_gives_an_error_result():
     )
 
 
+def test_run_cut_by_the_length_limit_gives_an_error_result():
+    lead, _ = _agents()
+    cut = _make_completion_response("x is", finish_reason="length")
+    acompletion, _ = _scripted(
+        {
+            "lead": [_asks(_call("researcher", "find x")), _make_completion("sorry")],
+            "child": [cut],
+        }
+    )
+    with patch("litellm.acompletion", new=acompletion):
+        result = lead.run_with_response("what is x?")
+
+    assert result.tool_calls[0].result == (
+        "Error: researcher stopped without an answer: max_tokens"
+    )
+
+
 async def test_events_carry_the_agent_path():
     checker = Agent(_make_config(system_prompt="checker"))
     child = Agent(

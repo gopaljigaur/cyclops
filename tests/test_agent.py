@@ -2203,8 +2203,26 @@ def test_a_tool_call_cut_by_the_length_limit_is_not_run():
     assert result.error is None
     assert result.tool_calls == []
     assert mock.call_count == 1
-    # Kept without the call, so the conversation needs no tool result.
-    assert agent.messages[-1] == {"role": "assistant", "content": ""}
+    # An empty cut turn is left out, so the conversation needs no tool result.
+    assert agent.messages == [{"role": "user", "content": "1 + 2?"}]
+
+
+def test_a_complete_call_before_a_cut_one_is_not_run_either():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    calls = [
+        _make_tool_call("tc_1", "add", '{"a": 1, "b": 2}'),
+        _make_tool_call("tc_2", "add", '{"a": 3, "b'),
+    ]
+    response = _make_completion_response(
+        "Adding.", tool_calls=calls, finish_reason="length"
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = agent.run_with_response("1 + 2 and 3 + 4?")
+
+    assert result.stop_reason == "max_tokens"
+    assert result.tool_calls == []
+    assert agent.messages[-1] == {"role": "assistant", "content": "Adding."}
 
 
 @pytest.mark.asyncio
@@ -2235,10 +2253,11 @@ def test_a_naive_tool_call_cut_by_the_length_limit_ends_with_max_tokens():
     )
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = agent.run_with_response("1 + 2?")
+        events = list(agent.stream_events("1 + 2?"))
 
-    assert (result.stop_reason, result.finish_reason) == ("max_tokens", "length")
-    assert result.content == ""
+    # The cut text may be a call, so it is not shown as answer text.
+    assert _event_summary(events) == [("step", 1), ("run", "max_tokens", "")]
+    assert events[-1].result.finish_reason == "length"
 
 
 @pytest.mark.parametrize("stream", [False, True])

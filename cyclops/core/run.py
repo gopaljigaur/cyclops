@@ -45,7 +45,8 @@ if TYPE_CHECKING:
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 # Finish reasons, as LiteLLM normalizes them, that end a run without an answer.
-# LiteLLM maps Anthropic's refusal and Bedrock's guardrail to content_filter.
+# LiteLLM maps Anthropic's refusal and Bedrock's guardrail to content_filter,
+# and Anthropic's compaction pause to length.
 _FINISH_STOP_REASONS: Dict[str, StopReason] = {
     "length": "max_tokens",
     "content_filter": "content_filter",
@@ -208,19 +209,22 @@ class _RunLoop:
             content = msg.content or ""
             assistant = _assistant_message(msg, msg.content)
             naive_call = _parse_naive_tool_call(content) if naive else None
+            stop_reason = _FINISH_STOP_REASONS.get(choice.finish_reason)
             if not streamed:
                 if "reasoning_content" in assistant:
                     run.emit(ReasoningDelta(text=assistant["reasoning_content"]))
-                if content and not naive_call:
+                # In naive mode cut text may be a call that no longer parses.
+                if content and not naive_call and not (naive and stop_reason):
                     run.emit(TextDelta(text=content))
 
             done = False
-            stop_reason = _FINISH_STOP_REASONS.get(choice.finish_reason)
             if stop_reason is not None:
                 # Cut or filtered output is no answer, and a cut tool call
-                # can't run, so the turn is kept as text only.
-                assistant["content"] = content
-                run.history.append(assistant)
+                # can't run, so the turn is kept as text only. An empty turn
+                # is left out: providers rewrite or drop empty assistant text.
+                if content:
+                    assistant["content"] = content
+                    run.history.append(assistant)
                 result.stop_reason = stop_reason
                 done = True
             elif not naive and msg.tool_calls:

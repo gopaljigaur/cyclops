@@ -163,7 +163,7 @@ class ReasoningDelta(Event):   text: str
 class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dict[str, Any]
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
-class StepFinished(Event):     step: int; usage: Optional[Usage]; finish_reason: str
+class StepFinished(Event):     step: int; usage: Optional[Usage]; finish_reason: Optional[str]
 class RunFinished(Event):      result: RunResult
 ```
 
