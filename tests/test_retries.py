@@ -166,6 +166,18 @@ def test_auth_spend_and_request_errors_are_not_retried(error, delays):
     assert delays == []
 
 
+def test_a_spent_budget_is_not_retried_at_429():
+    # LiteLLM sends it as 429 before 1.104, or with budget_exceeded_status_code = 429.
+    error = litellm.BudgetExceededError(current_cost=2.0, max_budget=1.0)
+    error.status_code = 429
+    mock = AsyncMock(side_effect=[error, _response()])
+    with patch("litellm.acompletion", new=mock):
+        result = Agent(AgentConfig(model=MODEL)).run_with_response("hi")
+
+    assert result.error is error
+    assert mock.call_count == 1
+
+
 def test_num_retries_zero_disables_retries():
     error = _overloaded()
     mock = AsyncMock(side_effect=[error, _response()])

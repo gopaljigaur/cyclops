@@ -127,6 +127,8 @@ def _retry_delay(
         # 408, 409, 429 and 5xx, as the OpenAI client retries.
         or not _should_retry(status)
         or _quota_spent(error)
+        # A spent budget, whatever status LiteLLM gives it (429 before 1.104).
+        or isinstance(error, litellm.BudgetExceededError)
     ):
         return None
     # Exponential backoff with jitter, or the retry-after header up to 60s.
