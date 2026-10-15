@@ -18,6 +18,7 @@ def tool(
     registry: Optional[ToolRegistry] = None,
     annotations: Optional[ToolAnnotations] = None,
     timeout: Optional[float] = None,
+    defer_loading: bool = False,
 ) -> Union[Tool, Callable[[Callable], Tool]]:
     """Decorator to convert a function into a tool
 
@@ -50,7 +51,9 @@ def tool(
             description or (summary or "").strip() or f"Tool: {tool_name}"
         )
 
-        created_tool = Tool(tool_name, tool_description, f, annotations, timeout)
+        created_tool = Tool(
+            tool_name, tool_description, f, annotations, timeout, defer_loading
+        )
 
         if registry:
             registry.register(created_tool)

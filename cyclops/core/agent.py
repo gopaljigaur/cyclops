@@ -9,6 +9,7 @@ from cyclops.core.run import _RunLoop
 from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Session
 from cyclops.core.subagents import AgentTool
+from cyclops.core.tool_search import SEARCH_TOOL_NAME
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.types import AgentConfig, RunResult
 from cyclops.skills import Skills
@@ -32,6 +33,10 @@ class Agent:
             if t.name in self._tools_by_name:
                 raise ValueError(f"Duplicate tool name: '{t.name}'")
             self._tools_by_name[t.name] = t
+        if SEARCH_TOOL_NAME in self._tools_by_name and any(
+            t.defer_loading for t in self.tools
+        ):
+            raise ValueError(f"'{SEARCH_TOOL_NAME}' is taken by the search tool")
         # Set to "naive" once this agent's model rejects native tool calling.
         self._detected_tool_mode: Optional[str] = None
 

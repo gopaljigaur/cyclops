@@ -99,6 +99,14 @@ await mcp.attach("plain", ["python", "mcp_server.py"], prefix=False)  # add
 
 The server's input schema is sent to the model as is, including nested objects and `$defs`.
 
+### Deferred tools
+
+A server with many tools can keep them out of every completion until the model searches for them. `defer_loading=True` defers each tool of the server, including ones it lists later; see [Deferred tools](tools.md#deferred-tools):
+
+```python
+await mcp.attach("crm", url="https://example.com/mcp", defer_loading=True)
+```
+
 ### Results
 
 `execute()` returns a `ToolResult`. Text and image content become its `content` blocks (`TextContent`, `ImageContent`) and `structuredContent` becomes its `result`; the agent sends it to the model like any other tool result. A result with `isError` set becomes an error result carrying the server's text. The server's tool annotations (`readOnlyHint` and the others) become the tool's `ToolAnnotations`.

@@ -17,7 +17,9 @@ class _BridgeTool(MCPClientTool):
 
     def __init__(self, loop: asyncio.AbstractEventLoop, tool: MCPClientTool) -> None:
         self._loop = loop
-        super().__init__(tool.client, tool.server, tool.tool, tool.name)
+        super().__init__(
+            tool.client, tool.server, tool.tool, tool.name, tool.defer_loading
+        )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         if self._loop.is_closed():
