@@ -304,7 +304,7 @@ from cyclops import Agent, AgentConfig, Compaction
 agent = Agent(AgentConfig(model="gpt-4o-mini", compaction=Compaction()))
 ```
 
-Before each completion the run counts the request's tokens with LiteLLM's `token_counter` (the system prompt and tools once per run, each message once) and compares them with the model's `max_input_tokens` from `litellm.get_model_info`. Once a request reaches `threshold` of that limit, a separate completion summarizes the older messages, and the summary replaces them as one user message starting "Here is a summary of the conversation to date:". The system prompt is never summarized, and the most recent messages, up to `keep` of the limit, stay as they are. A tool call and its results are summarized or kept together.
+Before each completion the run counts the request's tokens with LiteLLM's `token_counter` (the system prompt and tools when they change, as when a search loads [deferred tools](tools.md), and each message once) and compares them with the model's `max_input_tokens` from `litellm.get_model_info`. Once a request reaches `threshold` of that limit, a separate completion summarizes the older messages, and the summary replaces them as one user message starting "Here is a summary of the conversation to date:". The system prompt is never summarized, and the most recent messages, up to `keep` of the limit, stay as they are. The last message is always kept, however long. A tool call and its results stay together: when `keep` ends among the results, the call and all its results are kept.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -315,11 +315,15 @@ Before each completion the run counts the request's tokens with LiteLLM's `token
 
 The summary is an ordinary message in the transcript, so a [session](sessions.md) keeps it and stays compacted when saved. Its completion goes through the same retries and hooks as a step's, and its usage counts in the run's `usage`, `max_total_tokens` and `max_cost`, though it is not a step. The run emits a `Compacted` event with the summary, the number of messages it replaced and the request's tokens before and after, and calls the `on_compaction` hook.
 
-Token counts are LiteLLM's: close for OpenAI models and an estimate for others, so the threshold leaves room. Through a `router`, the deployment with the smallest `max_input_tokens` sets the limit. A model LiteLLM has no limits for is never compacted; `litellm.register_model` can add one.
+The summarizing request carries the older messages as a plain text transcript. When they don't fit the summarizing model's window (less its output limit), the oldest are left out, with a note of how many. A summary that comes back empty, cut by its output limit or filtered raises a `RuntimeError` and leaves the transcript as it was; its usage still counts. An earlier summary is not summarized again on its own, and when a compaction leaves the request past the threshold, as with a long summary or a long kept tail, the run logs a warning and does not compact again.
+
+Token counts are LiteLLM's: close for OpenAI models and an estimate for others, so the threshold leaves room. Through a `router`, the deployment with the smallest `max_input_tokens` sets the limit. Compaction needs that limit: with `compaction` set, a model LiteLLM has no `max_input_tokens` for ends the run with a `ValueError` at its first step, as LangChain's summarization does; `litellm.register_model` adds the limits. The same goes for the summarizing `model`.
+
+With a `session_store`, the save after a compaction stores the whole session, since earlier messages changed.
 
 Compaction changes the start of the conversation, so with [prompt caching](#prompt-caching) the next request reads only the system prompt and tools from the cache and writes the rest anew.
 
-To compact a session now, as between runs, call `agent.compact(session)` or `await agent.acompact(session)`. It uses `config.compaction`, or the `Compaction()` defaults when that is `None`, adds the summary's usage to the session, and returns `False` without changing anything when every message would be kept or the model's limits are unknown.
+To compact a session now, as between runs, call `agent.compact(session)` or `await agent.acompact(session)`. It uses `config.compaction`, or the `Compaction()` defaults when that is `None`, adds the summary's usage to the session, and returns `False` without changing anything when nothing but an earlier summary would be summarized. Like `session.truncate()`, it does not save: the next run's first save stores the whole session.
 
 Anthropic models also offer server-side context management. LiteLLM passes `context_management` through, so its `clear_tool_uses_20250919` edit works from `completion_kwargs`; its compaction edit returns a block that has to be sent back in later requests, which the agent's transcript does not keep.
 
