@@ -323,6 +323,34 @@ async def test_calls_cut_off_by_a_restart_are_not_retried():
         proc.wait()
 
 
+async def test_long_call_holds_a_refused_session_only_for_connect_timeout():
+    port = _free_port()
+    proc = _start("refuse", port)
+    try:
+        async with MCPClient() as client:
+            await client.attach(
+                "remote", url=_url("refuse", port), connect_timeout=1, call_timeout=None
+            )
+            long = asyncio.create_task(
+                _tool(client, "remote__slow").execute(seconds=60)
+            )
+            started = _tool(client, "remote__slow_started")
+            while (await started.execute()).to_message_content() != "1":
+                await asyncio.sleep(0.05)
+            refused = asyncio.create_task(_tool(client, "remote__refused").execute())
+            await _until(lambda: client.status("remote").state == "connecting")
+            began = time.monotonic()
+            pid = await _tool(client, "remote__pid").execute()
+            assert time.monotonic() - began < 3
+            assert pid.error is None
+            assert (await long).is_error
+            assert (await refused).is_error
+            assert client.status("remote") == ServerStatus("connected")
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 async def test_timed_out_call_is_not_retried_after_another_404():
     port = _free_port()
     proc = _start("no-get", port)

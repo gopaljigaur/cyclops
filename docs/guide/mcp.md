@@ -58,7 +58,7 @@ await mcp.attach(
 )
 ```
 
-A call that meets a dropped connection returns an error result instead of being retried, since the tool may already have run. A call that a restarted streamable HTTP server answered with a 404, because it no longer knows the session, is retried once on a new session. Calls already sent on that session first get their own answer, so each of them that was refused is retried too.
+A call that meets a dropped connection returns an error result instead of being retried, since the tool may already have run. A call that a restarted streamable HTTP server answered with a 404, because it no longer knows the session, is retried once on a new session. Calls already sent on that session first get their own answer, so each of them that was refused is retried too; one still running after `connect_timeout` is cut off and not retried.
 
 A call can wait for a reconnect twice, each time up to `call_timeout`: once when it starts without a session, and once more when its first attempt hits a terminated session. So the worst case is three times `call_timeout`: two reconnect waits plus the call itself. A server that stays down fails the first wait, so with the defaults it costs each call 60 seconds at most, while the reconnect behind it sleeps up to 31 seconds in all, plus up to `max_retries + 1` times `connect_timeout` against a host that does not answer.
 
