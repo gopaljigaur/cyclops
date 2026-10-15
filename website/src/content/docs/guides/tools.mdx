@@ -184,6 +184,8 @@ def build_report(month: str) -> str:
 
 A call that runs over is cancelled and the model gets `Error: <tool> timed out after <n> seconds`. Middleware `after_tool`, `on_tool_error` and the `ToolCallFinished` event see it as any other failed call, with an `asyncio.TimeoutError`. A sync tool runs in a worker thread, which cannot be stopped: the agent moves on, but the function runs until it returns. MCP tools also have the client's own `call_timeout`.
 
+In the same way, a tool's own `max_output_chars` overrides `AgentConfig.max_tool_output_chars`, the longest result text the model gets whole; a longer one is sent a page at a time. See [Tool output limit](/guides/agents/#tool-output-limit).
+
 ## Deferred tools
 
 Every tool's schema is sent with every completion, which costs context when an agent has many tools. Mark a tool `defer_loading=True` and it is left out until the model asks for it: the agent then sends a `search_tools` tool, and each tool a search finds is sent from the next step to the end of the run. Tools not marked are always sent.

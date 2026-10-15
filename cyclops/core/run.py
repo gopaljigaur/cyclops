@@ -42,6 +42,7 @@ from cyclops.core.tool_execution import (
     _parse_naive_tool_call,
     _ToolExecutor,
 )
+from cyclops.core.tool_results import _ToolResults
 from cyclops.core.tool_search import _ToolSearch
 from cyclops.core.types import AgentConfig, RunResult, StopReason, Usage, _added
 from cyclops.skills import Skills
@@ -206,16 +207,30 @@ class _RunLoop:
             self.config.hooks.on_run_end(run.result.content)
 
     async def _steps(self, input_message: _Content, mode: str) -> None:
+        agent = self.agent
+        tools = _ToolSearch(agent.tools, agent._tools_by_name)
+        results = _ToolResults(agent.tool_result_store, tools)
+        try:
+            await self._step_loop(input_message, mode, tools, results)
+        finally:
+            await results.free()
+
+    async def _step_loop(
+        self,
+        input_message: _Content,
+        mode: str,
+        tools: _ToolSearch,
+        results: _ToolResults,
+    ) -> None:
         run, agent = self.run, self.agent
         run.history.append({"role": "user", "content": input_message})
         result = run.result
         naive = mode == "naive"
         # Naive mode never streams deltas: the text may be a tool call.
         streamed = self.stream and not naive
-        tools = _ToolSearch(agent.tools, agent._tools_by_name)
         requests: List[_Request] = []
         system_prompt: Optional[str] = None
-        executor = _ToolExecutor(self.config, tools.tools_by_name, run)
+        executor = _ToolExecutor(self.config, tools.tools_by_name, results, run)
         compaction = self.config.compaction
         # Without compaction the transcript is counted once a request overflows.
         window = _context_window(self.config, compaction, run.spend)

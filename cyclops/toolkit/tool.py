@@ -109,16 +109,21 @@ class BaseTool(ABC):
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
         defer_loading: bool = False,
+        max_output_chars: Optional[int] = None,
     ):
         self.name = name
         self.description = description
         if timeout is not None and timeout <= 0:
             raise ValueError(f"timeout of tool '{name}' must be positive")
+        if max_output_chars is not None and max_output_chars <= 0:
+            raise ValueError(f"max_output_chars of tool '{name}' must be positive")
         self.annotations = annotations or ToolAnnotations()
         # Seconds a call may run; None uses AgentConfig.tool_timeout.
         self.timeout = timeout
         # Sent only once the model finds it with the search_tools tool.
         self.defer_loading = defer_loading
+        # Longest result text sent whole; None uses AgentConfig.max_tool_output_chars.
+        self.max_output_chars = max_output_chars
         self._definition = self._build_definition()
 
     async def execute(self, **kwargs):
@@ -156,6 +161,7 @@ class Tool(BaseTool):
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
         defer_loading: bool = False,
+        max_output_chars: Optional[int] = None,
     ):
         self.func = func
         self._is_async = inspect.iscoroutinefunction(func)
@@ -164,7 +170,9 @@ class Tool(BaseTool):
             for p in inspect.signature(func).parameters.values()
             if p.kind is p.POSITIONAL_ONLY
         ]
-        super().__init__(name, description, annotations, timeout, defer_loading)
+        super().__init__(
+            name, description, annotations, timeout, defer_loading, max_output_chars
+        )
 
     def _build_definition(self) -> ToolDefinition:
         return self._definition_for(self.func)

@@ -1,4 +1,4 @@
-"""Tests for compaction and the tool output limit"""
+"""Tests for compaction"""
 
 from base64 import b64encode
 from typing import List
@@ -15,14 +15,11 @@ from cyclops import (
     Compaction,
     InMemorySessionStore,
     Session,
-    ToolMiddleware,
-    ToolResult,
     tool,
 )
 from cyclops.toolkit.tool import Tool
-from cyclops.toolkit.types import ImageContent, TextContent
 from cyclops.core.compaction import _SUMMARY_PREFIX, _window
-from cyclops.core.events import Compacted, StepFinished, ToolCallFinished
+from cyclops.core.events import Compacted, StepFinished
 
 # A model LiteLLM knows with a 400 token input limit, so a few short messages
 # reach the default threshold of 320 tokens and keep 80.
@@ -348,42 +345,6 @@ def test_the_summary_counts_toward_the_budget():
 def test_keep_must_be_below_the_threshold():
     with pytest.raises(ValidationError):
         Compaction(threshold=0.5, keep=0.5)
-
-
-async def test_long_tool_output_is_cut_in_the_middle():
-    @tool
-    def dump() -> str:
-        """Dump a log."""
-        return "a" * 50 + "b" * 50
-
-    agent = Agent(AgentConfig(model=MODEL, max_tool_output_chars=20), tools=[dump])
-    session = Session()
-
-    with _replies(_call("dump"), "Done."):
-        events = [
-            e async for e in agent.start("Dump it.", stream=False, session=session)
-        ]
-
-    text = "a" * 10 + "\n[80 characters omitted]\n" + "b" * 10
-    assert session.messages[2]["content"] == text
-    finished = [e for e in events if isinstance(e, ToolCallFinished)]
-    assert finished[0].result == text
-    assert events[-1].result.tool_calls[0].result == text
-
-
-def test_short_tool_output_is_sent_whole():
-    @tool
-    def dump() -> str:
-        """Dump a log."""
-        return "short"
-
-    agent = Agent(AgentConfig(model=MODEL, max_tool_output_chars=20), tools=[dump])
-    session = Session()
-
-    with _replies(_call("dump"), "Done."):
-        agent.run("Dump it.", session=session)
-
-    assert session.messages[2]["content"] == "short"
 
 
 def _summary_response(content, finish_reason="stop"):
@@ -729,68 +690,6 @@ def _run(coroutine):
     import asyncio
 
     return asyncio.run(coroutine)
-
-
-class _Seen(ToolMiddleware):
-    def __init__(self) -> None:
-        self.results: List[str] = []
-
-    async def after_tool(self, call, result, error):
-        self.results.append(ToolResult.message_text(result.to_message_content()))
-
-
-def test_hooks_and_middleware_see_the_whole_tool_output():
-    class Hooks(AgentHooks):
-        def __init__(self) -> None:
-            self.results: List[str] = []
-
-        def on_tool_end(self, tool_name, args, result):
-            self.results.append(result)
-
-    @tool
-    def dump() -> str:
-        """Dump a log."""
-        return "a" * 100
-
-    hooks, seen = Hooks(), _Seen()
-    agent = Agent(
-        AgentConfig(
-            model=MODEL, max_tool_output_chars=20, hooks=hooks, middleware=[seen]
-        ),
-        tools=[dump],
-    )
-    session = Session()
-
-    with _replies(_call("dump"), "Done."):
-        agent.run("Dump it.", session=session)
-
-    assert hooks.results == ["a" * 100]
-    assert seen.results == ["a" * 100]
-    assert session.messages[2]["content"].startswith("a" * 10 + "\n[80 characters")
-
-
-def test_images_stay_in_a_cut_tool_result():
-    image = ImageContent(data="aGk=", mime_type="image/png")
-
-    @tool
-    def shot() -> ToolResult:
-        """Take a screenshot."""
-        return ToolResult(content=[TextContent(text="a" * 100), image])
-
-    agent = Agent(AgentConfig(model=MODEL, max_tool_output_chars=20), tools=[shot])
-    session = Session()
-
-    with _replies(_call("shot"), "Done."):
-        agent.run("Look.", session=session)
-
-    text = "a" * 10 + "\n[80 characters omitted]\n" + "a" * 10
-    assert session.messages[2]["content"] == text
-    # The model takes no images in a tool message, so they follow in a user one.
-    images = session.messages[3]["content"]
-    assert images[1] == {
-        "type": "image_url",
-        "image_url": {"url": "data:image/png;base64,aGk="},
-    }
 
 
 OVERFLOW = "litellm.ContextWindowExceededError"

@@ -13,6 +13,7 @@ from cyclops.core.run_state import RunHandle, _Run
 from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
+from cyclops.core.tool_results import READ_TOOL_NAME, ToolResultStore
 from cyclops.core.tool_search import SEARCH_TOOL_NAME, _ToolSearch
 from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage, _added
 from cyclops.skills import Skills
@@ -30,11 +31,14 @@ class Agent:
         *,
         session_store: Optional[SessionStore] = None,
         durability: Durability = "async",
+        tool_result_store: Optional[ToolResultStore] = None,
     ):
         self.config = config
         # Runs with a session save it here as durability says.
         self.session_store = session_store
         self.durability = durability
+        # Runs keep tool results past their limit here; None keeps them in memory.
+        self.tool_result_store = tool_result_store
         self.tools = (tools or []) + ([skills.tool] if skills else [])
         self.skills = skills
         self._tools_by_name: Dict[str, Any] = {}
@@ -46,6 +50,11 @@ class Agent:
             t.defer_loading for t in self.tools
         ):
             raise ValueError(f"'{SEARCH_TOOL_NAME}' is taken by the search tool")
+        if READ_TOOL_NAME in self._tools_by_name and (
+            config.max_tool_output_chars is not None
+            or any(t.max_output_chars is not None for t in self.tools)
+        ):
+            raise ValueError(f"'{READ_TOOL_NAME}' is taken by the tool result reader")
         # Set to "naive" once this agent's model rejects native tool calling.
         self._detected_tool_mode: Optional[str] = None
 

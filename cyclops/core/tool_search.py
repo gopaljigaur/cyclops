@@ -30,13 +30,12 @@ class _ToolSearch:
 
     def __init__(self, tools: List[Any], tools_by_name: Dict[str, Any]) -> None:
         self.loaded = [t for t in tools if not t.defer_loading]
-        self.tools_by_name = tools_by_name
+        # A copy: tools join it during the run.
+        self.tools_by_name = dict(tools_by_name)
         # Each deferred tool with the words of its name and description.
         self._index = [
             (t, _words(f"{t.name} {t.description}")) for t in tools if t.defer_loading
         ]
-        # True until the step loop has read loaded, and again after a search adds to it.
-        self.changed = True
         if self._index:
             search = Tool(
                 SEARCH_TOOL_NAME,
@@ -44,8 +43,15 @@ class _ToolSearch:
                 self.search,
                 ToolAnnotations(read_only=True),
             )
-            self.loaded.append(search)
-            self.tools_by_name = {**tools_by_name, SEARCH_TOOL_NAME: search}
+            self.add(search)
+        # True until the step loop has read loaded, and again once tools join it.
+        self.changed = True
+
+    def add(self, tool: Any) -> None:
+        """Send tool from the next step on."""
+        self.loaded.append(tool)
+        self.tools_by_name[tool.name] = tool
+        self.changed = True
 
     async def search(self, query: str) -> str:
         """Find deferred tools by the words their name and description share with query.

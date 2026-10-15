@@ -151,8 +151,8 @@ class AgentConfig(BaseModel):
     max_tool_output_chars: Optional[int] = Field(
         default=None,
         gt=0,
-        description="Longest tool result text sent to the model; longer text "
-        "keeps its start and end around a note of what was cut",
+        description="Longest tool result text sent to the model whole; longer "
+        "text is stored and sent as a first page the model can read on from",
     )
 
     @model_validator(mode="after")
