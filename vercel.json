@@ -3,5 +3,12 @@
   "buildCommand": "cd website && npm run build",
   "outputDirectory": "website/dist",
   "framework": "astro",
-  "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- website vercel.json"
+  "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- website examples vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "**": false,
+      "main": true,
+      "docs/**": true
+    }
+  }
 }
