@@ -31,10 +31,10 @@ data = session.model_dump_json()
 session = Session.model_validate_json(data)
 ```
 
-A `SessionStore` keeps sessions between runs or processes. It has three async methods, `load(session_id)` (returns `None` when there is no such session), `save(session)` and `delete(session_id)`. Cyclops ships two:
+A `SessionStore` keeps sessions between runs or processes. It has four async methods: `load(session_id)` (returns `None` when there is no such session), `save(session)`, which replaces the stored session, `add_messages(session, messages)`, which adds messages to the end of a session saved before and stores its usage, and `delete(session_id)`. Cyclops ships two:
 
 - `InMemorySessionStore()` keeps sessions in the process.
-- `FileSessionStore(directory)` writes each session to `<directory>/<id>.json`. Ids must be letters, digits, `_` or `-`.
+- `FileSessionStore(directory)` writes each session to `<directory>/<id>.jsonl`: the saved session on the first line, then one line per `add_messages`. Ids must be letters, digits, `_` or `-`.
 
 ```python
 from cyclops import FileSessionStore, Session
@@ -49,7 +49,49 @@ async def reply(user_id: str, message: str) -> str:
     return answer
 ```
 
-To keep sessions in a database, write a class with the same three methods; `SessionStore` is a `Protocol`, so there is nothing to inherit.
+To keep sessions in a database, write a class with the same four methods; `SessionStore` is a `Protocol`, so there is nothing to inherit.
+
+## Saving automatically
+
+Give the agent a store and every run with a session saves it there; `load` stays yours to call:
+
+```python
+store = FileSessionStore("./sessions")
+agent = Agent(config, session_store=store)
+
+
+async def reply(user_id: str, message: str) -> str:
+    session = await store.load(user_id) or Session(id=user_id)
+    return await agent.arun(message, session=session)
+```
+
+`durability` says when, with LangGraph's names:
+
+- `"async"` (the default) saves after each step while the next one runs, and once more when the run ends.
+- `"sync"` saves after each step before the next one starts, and when the run ends.
+- `"exit"` saves once, when the run ends.
+
+A run saves when it ends however it ends, also when it fails or is cancelled. Its first save stores the whole session with `save`, since the session may have changed since the store last saw it; each later save of the run passes only the new messages to `add_messages`.
+
+A save that fails fails the run, like any other error: `stop_reason` is `"error"`, `error` is what the store raised, and `arun` raises it. With `"async"` the error of a step's save comes with the next save. The session in memory still has the whole transcript, so the next run, or your own `save`, can store it.
+
+## Forking and going back
+
+`session.fork()` returns a copy with a new id. The copy and the original go on independently, so one conversation can try two directions:
+
+```python
+draft = session.fork()
+agent.run("Make it shorter.", session=draft)
+```
+
+`session.truncate(index)` keeps the messages before `index` (a negative index counts from the end), to retry from an earlier point. An index that would keep a tool call without its results raises `ValueError`; truncate before the assistant message with the tool calls instead.
+
+```python
+session.truncate(-2)  # drop the last question and its answer
+agent.run("Ask it differently.", session=session)
+```
+
+Both change the session in memory only; the next run with a store, or your own `save`, stores the result.
 
 ## Moving from Memory
 

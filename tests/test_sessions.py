@@ -162,7 +162,7 @@ async def test_file_store_saves_loads_and_deletes(tmp_path):
 
     assert await store.load("chat-1") is None
     await store.save(session)
-    path = tmp_path / "sessions" / "chat-1.json"
+    path = tmp_path / "sessions" / "chat-1.jsonl"
     assert json.loads(path.read_text())["id"] == "chat-1"
     assert await store.load("chat-1") == session
 
@@ -191,7 +191,7 @@ async def test_file_store_takes_concurrent_saves(tmp_path):
     await asyncio.gather(*(store.save(s) for s in sessions))
 
     assert await store.load("chat") in sessions
-    assert [p.name for p in tmp_path.iterdir()] == ["chat.json"]
+    assert [p.name for p in tmp_path.iterdir()] == ["chat.jsonl"]
 
 
 def test_raising_middleware_leaves_every_call_answered_in_the_session():
@@ -291,3 +291,273 @@ def test_guards_see_the_session_transcript():
         agent.run("How are you?", session=session)
 
     assert seen == [["Hi.", "Hello.", "How are you?", "Fine."]]
+
+
+class _RecordingStore(InMemorySessionStore):
+    """Records each save and addition as (method, message count)."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    async def save(self, session):
+        self.calls.append(("save", len(session.messages)))
+        await super().save(session)
+
+    async def add_messages(self, session, messages):
+        self.calls.append(("add_messages", len(messages)))
+        await super().add_messages(session, messages)
+
+
+@pytest.mark.asyncio
+async def test_exit_durability_saves_once_when_the_run_ends():
+    store = _RecordingStore()
+    agent = Agent(
+        config=_make_config(),
+        tools=[_make_simple_tool()],
+        session_store=store,
+        durability="exit",
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        await agent.arun("2 + 3?", session=session)
+
+    assert store.calls == [("save", 4)]
+    assert await store.load(session.id) == session
+
+
+@pytest.mark.asyncio
+async def test_step_durability_saves_each_step_and_then_adds_messages():
+    store = _RecordingStore()
+    agent = Agent(
+        config=_make_config(), tools=[_make_simple_tool()], session_store=store
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        await agent.arun("2 + 3?", session=session)
+    # The run's first save stores the whole session, later ones only what is new.
+    assert store.calls == [("save", 3), ("add_messages", 1)]
+    assert await store.load(session.id) == session
+
+    store.calls.clear()
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        await agent.arun("And again?", session=session)
+    assert store.calls == [("save", 7), ("add_messages", 1)]
+    assert await store.load(session.id) == session
+    assert session.usage.total_tokens == 120
+
+
+@pytest.mark.asyncio
+async def test_async_durability_saves_while_the_next_step_runs():
+    release = asyncio.Event()
+    completions = []
+
+    class SlowStore(InMemorySessionStore):
+        async def save(self, session):
+            await release.wait()
+            await super().save(session)
+
+    responses = iter(_tool_round())
+
+    async def complete(**kwargs):
+        completions.append(len(kwargs["messages"]))
+        if len(completions) == 2:
+            # The first step's save is still waiting.
+            release.set()
+        return next(responses)
+
+    store = SlowStore()
+    agent = Agent(
+        config=_make_config(), tools=[_make_simple_tool()], session_store=store
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=complete):
+        assert await agent.arun("2 + 3?", session=session) == "5"
+
+    assert completions == [1, 3]
+    assert await store.load(session.id) == session
+
+
+@pytest.mark.asyncio
+async def test_sync_durability_saves_before_the_next_step():
+    store = InMemorySessionStore()
+    stored = []
+    responses = iter(_tool_round())
+
+    async def complete(**kwargs):
+        stored.append(await store.load(session.id))
+        return next(responses)
+
+    agent = Agent(
+        config=_make_config(),
+        tools=[_make_simple_tool()],
+        session_store=store,
+        durability="sync",
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=complete):
+        await agent.arun("2 + 3?", session=session)
+
+    assert stored[0] is None
+    assert [m["role"] for m in stored[1].messages] == ["user", "assistant", "tool"]
+
+
+@pytest.mark.parametrize("durability", ["sync", "async", "exit"])
+def test_a_failed_save_fails_the_run(durability):
+    class BrokenStore(InMemorySessionStore):
+        async def save(self, session):
+            raise OSError("disk full")
+
+    agent = Agent(
+        config=_make_config(),
+        tools=[_make_simple_tool()],
+        session_store=BrokenStore(),
+        durability=durability,
+    )
+    session = Session()
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        result = agent.run_with_response("2 + 3?", session=session)
+
+    assert result.stop_reason == "error"
+    assert isinstance(result.error, OSError)
+    # A sync save fails the run before its next step.
+    assert len(session.messages) == (3 if durability == "sync" else 4)
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        with pytest.raises(OSError, match="disk full"):
+            agent.run("2 + 3?", session=Session())
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_is_saved():
+    from cyclops.toolkit.tool import Tool
+
+    started = asyncio.Event()
+
+    async def slow() -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "done"
+
+    store = InMemorySessionStore()
+    agent = Agent(
+        config=_make_config(),
+        tools=[Tool("slow", "Slow tool", slow)],
+        session_store=store,
+    )
+    session = Session()
+    tc = _make_tool_call("tc_1", "slow", "{}")
+    response = _make_completion_response(content=None, tool_calls=[tc])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        handle = agent.start("go", stream=False, session=session)
+        await started.wait()
+        handle.cancel()
+        assert (await handle).stop_reason == "cancelled"
+
+    assert await store.load(session.id) == session
+
+
+def test_a_run_without_a_session_saves_nothing():
+    store = _RecordingStore()
+    agent = Agent(config=_make_config(), session_store=store)
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("hi")),
+    ):
+        agent.run("hello")
+
+    assert store.calls == []
+
+
+def test_fork_copies_the_session_under_a_new_id():
+    session = Session(messages=[{"role": "user", "content": "hi"}])
+    fork = session.fork()
+
+    assert fork.id != session.id
+    assert fork.messages == session.messages
+    assert fork.usage == session.usage
+    fork.messages[0]["content"] = "changed"
+    fork.messages.append({"role": "assistant", "content": "hello"})
+    assert session.messages == [{"role": "user", "content": "hi"}]
+    assert session.fork().id != fork.id
+
+
+def test_truncate_keeps_the_messages_before_the_index():
+    agent = Agent(config=_make_config(), tools=[_make_simple_tool()])
+    session = Session()
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        agent.run("2 + 3?", session=session)
+    messages = list(session.messages)
+
+    for index in (2, -2):
+        with pytest.raises(ValueError, match="tool result"):
+            session.truncate(index)
+        assert session.messages == messages
+
+    session.truncate(-1)
+    assert session.messages == messages[:3]
+    session.truncate(1)
+    assert session.messages == messages[:1]
+    session.truncate(5)
+    assert session.messages == messages[:1]
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("Five.")),
+    ) as mock:
+        agent.run("Try again.", session=session)
+    sent = mock.call_args.kwargs["messages"]
+    assert [m["content"] for m in sent] == ["2 + 3?", "Try again."]
+
+
+@pytest.mark.asyncio
+async def test_autosave_after_truncate_stores_the_whole_session_again():
+    store = _RecordingStore()
+    agent = Agent(
+        config=_make_config(), tools=[_make_simple_tool()], session_store=store
+    )
+    session = Session()
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        await agent.arun("2 + 3?", session=session)
+
+    session.truncate(1)
+    store.calls.clear()
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=_make_completion_response("Five.")),
+    ):
+        await agent.arun("Try again.", session=session)
+
+    assert store.calls == [("save", 3)]
+    assert await store.load(session.id) == session
+
+
+@pytest.mark.asyncio
+async def test_file_store_round_trips_added_messages(tmp_path):
+    store = FileSessionStore(tmp_path)
+    agent = Agent(
+        config=_make_config(), tools=[_make_simple_tool()], session_store=store
+    )
+    session = Session(id="chat-1")
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=_tool_round())):
+        await agent.arun("2 + 3?", session=session)
+
+    path = tmp_path / "chat-1.jsonl"
+    assert len(path.read_text().splitlines()) == 2
+    assert await store.load("chat-1") == session
+
+    # A crash during an addition leaves a line without its newline.
+    with path.open("a") as f:
+        f.write('{"messages": [{"role": "us')
+    assert await store.load("chat-1") == session
+
+    await store.save(session)
+    assert len(path.read_text().splitlines()) == 1
+    assert await store.load("chat-1") == session
