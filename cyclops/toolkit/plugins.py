@@ -39,39 +39,48 @@ class PluginManager:
         self.registry = registry or ToolRegistry()
 
     def register(self, plugin: Toolkit, name: Optional[str] = None) -> None:
-        """Register a toolkit plugin"""
+        """Register a toolkit plugin; names must be unique"""
         plugin_name = name or plugin.__class__.__name__
+        if plugin_name in self.plugins:
+            raise ValueError(f"Plugin name already registered: {plugin_name}")
         self.plugins[plugin_name] = plugin
         logger.info(f"Registered plugin: {plugin_name}")
 
     def load_plugins(self) -> None:
-        """Load plugins from entry points"""
-        try:
-            # Discover entry points (Python 3.10+ API)
-            entry_points = importlib.metadata.entry_points()
-            toolkit_entries = entry_points.select(group="cyclops.toolkits")
+        """Instantiate and register every toolkit in the cyclops.toolkits entry-point group
 
-            # Load and register plugins
-            for entry_point in toolkit_entries:
-                try:
-                    plugin = entry_point.load()
-                    self.register(plugin, name=entry_point.name)
-                    logger.info(f"Loaded toolkit plugin: {entry_point.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to load plugin {entry_point.name}: {e}")
-
-        except Exception as e:
-            logger.warning(f"Error loading plugins: {e}")
+        Each entry point names a Toolkit subclass or a factory returning a
+        Toolkit. A plugin that cannot be loaded, or whose name another
+        distribution also uses, raises instead of being skipped.
+        """
+        entry_points = importlib.metadata.entry_points(group="cyclops.toolkits")
+        for name in entry_points.names:
+            providers = [
+                ep.dist.name for ep in entry_points.select(name=name) if ep.dist
+            ]
+            if len(providers) > 1:
+                raise ValueError(
+                    f"Toolkit plugin name '{name}' is used by {', '.join(sorted(providers))}"
+                )
+        for entry_point in entry_points:
+            try:
+                toolkit = entry_point.load()()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load toolkit plugin '{entry_point.name}' "
+                    f"({entry_point.value})"
+                ) from exc
+            if not isinstance(toolkit, Toolkit):
+                raise TypeError(
+                    f"Toolkit plugin '{entry_point.name}' ({entry_point.value}) "
+                    f"returned {type(toolkit).__name__}, not a Toolkit"
+                )
+            self.register(toolkit, name=entry_point.name)
 
     def register_tools(self) -> None:
         """Register all tools from loaded plugins"""
         for name, plugin in self.plugins.items():
-            try:
-                tools = plugin.get_tools()
-            except Exception as e:
-                logger.warning(f"Failed to get tools from {name}: {e}")
-                continue
-            for tool in tools:
+            for tool in plugin.get_tools():
                 try:
                     self.registry.register(tool)
                 except ValueError as e:

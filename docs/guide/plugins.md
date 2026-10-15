@@ -57,11 +57,11 @@ manager = PluginManager(registry)
 manager.register(WeatherToolkit())
 ```
 
-An optional `name` argument overrides the class name used as the plugin key.
+An optional `name` argument overrides the class name used as the plugin key. A name already in use raises `ValueError`, so pass `name` to register two toolkits of the same class.
 
 ### load_plugins
 
-Discovers and loads all toolkits registered under the `"cyclops.toolkits"` entry-point group. Call this once at startup:
+Discovers, instantiates and registers every toolkit under the `"cyclops.toolkits"` entry-point group. Call this once per manager at startup, since a second call raises `ValueError` on the names it already registered:
 
 ```python
 manager.load_plugins()
@@ -102,9 +102,9 @@ agent = build_agent()
 print(agent.run("What is the weather in London?"))
 ```
 
-## Defining tools as class attributes
+## Defining tools with the `@tool` decorator
 
-You can also define tools inline using the `@tool` decorator with a registry, then attach them to a `Toolkit`:
+`@tool` turns a function into a `Tool` instance, so decorated functions in the class body are class attributes like any other tool:
 
 ```python
 from cyclops.toolkit import tool
@@ -112,24 +112,18 @@ from cyclops.toolkit.plugins import Toolkit
 
 
 class MathToolkit(Toolkit):
-    @staticmethod
-    def _make_tools():
-        @tool
-        def add(a: float, b: float) -> float:
-            """Add two numbers."""
-            return a + b
+    @tool
+    def add(a: float, b: float) -> float:
+        """Add two numbers."""
+        return a + b
 
-        @tool
-        def multiply(a: float, b: float) -> float:
-            """Multiply two numbers."""
-            return a * b
-
-        return add, multiply
-
-    add, multiply = _make_tools.__func__(None)
+    @tool
+    def multiply(a: float, b: float) -> float:
+        """Multiply two numbers."""
+        return a * b
 ```
 
-For simpler cases, just instantiate `BaseTool` subclasses directly as class attributes (as shown in the `WeatherToolkit` example above).
+The functions take no `self`: each attribute is a `Tool`, not a method.
 
 ## Entry-point registration in pyproject.toml
 
@@ -140,12 +134,12 @@ To make a toolkit auto-discoverable, add it to the `[project.entry-points."cyclo
 weather = "my_weather_package.plugin:WeatherToolkit"
 ```
 
-The key (`weather`) becomes the plugin name reported by `get_plugin_names()`. The value is a dotted import path to the `Toolkit` subclass (or to a factory function that returns an instance).
+The key (`weather`) becomes the plugin name reported by `get_plugin_names()`. The value is a dotted import path to the `Toolkit` subclass, or to a factory function that returns a `Toolkit` instance.
 
 After installing the package (`pip install my-weather-package` or `uv add my-weather-package`), calling `manager.load_plugins()` will find and instantiate `WeatherToolkit` automatically.
 
 /// note
-The entry point value should point to the **class** itself, not an instance. `PluginManager` calls `entry_point.load()` which returns the class or callable, then passes it directly to `register()`.
+The entry point value should point to the **class** or factory, not an instance. `PluginManager` calls `entry_point.load()`, calls the result with no arguments, and registers the `Toolkit` it returns. A plugin that fails to import or instantiate raises `RuntimeError` naming the entry point, and one that returns anything other than a `Toolkit` raises `TypeError`. Two distributions that use the same entry-point name raise `ValueError`. A broken install is never silently skipped.
 ///
 
 ## Example toolkit project layout
