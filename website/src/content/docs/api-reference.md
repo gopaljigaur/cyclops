@@ -331,51 +331,6 @@ class Message(BaseModel):
 
 ---
 
-## cyclops.core.memory
-
-### Memory
-
-Abstract base class for all memory backends. Implement all four async methods to create a custom backend.
-
-```python
-class Memory(ABC):
-    async def store(self, key: str, value: Any, metadata: Optional[Dict] = None) -> None: ...
-    async def retrieve(self, key: str) -> Optional[Any]: ...
-    async def list_keys(self) -> List[str]: ...
-    async def clear(self) -> None: ...
-```
-
-| Method | Description |
-|---|---|
-| `store(key, value, metadata=None)` | Write a value. Overwrites any existing entry for that key. |
-| `retrieve(key)` | Read a value. Returns `None` if the key does not exist. |
-| `list_keys()` | Return a list of all stored keys. |
-| `clear()` | Delete all entries. |
-
----
-
-### InMemoryStorage
-
-In-process dict-backed storage. Data is lost on process exit.
-
-```python
-class InMemoryStorage(Memory):
-    def __init__(self): ...
-```
-
----
-
-### FileStorage
-
-JSON-file-backed persistent storage. Loads existing data at construction; writes to disk after every `store()`.
-
-```python
-class FileStorage(Memory):
-    def __init__(self, path: str): ...
-```
-
----
-
 ## cyclops.toolkit
 
 ### tool

@@ -50,3 +50,7 @@ async def reply(user_id: str, message: str) -> str:
 ```
 
 To keep sessions in a database, write a class with the same three methods; `SessionStore` is a `Protocol`, so there is nothing to inherit.
+
+## Moving from Memory
+
+Earlier versions shipped `Memory`, `InMemoryStorage` and `FileStorage`, key value stores the agent never read. They are gone. To carry a conversation across runs or processes, keep it in a session and save it with a `SessionStore` as above. For other application state, use the store your application already has.
