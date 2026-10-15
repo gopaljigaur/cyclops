@@ -138,6 +138,8 @@ A call takes the strictest rule it matches: deny, then ask, then allow. A call t
 
 An "ask" call awaits `approve(call)` with the `ToolCallContext`. Return `True` to run the call, `False` to deny it, or `Deny(reason)` to deny it with your own reason. `call.annotations` carries the tool's hints, such as `destructive`, if the callback wants them. `ask` rules or `default="ask"` without `approve` raise `ValueError`. If `approve` raises, the run fails as it does when any middleware raises, and the tool does not run.
 
+Approvals happen where the call would run, so they follow the same parallelism. Calls to tools not marked `read_only` are asked about one at a time, in the model's order, each after the previous one has run. `read_only` calls are asked about concurrently, so a callback that prompts a person, like the one above, should expect overlapping questions for them, or allow read-only tools outright. A call waiting on `approve` holds one of the `max_parallel_tool_calls` slots, and `tool_timeout` does not count the wait.
+
 A denied call reaches the model as an error result, like any `Deny`. `RunResult.denied_tool_calls` lists every call middleware denied in the run, `ToolPermissions` or otherwise, with its `id` (`None` in naive tool mode), `name`, `arguments` and `reason`:
 
 ```python
