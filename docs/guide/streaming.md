@@ -131,12 +131,31 @@ async for event in agent.astream_events("What is 2 + 3?"):
 | `ToolCallFinished` | `call_id`, `name`, `result`, `is_error` | After a tool returns, fails, is cancelled or is denied by middleware. `result` is the text sent to the model. |
 | `GuardRejected` | `feedback` | After a rejected answer's text, when a [guard](hooks.md#end-of-run-guards) sends the model back. |
 | `OutputRejected` | `feedback` | After an answer's text, when it failed `response_model` validation and the model is [sent back](structured-output.md#retries) with the errors. |
-| `ModelFallback` | `model`, `fallback_model`, `error`, `usage` | When a model failed or refused and the step's completion goes to the next of the [fallback models](agents.md#fallback-models). `error` is `None` for a refusal, whose usage is in `usage`. |
-| `StepFinished` | `step`, `model`, `usage`, `finish_reason` | After one completion and the tool calls it asked for. `model` is the model that answered. |
+| `CompletionRetry` | `model`, `delay`, `status_code`, `headers`, `rate_limit`, `error` | Before a completion that failed with a transient error or stalled is [retried](agents.md#retries-and-timeouts). See [Rate limits](#rate-limits). |
+| `ModelFallback` | `model`, `fallback_model`, `error`, `usage`, `status_code`, `headers`, `rate_limit` | When a model failed or refused and the step's completion goes to the next of the [fallback models](agents.md#fallback-models). `error` is `None` for a refusal, whose usage is in `usage`. |
+| `StepFinished` | `step`, `model`, `usage`, `finish_reason`, `headers`, `rate_limit` | After one completion and the tool calls it asked for. `model` is the model that answered. |
 | `Compacted` | `summary`, `replaced_messages`, `tokens_before`, `tokens_after` | Before a completion, when a summary replaced older messages. See [Context window](agents.md#context-window). |
 | `RunFinished` | `result` | Last event, with the run's `RunResult`, including usage and cost. |
 
 Every event has `agent_path`, the names of the nested agents it came from, outermost first. It is empty for events of the agent you ran; events of a [subagent](subagents.md) carry its tool name, and its `RunFinished` comes before the outer run's.
+
+### Rate limits
+
+`StepFinished`, `CompletionRetry` and `ModelFallback` carry the provider's HTTP response `headers`, as LiteLLM passes them on, and `rate_limit`, the limits read from them. `CompletionRetry` and `ModelFallback` also carry the error's HTTP `status_code`; for a refusal, `ModelFallback` has the refused response's headers and no status.
+
+```python
+from cyclops.core.events import CompletionRetry, StepFinished
+
+async for event in agent.astream_events("Hi"):
+    if isinstance(event, CompletionRetry):
+        print(f"{event.status_code}: retrying in {event.delay:.1f}s")
+    if isinstance(event, (StepFinished, CompletionRetry)) and event.rate_limit:
+        print(f"{event.rate_limit.remaining_tokens} tokens left")
+```
+
+`RateLimit` has `remaining_requests`, `reset_requests`, `remaining_tokens` and `reset_tokens`, each `None` when the headers lack it; a reset is the seconds from the response until that limit resets. It reads OpenAI's `x-ratelimit-*` headers, which many OpenAI-compatible providers send too, and Anthropic's `anthropic-ratelimit-*` headers. Gemini and Bedrock send no rate limit headers, so their `rate_limit` is `None`, and LiteLLM passes on no headers of a Gemini response.
+
+An error that ends the run is in `RunResult.error`. LiteLLM's exceptions have the `status_code` and the provider's headers in `litellm_response_headers`, so `RateLimit.from_headers(error.litellm_response_headers)` reads its limits.
 
 A failed run doesn't raise from `astream_events()`: it ends with `RunFinished` whose result has `stop_reason="error"`. `astream()` and `stream()` yield only the text of the agent you ran and raise its error. The run waits for you to take its events: within a completion it gets at most 16 text or reasoning deltas ahead of you, and it starts no tool call or completion until you have taken every event before it, so a loop you `break` out of holds the run. Closing the iterator (or leaving an `aclosing()` block) cancels the run; tool calls in progress get a cancelled result so the conversation stays valid. If a tool or hook raises `CancelledError`, the iterator raises it too.
 

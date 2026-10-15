@@ -299,6 +299,46 @@ def test_compaction_needs_known_model_limits():
     assert isinstance(result.error, ValueError)
 
 
+def test_context_usage_counts_as_compaction_does():
+    hooks = _Recorder()
+    agent = Agent(AgentConfig(model=MODEL, compaction=Compaction(), hooks=hooks))
+    session = _long_session()
+
+    with _replies("Summary.") as mock:
+        usage = agent.context_usage(session)
+        agent.compact(session)
+
+    assert usage.tokens == hooks.compactions[0][1]
+    assert usage.max_input_tokens == 400
+    assert usage.compaction_threshold == 320
+    # Only the summary was a completion.
+    assert mock.call_count == 1
+
+
+def test_context_usage_without_compaction_has_no_threshold():
+    session = _long_session()
+
+    with _replies() as mock:
+        usage = Agent(AgentConfig(model=MODEL)).context_usage(session)
+        compacting = Agent(AgentConfig(model=MODEL, compaction=Compaction()))
+
+        assert usage.tokens == compacting.context_usage(session).tokens
+
+    assert usage.max_input_tokens == 400
+    assert usage.compaction_threshold is None
+    mock.assert_not_called()
+
+
+def test_context_usage_of_an_unknown_model():
+    session = _long_session()
+    config = AgentConfig(model="openai/cyclops-unmapped")
+
+    assert Agent(config).context_usage(session) is None
+    compacting = Agent(config.model_copy(update={"compaction": Compaction()}))
+    with pytest.raises(ValueError, match="register_model"):
+        compacting.context_usage(session)
+
+
 def test_the_summary_model_can_differ():
     agent = Agent(AgentConfig(model=MODEL, compaction=Compaction(model="gpt-4o-mini")))
 
