@@ -242,7 +242,7 @@ A refusal whose usage reaches `max_total_tokens` or `max_cost` ends the run with
 
 Every step starts with `model` again, as LiteLLM's fallbacks start every request with the first model: a run returns to the model as soon as it recovers, at the cost of its retries on each step while it is down. Lower `num_retries` to switch sooner.
 
-Each switch emits a [`ModelFallback`](streaming.md#run-events) event with the `model` that failed, the `fallback_model` tried next, and the `error` it raised; for a refusal, `error` is `None` and `usage` holds the refused completion's usage, which counts in the run's usage and cost since the provider bills it. `StepFinished.model` names the model that answered each step, and that step's `usage` and cost are its own; `RunResult.model` stays the configured model. Every attempt fires `on_llm_start`, then `on_llm_error`, or `on_llm_end` for a refusal, so [`TelemetryHooks`](hooks.md#observability-example) records each as a `chat` span, and `gen_ai.response.model` on the answering one names the model that answered.
+Each switch emits a [`ModelFallback`](streaming.md#run-events) event with the `model` that failed, the `fallback_model` tried next, and the `error` it raised; for a refusal, `error` is `None` and `usage` holds the refused completion's usage, which counts in the run's usage and cost since the provider bills it. `StepFinished.model` names the model that answered each step, and that step's `usage` and cost are its own; `RunResult.model` stays the configured model, and `RunResult.usage_by_model` splits the run's usage between the models. Every attempt fires `on_llm_start`, then `on_llm_error`, or `on_llm_end` for a refusal, so [`TelemetryHooks`](hooks.md#observability-example) records each as a `chat` span, and `gen_ai.response.model` on the answering one names the model that answered.
 
 LiteLLM's own `fallbacks` argument is not used: it moves to the next model on every error, raises a plain `Exception` with only the last message once all fail, doesn't act on a refusal, and for a stream covers only its opening. With a `router`, set fallbacks on the Router instead (`fallbacks`, `content_policy_fallbacks`); `fallback_models` and `router` can't both be set.
 
@@ -294,7 +294,7 @@ config = AgentConfig(
 )
 agent = Agent(config)
 response = agent.run_with_response("Summarise the report.")
-print(response.cached_tokens)
+print(response.usage.cache_write_tokens, response.cached_tokens)
 ```
 
 A provider caches a prefix only above a minimum length that depends on the model, from 512 to 4096 tokens on Anthropic models; below it the marker is ignored and costs nothing (see Anthropic's [prompt caching docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)). Writing to the cache costs more than a plain input token, and later reads cost much less, so a run of several steps gains while a single call that is not repeated within the time to live pays the write for nothing. `prompt_caching=False` sends no markers. To place breakpoints yourself, pass LiteLLM's `cache_control_injection_points` in `completion_kwargs`; they replace the default ones.
