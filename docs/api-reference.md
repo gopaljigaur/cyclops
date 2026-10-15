@@ -67,6 +67,8 @@ class AgentConfig(BaseModel):
     num_retries: int = 2
     timeout: float = 600   # seconds
     stream_idle_timeout: float = 120   # seconds
+    reasoning_effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]] = None
+    thinking_budget: Optional[int] = None   # tokens
     completion_kwargs: Dict[str, Any] = {}   # extra LiteLLM completion arguments
     prompt_caching: bool | Literal["5m", "1h"] = True
     middleware: List[ToolMiddleware] = []

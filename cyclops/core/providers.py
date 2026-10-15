@@ -65,6 +65,14 @@ def _every_deployment(config: AgentConfig, supports: Callable[..., bool]) -> boo
     )
 
 
+def _every_deployment_takes(config: AgentConfig, param: str) -> bool:
+    """True if LiteLLM lists `param` as supported for every deployment of the model."""
+    return _every_deployment(
+        config,
+        lambda **p: param in (litellm.get_supported_openai_params(**p) or ()),
+    )
+
+
 def _tools_unsupported(config: AgentConfig) -> bool:
     """True if LiteLLM lists no `tools` support for every deployment of the model."""
     params = _deployments(config)

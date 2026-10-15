@@ -2,7 +2,8 @@
 
 import uuid
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field
+from litellm.types.llms.openai import REASONING_EFFORT
+from pydantic import BaseModel, Field, model_validator
 
 from cyclops.core.caching import PromptCaching
 from cyclops.core.hooks import AgentHooks
@@ -72,12 +73,30 @@ class AgentConfig(BaseModel):
         description="Seconds a stream may go without a chunk after its first; "
         "a stall is retried once while nothing of it has been emitted",
     )
+    reasoning_effort: Optional[REASONING_EFFORT] = Field(
+        default=None,
+        description="How much the model reasons, sent to models LiteLLM lists "
+        "with reasoning_effort; None sends nothing",
+    )
+    thinking_budget: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Tokens the model may think, sent as LiteLLM's thinking to "
+        "models that take it; not with reasoning_effort",
+    )
     # Extra LiteLLM completion arguments sent with every call, e.g. api_key,
-    # api_base, extra_headers, reasoning_effort, thinking.
+    # api_base, extra_headers.
     completion_kwargs: Dict[str, Any] = Field(default_factory=dict)
     # Mark cache breakpoints for providers that cache at cache_control markers:
     # True, or a time to live of "5m" or "1h"; False sends none.
     prompt_caching: PromptCaching = True
+
+    @model_validator(mode="after")
+    def _one_reasoning_option(self) -> "AgentConfig":
+        # LiteLLM maps each onto the same provider setting.
+        if self.reasoning_effort is not None and self.thinking_budget is not None:
+            raise ValueError("set reasoning_effort or thinking_budget, not both")
+        return self
 
 
 class Message(BaseModel):

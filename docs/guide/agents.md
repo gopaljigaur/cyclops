@@ -37,6 +37,8 @@ config = AgentConfig(
 | `timeout` | `float` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `float` | `120` | Seconds a stream may go without a chunk after its first. |
 | `completion_kwargs` | `dict` | `{}` | Extra arguments for every LiteLLM completion call, also through a `router`. See [Provider options](#provider-options). |
+| `reasoning_effort` | `str \| None` | `None` | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, sent to models that take it. See [Reasoning](#reasoning). |
+| `thinking_budget` | `int \| None` | `None` | Tokens the model may think, sent to models that take a thinking budget; not with `reasoning_effort`. See [Reasoning](#reasoning). |
 | `prompt_caching` | `bool \| "5m" \| "1h"` | `True` | Mark cache breakpoints for models with prompt caching on Anthropic, Bedrock and Vertex AI (Anthropic models); `"5m"` or `"1h"` sets the time to live, `False` turns it off. See [Prompt caching](#prompt-caching). |
 
 ## Constructing an Agent
@@ -194,17 +196,15 @@ import os
 
 config = AgentConfig(
     model="anthropic/claude-sonnet-4-5",
-    temperature=1,  # Anthropic requires 1 with extended thinking
     completion_kwargs={
         "api_key": os.environ["MY_ANTHROPIC_KEY"],
         "extra_headers": {"X-Request-Source": "docs"},
         "max_tokens": 8192,
-        "thinking": {"type": "enabled", "budget_tokens": 4096},
     },
 )
 ```
 
-For OpenAI style reasoning models use `"reasoning_effort": "low"` and so on. See the [LiteLLM input docs](https://docs.litellm.ai/docs/completion/input) for every argument.
+For reasoning, use the typed options in [Reasoning](#reasoning). See the [LiteLLM input docs](https://docs.litellm.ai/docs/completion/input) for every argument.
 
 ## Retries and timeouts
 
@@ -233,6 +233,28 @@ for msg in agent.messages:
     if "thinking_blocks" in msg:
         print(msg["thinking_blocks"][0]["thinking"])
 ```
+
+## Reasoning
+
+`reasoning_effort` sets how much a reasoning model thinks before it answers, and `thinking_budget` sets its thinking in tokens. Set one or the other; a config with both is rejected. Both are off by default, and the model keeps its own default behaviour.
+
+LiteLLM maps them onto each provider's own setting, and the mapping changes from model to model. Some notable cases with LiteLLM 1.105.1:
+
+- OpenAI models get `reasoning_effort` as is and take no `thinking_budget`.
+- Older Anthropic models, on the Anthropic API and Bedrock, get a thinking budget: `thinking_budget` as given, or one LiteLLM picks for the effort (1024 tokens for `"low"`). Newer ones such as `claude-opus-4-6` get adaptive thinking with `output_config.effort` for an effort, and on models that take only adaptive thinking (`claude-opus-4-7` and later) LiteLLM turns a budget into an effort too, so it caps nothing.
+- Gemini 2.5 gets `thinkingBudget`. Gemini 3 gets `thinkingLevel` for an effort and drops `thinking_budget`.
+
+Each option goes only to models where LiteLLM lists the matching parameter (`reasoning_effort` or `thinking` in `get_supported_openai_params`), and through a `router` every deployment has to list it; other models get nothing. The check is per parameter, not per level: the levels a model accepts vary, and LiteLLM or the provider rejects one it doesn't: LiteLLM raises for `gpt-5` with `"xhigh"`, while `o3-mini` passes `"none"`, `"minimal"` and `"max"` through to OpenAI. A listed parameter is also no promise that the model reasons: LiteLLM lists `reasoning_effort` for every Ollama model, so a model that cannot think rejects it. `"none"` turns reasoning off where the provider allows it. A `reasoning_effort` or `thinking` in `completion_kwargs` replaces both options.
+
+```python
+config = AgentConfig(
+    model="anthropic/claude-sonnet-4-5",
+    temperature=1,  # Anthropic requires 1 with thinking
+    reasoning_effort="medium",
+)
+```
+
+Anthropic models accept thinking only with `temperature=1`, and OpenAI reasoning models reject any other temperature, so set it with these options. When `max_tokens` is unset and the request carries a thinking budget, LiteLLM sends the budget plus 4096 tokens (its `DEFAULT_MAX_TOKENS`) as the Anthropic output limit; when it is set, it has to exceed the budget.
 
 ## Prompt caching
 
