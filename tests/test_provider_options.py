@@ -29,6 +29,7 @@ from cyclops.core.providers import (
     _holds,
     _lacks_tools,
     _native_schema,
+    _response_schema,
     _takes_param,
     _takes_tool_message_images,
 )
@@ -1092,7 +1093,7 @@ def test_response_model_native_schema_needs_every_router_deployment():
 
 
 _CHECKS = [
-    (litellm.supports_response_schema,),
+    (_response_schema,),
     (_native_schema,),
     (_takes_param, "reasoning_effort"),
     (_takes_param, "thinking"),
@@ -1141,6 +1142,12 @@ def test_every_deployment_decides_as_each_check(check):
         expected = all(check[0](m, p, *check[1:]) for m, p in pair)
         config = AgentConfig(model="smart", router=_router(*pair))
         assert _every_deployment(config, *check) is expected
+
+
+@pytest.mark.parametrize("model, provider", _MODELS)
+def test_the_response_schema_check_decides_as_litellm(model, provider):
+    expected = litellm.supports_response_schema(model, provider)
+    assert _response_schema(model, provider) is expected
 
 
 def test_every_deployment_is_false_without_deployments():

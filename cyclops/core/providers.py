@@ -22,6 +22,9 @@ _INPUT_SUPPORT = {
 # only for Anthropic models). Gemini turns them into billed cachedContents
 # resources instead, and OpenAI caches without them.
 _CACHE_MARKER_PROVIDERS = {"anthropic", "bedrock"}
+# LiteLLM's model info lookups ask these providers' servers (Ollama only for
+# models its map lacks), blocking the caller and ignoring the deployment's api_base.
+_SERVER_INFO_PROVIDERS = {"huggingface", "lemonade", "ollama", "ollama_chat"}
 
 # A check of one deployment: its model, its custom_llm_provider, then any arguments.
 _Check = Callable[..., bool]
@@ -46,17 +49,51 @@ def _caches_at_markers(model: str, custom_llm_provider: Optional[str]) -> bool:
     )
 
 
+def _asks_server(model: str, custom_llm_provider: Optional[str]) -> bool:
+    """True if LiteLLM's model info lookups would ask the provider's server."""
+    try:
+        provider = litellm.get_llm_provider(model, custom_llm_provider)[1]
+    except Exception:  # unknown provider
+        return False
+    return provider in _SERVER_INFO_PROVIDERS
+
+
+def _model_info(model: str, custom_llm_provider: Optional[str] = None) -> Any:
+    """LiteLLM's info for the model; empty if it has none.
+
+    Where LiteLLM would ask the provider's server, its model map is read
+    instead: the entry under provider/model, else model, if it is for that
+    provider or none, as LiteLLM matches them.
+    """
+    if _asks_server(model, custom_llm_provider):
+        name, provider = litellm.get_llm_provider(model, custom_llm_provider)[:2]
+        for key in (f"{provider}/{name}", name):
+            info = litellm.model_cost.get(key)
+            if info is not None and info.get("litellm_provider") in (None, provider):
+                return info
+        return {}
+    try:
+        return litellm.get_model_info(model, custom_llm_provider)
+    except Exception:  # not mapped
+        return {}
+
+
 def _native_schema(model: str, custom_llm_provider: Optional[str] = None) -> bool:
     """True if LiteLLM's own entry for this provider lists native structured output.
 
     Not `supports_native_structured_output`: it falls back to another provider's
     entry, while the Vertex AI builder reads only its own.
     """
-    try:
-        info = litellm.get_model_info(model, custom_llm_provider)
-    except Exception:  # not mapped
-        return False
+    info = _model_info(model, custom_llm_provider)
     return info.get("supports_native_structured_output") is True
+
+
+def _response_schema(model: str, custom_llm_provider: Optional[str]) -> bool:
+    """`litellm.supports_response_schema`, without asking the provider's server."""
+    if _asks_server(model, custom_llm_provider):
+        info = _model_info(model, custom_llm_provider)
+        return info.get("supports_response_schema") is True
+    return litellm.supports_response_schema(model, custom_llm_provider)
 
 
 def _takes_param(model: str, custom_llm_provider: Optional[str], param: str) -> bool:
@@ -76,16 +113,11 @@ def _lacks_tools(model: str, custom_llm_provider: Optional[str]) -> bool:
 
 
 def _takes_input(model: str, custom_llm_provider: Optional[str], flag: str) -> bool:
-    """False only if LiteLLM's model map sets `flag` to false for the model.
+    """False only if LiteLLM's info sets `flag` to false for the model.
 
-    Most entries leave the flags out. The entry is read from litellm.model_cost
-    under provider/model, else model: get_model_info asks some providers
-    (Ollama) over the network.
+    Most entries leave the flags out.
     """
-    model, provider = litellm.get_llm_provider(model, custom_llm_provider)[:2]
-    costs = litellm.model_cost
-    info = costs.get(f"{provider}/{model}") or costs.get(model) or {}
-    return info.get(flag) is not False
+    return _model_info(model, custom_llm_provider).get(flag) is not False
 
 
 def _deployments(config: AgentConfig) -> List[Dict[str, Any]]:

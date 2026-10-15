@@ -25,6 +25,7 @@ from cyclops.core.providers import (
     _caches_at_markers,
     _every_deployment,
     _native_schema,
+    _response_schema,
     _takes_param,
 )
 from cyclops.core.types import AgentConfig, Usage
@@ -57,7 +58,7 @@ def _completion_kwargs(
     # With tools only where LiteLLM sends the schema natively: elsewhere it
     # may emulate it with a forced tool call, which blocks the agent's tools.
     if response_model is not None and (
-        (mode == "none" and _every_deployment(config, litellm.supports_response_schema))
+        (mode == "none" and _every_deployment(config, _response_schema))
         or (mode == "native" and _every_deployment(config, _native_schema))
     ):
         kwargs["response_format"] = response_model

@@ -8,6 +8,7 @@ from litellm.constants import DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET
 
 from cyclops.core.completion import _acompletion, _completion_kwargs, _usage
 from cyclops.core.events import Compacted
+from cyclops.core.providers import _asks_server, _model_info
 from cyclops.core.types import AgentConfig, Compaction, Usage
 from cyclops.toolkit.types import ToolResult
 
@@ -27,18 +28,20 @@ def _window(config: AgentConfig) -> Optional[_Limits]:
     """
     windows = []
     if config.router is None:
-        try:
-            info: Any = litellm.get_model_info(config.model)
-        except Exception:  # not mapped
-            return None
-        windows.append((config.model, info))
+        windows.append((config.model, _model_info(config.model)))
     else:
         for deployment in config.router.get_model_list(config.model) or []:
-            try:
-                info = config.router.get_router_model_info(deployment, config.model)
-            except Exception:  # not mapped
-                return None
-            windows.append((deployment["litellm_params"]["model"], info))
+            model = deployment["litellm_params"]["model"]
+            provider = deployment["litellm_params"].get("custom_llm_provider")
+            if _asks_server(model, provider):
+                # The deployment's model_info over the map's, as the router merges them.
+                info = {**_model_info(model, provider), **deployment["model_info"]}
+            else:
+                try:
+                    info = config.router.get_router_model_info(deployment, config.model)
+                except Exception:  # not mapped
+                    return None
+            windows.append((model, info))
     limits = [
         (model, info.get("max_input_tokens"), info.get("max_output_tokens"))
         for model, info in windows

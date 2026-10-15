@@ -326,6 +326,25 @@ The run reads each completion's `finish_reason`, as LiteLLM normalizes it across
 
 A long conversation, or a large tool result, eventually outgrows the model's context window. Two settings keep requests within it: compaction summarizes older messages, and `max_tool_output_chars` caps each tool result. A request that still overflows is retried with what fits. Both are off by default, as in other agent libraries, since compaction makes an extra completion and replaces what the model saw with a summary.
 
+Compaction and overflow recovery take the model's limits from LiteLLM. For Ollama, Lemonade and Hugging Face models Cyclops reads only LiteLLM's model map, since LiteLLM's `get_model_info` would ask the provider's server and block the run. A model the map lacks, such as `ollama/qwen3:4b`, gets no limits: compaction raises `ValueError` and an overflow is not retried. Register its limits at startup, keyed by the exact model string, with the context length your server runs it with:
+
+```python
+import litellm
+
+litellm.register_model(
+    {
+        "ollama/qwen3:4b": {
+            "max_input_tokens": 32768,
+            "max_output_tokens": 8192,
+            "litellm_provider": "ollama",
+            "mode": "chat",
+        }
+    }
+)
+```
+
+Registering it also stops LiteLLM's own `/api/show` requests: for an Ollama model its map lacks, LiteLLM prices each completion by asking the server, four or five requests per completion, sent mostly to `OLLAMA_API_BASE` or localhost even when the model has its own `api_base`.
+
 ### Compaction
 
 ```python

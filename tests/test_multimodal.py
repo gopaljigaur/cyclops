@@ -143,6 +143,8 @@ def _file(**file):
         (NO_PDF, _file(file_id="file-123", format="application/pdf"), "pdf"),
         (NO_AUDIO, AUDIO, "audio"),
         (NO_AUDIO, _file(file_data="data:audio/wav;base64,UklGRg=="), "audio"),
+        # A route LiteLLM's lookup strips to find the entry.
+        ("bedrock/converse/moonshotai.kimi-k2.5", AUDIO, "audio"),
     ],
 )
 def test_unsupported_input_raises_before_any_completion(model, part, kind):
