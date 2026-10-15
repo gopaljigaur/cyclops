@@ -339,6 +339,7 @@ def tool(
     registry: Optional[ToolRegistry] = None,
     annotations: Optional[ToolAnnotations] = None,
     timeout: Optional[float] = None,
+    defer_loading: bool = False,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -350,6 +351,7 @@ def tool(
 | `registry` | If provided, the tool is automatically registered in this registry. |
 | `annotations` | `ToolAnnotations` behaviour hints; `read_only` lets calls run in parallel. |
 | `timeout` | Seconds a call may run; overrides `AgentConfig.tool_timeout`. |
+| `defer_loading` | Send the tool only once the model finds it with `search_tools`. See [Deferred tools](/guides/tools/#deferred-tools). |
 
 ---
 
@@ -365,6 +367,7 @@ class BaseTool(ABC):
         description: str,
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
+        defer_loading: bool = False,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 
@@ -374,7 +377,7 @@ class BaseTool(ABC):
 
 | Member | Description |
 |---|---|
-| `__init__(name, description, annotations, timeout)` | Set the tool name, description, behaviour hints and call timeout in seconds. Builds the `ToolDefinition` from the `execute()` signature. |
+| `__init__(name, description, annotations, timeout, defer_loading)` | Set the tool name, description, behaviour hints, call timeout in seconds and whether it is deferred. Builds the `ToolDefinition` from the `execute()` signature. |
 | `execute(**kwargs)` | Override with the exact parameter signature you want exposed to the LLM. |
 | `definition` | `ToolDefinition` derived from the `execute()` signature. |
 
@@ -393,6 +396,7 @@ class Tool(BaseTool):
         func: Callable,
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
+        defer_loading: bool = False,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 ```

@@ -324,6 +324,7 @@ def tool(
     registry: Optional[ToolRegistry] = None,
     annotations: Optional[ToolAnnotations] = None,
     timeout: Optional[float] = None,
+    defer_loading: bool = False,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -341,6 +342,7 @@ class BaseTool(ABC):
         description: str,
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
+        defer_loading: bool = False,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 
@@ -363,6 +365,7 @@ class Tool(BaseTool):
         func: Callable,
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
+        defer_loading: bool = False,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 ```
@@ -476,6 +479,7 @@ class MCPClient:
         call_timeout: Optional[float] = 60.0,
         idle_timeout: Optional[float] = None,
         reconnection: ReconnectionOptions = ReconnectionOptions(),
+        defer_loading: bool = False,
     ) -> List[MCPClientTool]: ...
     async def detach(self, name: str) -> None: ...
     async def aclose(self) -> None: ...

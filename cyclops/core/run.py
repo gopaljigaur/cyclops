@@ -39,6 +39,7 @@ from cyclops.core.tool_execution import (
     _parse_naive_tool_call,
     _ToolExecutor,
 )
+from cyclops.core.tool_search import _ToolSearch
 from cyclops.core.types import AgentConfig, RunResult, StopReason
 from cyclops.skills import Skills
 
@@ -186,9 +187,10 @@ class _RunLoop:
         naive = mode == "naive"
         # Naive mode never streams deltas: the text may be a tool call.
         streamed = self.stream and not naive
-        kwargs = _completion_kwargs(self.config, agent.tools, mode, self.response_model)
-        system_prompt = _system_prompt(self.config, agent.skills, agent.tools, mode)
-        executor = _ToolExecutor(self.config, agent._tools_by_name, run)
+        tools = _ToolSearch(agent.tools, agent._tools_by_name)
+        kwargs: Dict[str, Any] = {}
+        system_prompt: Optional[str] = None
+        executor = _ToolExecutor(self.config, tools.tools_by_name, run)
 
         guard_rounds = 0
         # Guard feedback waiting to be sent once another step is allowed.
@@ -199,6 +201,14 @@ class _RunLoop:
             if run.over_budget():
                 result.stop_reason = "budget"
                 return
+            if tools.changed:
+                tools.changed = False
+                kwargs = _completion_kwargs(
+                    self.config, tools.loaded, mode, self.response_model
+                )
+                system_prompt = _system_prompt(
+                    self.config, agent.skills, tools.loaded, mode
+                )
             if feedback is not None:
                 run.history.append({"role": "user", "content": feedback})
                 feedback = None

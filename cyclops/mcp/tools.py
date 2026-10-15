@@ -86,11 +86,17 @@ class MCPClientTool(BaseTool):
         server: str,
         tool: mcp_types.Tool,
         name: Optional[str] = None,
+        defer_loading: bool = False,
     ) -> None:
         self.client = client
         self.server = server
         self.tool = tool
-        super().__init__(name or tool.name, tool.description or "", _annotations(tool))
+        super().__init__(
+            name or tool.name,
+            tool.description or "",
+            _annotations(tool),
+            defer_loading=defer_loading,
+        )
 
     def _build_definition(self) -> ToolDefinition:
         return ToolDefinition(

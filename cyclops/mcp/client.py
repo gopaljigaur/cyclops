@@ -62,6 +62,7 @@ class MCPClient:
         call_timeout: Optional[float] = DEFAULT_CALL_TIMEOUT,
         idle_timeout: Optional[float] = None,
         reconnection: ReconnectionOptions = ReconnectionOptions(),
+        defer_loading: bool = False,
     ) -> List[MCPClientTool]:
         """Connect to a server and return its tools.
 
@@ -72,8 +73,10 @@ class MCPClient:
         ``OAuthClientProvider``. ``prefix`` is ``True`` for the server name,
         a string, or ``False`` for none. ``call_timeout`` bounds each call;
         ``idle_timeout`` closes a session no call has used for that long.
-        ``None`` disables either. Attaching an existing name replaces that
-        server. The server's tools must be awaited on the loop that attached it.
+        ``None`` disables either. ``defer_loading`` defers every tool of the
+        server, so the model finds them with the agent's search tool.
+        Attaching an existing name replaces that server. The server's tools
+        must be awaited on the loop that attached it.
         """
         if (command is None) == (url is None):
             raise ValueError("Pass exactly one of command or url")
@@ -92,13 +95,15 @@ class MCPClient:
                 call_timeout=call_timeout,
                 idle_timeout=idle_timeout,
                 reconnection=reconnection,
-                on_tools_changed=functools.partial(self._set_tools, name, label),
+                on_tools_changed=functools.partial(
+                    self._set_tools, name, label, defer_loading
+                ),
             )
             session = await conn.connect()
             try:
                 async with asyncio_timeout(connect_timeout):
                     remote_tools = await conn.list_tools(session)
-                tools = self._set_tools(name, label, remote_tools)
+                tools = self._set_tools(name, label, defer_loading, remote_tools)
             except BaseException:
                 await conn.detach()
                 raise
@@ -106,7 +111,11 @@ class MCPClient:
             return tools
 
     def _set_tools(
-        self, name: str, label: Union[str, bool], remote_tools: List[Tool]
+        self,
+        name: str,
+        label: Union[str, bool],
+        defer_loading: bool,
+        remote_tools: List[Tool],
     ) -> List[MCPClientTool]:
         tools = [
             MCPClientTool(
@@ -114,6 +123,7 @@ class MCPClient:
                 server=name,
                 tool=t,
                 name=f"{label}__{t.name}" if label else t.name,
+                defer_loading=defer_loading,
             )
             for t in remote_tools
         ]

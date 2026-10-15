@@ -108,6 +108,7 @@ class BaseTool(ABC):
         description: str,
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
+        defer_loading: bool = False,
     ):
         self.name = name
         self.description = description
@@ -116,6 +117,8 @@ class BaseTool(ABC):
         self.annotations = annotations or ToolAnnotations()
         # Seconds a call may run; None uses AgentConfig.tool_timeout.
         self.timeout = timeout
+        # Sent only once the model finds it with the search_tools tool.
+        self.defer_loading = defer_loading
         self._definition = self._build_definition()
 
     async def execute(self, **kwargs):
@@ -152,6 +155,7 @@ class Tool(BaseTool):
         func: Callable,
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
+        defer_loading: bool = False,
     ):
         self.func = func
         self._is_async = inspect.iscoroutinefunction(func)
@@ -160,7 +164,7 @@ class Tool(BaseTool):
             for p in inspect.signature(func).parameters.values()
             if p.kind is p.POSITIONAL_ONLY
         ]
-        super().__init__(name, description, annotations, timeout)
+        super().__init__(name, description, annotations, timeout, defer_loading)
 
     def _build_definition(self) -> ToolDefinition:
         return self._definition_for(self.func)

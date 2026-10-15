@@ -134,6 +134,35 @@ def build_report(month: str) -> str:
 
 A call that runs over is cancelled and the model gets `Error: <tool> timed out after <n> seconds`. Middleware `after_tool`, `on_tool_error` and the `ToolCallFinished` event see it as any other failed call, with an `asyncio.TimeoutError`. A sync tool runs in a worker thread, which cannot be stopped: the agent moves on, but the function runs until it returns. MCP tools also have the client's own `call_timeout`.
 
+## Deferred tools
+
+Every tool's schema is sent with every completion, which costs context when an agent has many tools. Mark a tool `defer_loading=True` and it is left out until the model asks for it: the agent then sends a `search_tools` tool, and each tool a search finds is sent from the next step to the end of the run. Tools not marked are always sent.
+
+```python
+@tool(defer_loading=True)
+def create_invoice(customer: str, amount: float) -> str:
+    """Create an invoice for a customer."""
+    ...
+```
+
+`BaseTool` subclasses pass `defer_loading=` to `super().__init__()`, and `MCPClient.attach(..., defer_loading=True)` defers every tool of that server.
+
+`search_tools` takes a `query` of keywords and returns up to ten deferred tools that share words with their name and description (names split at underscores), most shared words first, with tools not loaded yet ahead of loaded ones. The model gets their names and descriptions; their schemas arrive with the next completion, or in the system prompt in naive tool mode. A deferred tool the model calls by name without searching still runs. With any tool deferred, `search_tools` is a reserved name.
+
+Found tools last for the run. The next run, in a session too, starts again from the tools that are always sent, and the model searches again for what it needs.
+
+`search_tools` goes through middleware like any other tool. With `ToolPermissions(default="deny")`, allow it, or no deferred tool can load:
+
+```python
+ToolPermissions(default="deny", allow=["read_*", "search_tools"])
+```
+
+A deferred tool that a rule denies is still found, and denied when called.
+
+A search that adds tools changes what is sent before the conversation: the tools, which come first in the prompt, or the system prompt in naive tool mode. The next completion misses the prompt cache and writes it again over the tools, the system prompt and the history; later steps hit it again. The first completion of the next run misses as well, as it goes back to the tools always sent.
+
+The search runs in the agent for every provider, Anthropic included. Anthropic's and OpenAI's own tool search keep the tools sent unchanged and so keep the cache; using them is tracked in [#113](https://github.com/gopaljigaur/cyclops/issues/113).
+
 ## ToolRegistry
 
 `ToolRegistry` is a named collection of tools. It is useful when managing tools separately from any single agent, such as in a plugin or a shared tool library.
