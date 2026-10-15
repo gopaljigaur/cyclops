@@ -18,6 +18,7 @@ from cyclops.core import completion
 from cyclops.core.agent import Agent
 from cyclops.core.events import ModelFallback, StepFinished
 from cyclops.core.hooks import AgentHooks
+from cyclops.core.session import Session
 from cyclops.core.types import AgentConfig
 from cyclops.observability import TelemetryHooks
 from cyclops.toolkit.tool import Tool
@@ -378,3 +379,43 @@ async def test_each_model_gets_the_response_format_it_supports():
     first, second = (call.kwargs for call in mock.call_args_list)
     assert first["response_format"] is Answer
     assert "response_format" not in second
+
+
+async def test_an_overflow_lowers_max_tokens_for_every_model():
+    # A known window of 400 input tokens, so a long transcript overflows.
+    tiny = "cyclops-fallback-tiny-window"
+    litellm.register_model(
+        {
+            tiny: {
+                "max_input_tokens": 400,
+                "max_output_tokens": 100,
+                "litellm_provider": "openai",
+                "mode": "chat",
+            }
+        }
+    )
+    real = litellm.acompletion
+    replies = [
+        _quota_spent(),
+        "litellm.ContextWindowExceededError",
+        _quota_spent(),
+        "Done.",
+    ]
+
+    async def complete(**kwargs):
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return await real(**kwargs, mock_response=reply)
+
+    config = AgentConfig(model=tiny, fallback_models=[FALLBACK], num_retries=0)
+    session = Session(messages=[{"role": "user", "content": "word " * 300}])
+    mock = AsyncMock(side_effect=complete)
+    with patch("litellm.acompletion", new=mock):
+        result = await Agent(config).start("Go on.", stream=False, session=session)
+
+    assert result.content == "Done."
+    assert _models(mock) == [tiny, FALLBACK, tiny, FALLBACK]
+    _, overflowed, retried, answered = (c.kwargs for c in mock.call_args_list)
+    assert "max_tokens" not in overflowed
+    assert 0 < retried["max_tokens"] == answered["max_tokens"] < 100
