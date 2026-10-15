@@ -16,7 +16,7 @@ from typing import (
 )
 
 import litellm
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from cyclops.core.compaction import _context_window, _ContextWindow
 from cyclops.core.completion import _build_messages, _usage
@@ -49,6 +49,8 @@ if TYPE_CHECKING:
     from cyclops.core.agent import Agent
 
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
+_ERRORS: TypeAdapter[List[Dict[str, Any]]] = TypeAdapter(List[Dict[str, Any]])
 
 # Finish reasons, as LiteLLM normalizes them, that end a run without an answer.
 # LiteLLM maps Anthropic's refusal and Bedrock's guardrail to content_filter,
@@ -299,14 +301,18 @@ class _RunLoop:
                 run.history.append(assistant)
                 feedback = self._validation_feedback(content)
                 if feedback is not None:
-                    if output_retries == self.config.output_retries:
-                        # The last answer stays the content, for the caller to see.
+                    if (
+                        output_retries < self.config.output_retries
+                        and step + 1 < limit
+                        and not run.over_budget()
+                    ):
+                        output_retries += 1
+                        run.emit(OutputRejected(feedback=feedback))
+                    else:
+                        # The answer stays the content, for the caller to see.
                         result.content = content
                         result.stop_reason = "output_validation"
                         done = True
-                    else:
-                        output_retries += 1
-                        run.emit(OutputRejected(feedback=feedback))
                 elif (feedback := await self._guard_feedback(content)) is None:
                     result.content = content
                     done = True
@@ -391,14 +397,20 @@ class _RunLoop:
         try:
             self.response_model.model_validate_json(content)
         except ValidationError as e:
-            # The model has the answer, so the errors leave out its input.
-            errors = e.json(
-                include_url=False, include_context=False, include_input=False, indent=2
-            )
-            count = e.error_count()
-            plural = "s" if count != 1 else ""
+            # As Pydantic AI does: the model has its answer, so only nested
+            # errors keep the input that failed.
+            errors = [
+                {
+                    k: v
+                    for k, v in error.items()
+                    if k != "input" or len(error["loc"]) > 1
+                }
+                for error in e.errors(include_url=False, include_context=False)
+            ]
+            plural = "s" if len(errors) != 1 else ""
             return (
-                f"{count} validation error{plural}:\n```json\n{errors}\n```\n\n"
+                f"{len(errors)} validation error{plural}:\n"
+                f"```json\n{_ERRORS.dump_json(errors, indent=2).decode()}\n```\n\n"
                 "Fix the errors and try again."
             )
         return None

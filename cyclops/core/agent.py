@@ -71,8 +71,9 @@ class Agent:
         arrives as one TextDelta. response_model asks the provider for that
         schema when it supports one; the result's content is the raw JSON. An
         answer that fails its validation is sent back with the errors up to
-        config.output_retries times, then the run ends with stop_reason
-        "output_validation" and that answer as its content.
+        config.output_retries times while a step and budget are left, else the
+        run ends with stop_reason "output_validation" and that answer as its
+        content.
         With a session, the run reads and extends the session's transcript and
         adds its usage to the session; without one, it starts a fresh transcript.
         """

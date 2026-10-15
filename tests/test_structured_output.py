@@ -1,5 +1,7 @@
 """Tests for response_model validation and output retries inside the run loop."""
 
+import asyncio
+from typing import List
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -162,17 +164,18 @@ async def test_retries_work_with_and_without_a_schema_sent(model, native):
         assert ("response_format" in call.kwargs) is native
 
 
-async def test_a_budget_spent_by_an_invalid_answer_stops_the_retry():
+async def test_a_budget_spent_by_an_invalid_answer_ends_the_run_with_it():
     # Each completion uses 2 tokens.
     agent = Agent(AgentConfig(model="gpt-4o-mini", max_total_tokens=2))
     session = Session()
-    result, mock, _ = await _start(
+    result, mock, events = await _start(
         agent, [_response(INVALID), _response(VALID)], session=session
     )
 
     assert mock.call_count == 1
-    assert result.stop_reason == "budget"
-    assert result.content == ""
+    assert result.stop_reason == "output_validation"
+    assert result.content == INVALID
+    assert not [e for e in events if isinstance(e, OutputRejected)]
     # The feedback is not added once no step is left for it.
     assert [m["role"] for m in session.messages] == ["user", "assistant"]
 
@@ -183,9 +186,89 @@ async def test_output_retries_count_as_steps():
 
     assert mock.call_count == 2
     assert result.steps == 2
-    assert result.stop_reason == "max_steps"
+    assert result.stop_reason == "output_validation"
+    assert result.content == INVALID
     assert [e.step for e in events if isinstance(e, StepFinished)] == [1, 2]
+    assert len([e for e in events if isinstance(e, OutputRejected)]) == 1
     assert isinstance(events[-1], RunFinished)
+
+
+async def test_arun_raises_the_answer_errors_when_the_last_step_is_invalid():
+    agent = Agent(AgentConfig(model="gpt-4o-mini", max_steps=1))
+    mock = AsyncMock(side_effect=[_response(INVALID)])
+    with patch("litellm.acompletion", new=mock):
+        with pytest.raises(ValidationError, match="int_parsing"):
+            await agent.arun("1 + 2?", response_model=Answer)
+
+    assert mock.call_count == 1
+
+
+class Order(BaseModel):
+    prices: List[float]
+
+
+async def test_nested_errors_keep_the_input_that_failed():
+    agent = Agent(AgentConfig(model="gpt-4o-mini"))
+    session = Session()
+    mock = AsyncMock(
+        side_effect=[_response('{"prices": [1, "free"]}'), _response('{"prices": [1]}')]
+    )
+    with patch("litellm.acompletion", new=mock):
+        await agent.arun("Prices?", response_model=Order, session=session)
+
+    feedback = session.messages[2]["content"]
+    assert '"loc": [\n      "prices",\n      1\n    ]' in feedback
+    assert '"input": "free"' in feedback
+
+
+async def test_naive_tool_mode_retries_an_invalid_answer():
+    agent = Agent(AgentConfig(model="gpt-4o-mini", tool_mode="naive"), tools=[add])
+    session = Session()
+    responses = [
+        _response('{"tool": "add", "args": {"a": 1, "b": 2}}'),
+        _response(INVALID),
+        _response(VALID),
+    ]
+    result, mock, _ = await _start(agent, responses, session=session)
+
+    assert result.content == VALID
+    assert result.steps == 3
+    assert session.messages[1] == {"role": "assistant", "content": "[Used tool: add]"}
+    assert session.messages[-2] == {"role": "user", "content": FEEDBACK}
+    for call in mock.call_args_list:
+        assert "response_format" not in call.kwargs
+
+
+async def test_a_steer_during_an_invalid_answer_is_answered_first():
+    agent = Agent(AgentConfig(model="gpt-4o-mini"))
+    session = Session()
+    asked = asyncio.Event()
+    answers = iter([INVALID, '{"value": "drei"}', VALID])
+
+    async def complete(**kwargs):
+        asked.set()
+        await asyncio.sleep(0)
+        return _response(next(answers))
+
+    with patch("litellm.acompletion", new=complete):
+        handle = agent.start(
+            "1 + 2?", stream=False, response_model=Answer, session=session
+        )
+        await asked.wait()
+        handle.steer("In German, please.")
+        result = await handle
+
+    # The steered step's answer is the one validated and sent back.
+    assert result.content == VALID
+    assert result.steps == 3
+    assert [m["content"] for m in session.messages] == [
+        "1 + 2?",
+        INVALID,
+        "In German, please.",
+        '{"value": "drei"}',
+        FEEDBACK,
+        VALID,
+    ]
 
 
 async def test_guards_judge_only_a_valid_answer():

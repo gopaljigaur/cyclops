@@ -164,7 +164,7 @@ Fix the errors and try again.
 config = AgentConfig(model="groq/llama-3.1-8b-instant", output_retries=3)
 ```
 
-Each retry is a step, so it counts against `max_steps` and the token and cost budgets; if a limit stops the run first, the run ends with that limit's stop reason and the errors are not added to the conversation. Guards judge only an answer that validates. In a streamed run the invalid answer has already streamed when an `OutputRejected` [event](/guides/streaming/) marks it, and the retry streams after it.
+Each retry is a step, so it counts against `max_steps` and the token and cost budgets. When no step or budget is left for a retry, the invalid answer ends the run with `stop_reason="output_validation"` as it does once the retries run out, and the errors are not added to the conversation. Guards judge only an answer that validates. In a streamed run the invalid answer has already streamed when an `OutputRejected` [event](/guides/streaming/) marks it, and the retry streams after it.
 
 ## Error handling
 
