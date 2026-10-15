@@ -954,6 +954,41 @@ def test_litellm_callbacks_fire_for_sync_runs():
     assert events == ["success"] * 3
 
 
+def test_litellm_callbacks_fire_when_sync_and_async_runs_alternate():
+    """Alternating styles moves LiteLLM's logging between loops; no callback is lost."""
+    import asyncio
+    import functools
+
+    from litellm.integrations.custom_logger import CustomLogger
+
+    events = []
+
+    # LiteLLM skips a CustomLogger whose class name it has already seen.
+    class AlternationRecorder(CustomLogger):
+        async def async_log_success_event(self, *args, **kwargs):
+            events.append("success")
+
+    agent = Agent(config=_make_config())
+
+    async def alternate():
+        for _ in range(5):
+            agent.run("hi")
+            await agent.arun("hi")
+        for _ in range(100):
+            if len(events) == 10:
+                break
+            await asyncio.sleep(0.05)
+
+    acompletion = functools.partial(litellm.acompletion, mock_response="hi")
+    with (
+        patch.object(litellm, "callbacks", [AlternationRecorder()]),
+        patch("litellm.acompletion", new=acompletion),
+    ):
+        asyncio.run(alternate())
+
+    assert events == ["success"] * 10
+
+
 def test_stream_inside_running_loop():
     """stream() works when called from code that already runs an event loop."""
     import asyncio

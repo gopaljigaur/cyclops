@@ -30,6 +30,8 @@ def _start_task(make: Callable[[], Awaitable], finished: threading.Event):
 
     One long-lived loop in a daemon thread serves every sync call, so LiteLLM's
     background logging can finish and a loop the caller runs is never blocked.
+    That logging serves one loop at a time, so mixing sync and async calls in
+    one process moves it between this loop and the caller's on each switch.
     """
     global _loop
     with _loop_lock:
