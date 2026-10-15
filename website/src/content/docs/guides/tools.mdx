@@ -17,29 +17,33 @@ from cyclops.toolkit import tool
 @tool
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
-    return f"Sunny, 72F in {location}"
+    return f"Sunny, 72°F in {location}"
 ```
 
-Both forms work, with or without parentheses:
+You can also use `@tool()` with parentheses:
 
 ```python
 @tool()
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
-    return f"Sunny, 72F in {location}"
+    return f"Sunny, 72°F in {location}"
 ```
 
-To override the name or description, pass keyword arguments:
+## Custom names and descriptions
+
+Override the function name or docstring by passing keyword arguments:
 
 ```python
 @tool(name="weather_lookup", description="Fetch live weather data for any city.")
 def _internal_get_weather(location: str) -> str:
-    return f"Sunny, 72F in {location}"
+    return f"Sunny, 72°F in {location}"
 ```
+
+This is useful when the function name is not suitable as a public tool name, or when you want a richer description than the docstring provides.
 
 ## BaseTool subclass
 
-For tools that need to hold state or require complex initialisation, subclass `BaseTool` and override `execute()`.
+For tools that need to hold state or have complex initialisation, subclass `BaseTool` and override `execute()`.
 
 ```python
 from cyclops.toolkit.tool import BaseTool
@@ -60,9 +64,9 @@ class DatabaseTool(BaseTool):
 db_tool = DatabaseTool()
 ```
 
-Define `execute()` with the exact parameter signature you want exposed to the LLM. Cyclops inspects that signature to build the JSON schema automatically.
+`execute()` must be defined with the exact parameter signature you want exposed to the LLM. Cyclops inspects that signature to build the JSON schema.
 
-## Sync vs async
+## Sync vs async tools
 
 Both sync functions and async coroutines work. The agent calls sync tools directly, and runs async tools from sync contexts using a nested-loop-safe fallback (ThreadPoolExecutor) when needed. Prefer async for I/O-bound work.
 
@@ -79,46 +83,92 @@ async def fetch_url(url: str) -> str:
         return r.text[:500]
 ```
 
-## Type annotations and JSON schema
+## Parameter schemas
 
-Cyclops converts Python type annotations to JSON schema types automatically.
+Cyclops builds the JSON schema of a tool's parameters with pydantic from the function signature, so any type pydantic understands works: `list[str]` gets `items`, `Literal` and `Enum` become `enum`, `Optional[T]` allows `null`, pydantic models become nested objects, and default values are kept. Parameters without a default are required.
 
-| Python type | JSON schema type |
-|---|---|
-| `str` | `"string"` |
-| `int` | `"integer"` |
-| `float` | `"number"` |
-| `bool` | `"boolean"` |
-| `list` | `"array"` |
-| `dict` | `"object"` |
-| unannotated | `"string"` (default) |
-
-`Optional[T]` is treated the same as `T`. The parameter becomes optional in the schema if it has a default value.
+Parameter descriptions come from a Google or NumPy style docstring, or from `Annotated[..., Field(description=...)]`. When both describe a parameter, the docstring wins. The docstring text before the parameter section becomes the tool description.
 
 ```python
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+
+class Filter(BaseModel):
+    field: str
+    value: str
+
+
 @tool
-def calculate(operation: str, a: float, b: float) -> str:
-    """Perform a basic math operation: add, subtract, multiply, divide."""
-    ops = {"add": a + b, "subtract": a - b, "multiply": a * b, "divide": a / b}
-    return str(ops.get(operation, "unknown operation"))
+def search(
+    query: str,
+    filters: list[Filter],
+    sort: Literal["relevance", "date"] = "relevance",
+    limit: Annotated[int, Field(description="Maximum number of hits.", ge=1)] = 5,
+) -> str:
+    """Search the index.
+
+    Args:
+        query: Text to search for.
+        filters: Conditions every hit must match.
+        sort: Result order.
+    """
+    return f"Results for '{query}'"
 ```
 
-This produces a JSON schema with `operation` as `"string"` and `a`, `b` as `"number"`, all required.
+When a function tool is called, its arguments are validated against the same schema, so `filters` arrives as a list of `Filter` instances. Unknown arguments are rejected unless the function takes `**kwargs`. A `BaseTool` subclass gets its schema from the signature of `execute()` and receives the arguments as passed.
 
-Parameters with default values become optional in the schema:
+## Tool results
+
+A tool may return a string, any JSON-serializable value, or a `ToolResult`. A `ToolResult` carries content blocks (`TextContent`, `ImageContent`), structured data in `result`, and an error flag.
 
 ```python
+from cyclops.toolkit import ImageContent, TextContent, ToolResult
+
+
 @tool
-def search(query: str, max_results: int = 5) -> str:
-    """Search for information."""
-    return f"Results for '{query}' (max {max_results})"
+def render_chart(series: list[float]) -> ToolResult:
+    """Render a chart of the series."""
+    if not series:
+        return ToolResult.error_result("series is empty")
+    return ToolResult(
+        content=[
+            TextContent(text=f"Chart of {len(series)} points"),
+            ImageContent(data=png_base64(series), mime_type="image/png"),
+        ],
+        result={"points": len(series)},
+    )
 ```
 
-Here `query` is required and `max_results` is optional with a default of `5`.
+The agent sends every result to the model through `ToolResult.to_message_content()`, wrapping a plain return value with `ToolResult.success_result()`:
+
+- Text renders as a string. `result` is rendered as JSON only when there are no content blocks, so a plain string stays as it is and a dict or list becomes JSON.
+- A failed result starts with `Error:`, so the model sees that the call failed. A tool that raises, a denied call and invalid arguments are reported the same way.
+- Images are sent in the tool message for providers whose tool messages take images through LiteLLM: Anthropic, Bedrock, Gemini, and Gemini models on Vertex AI. Other providers, OpenAI and Vertex AI partner models among them, accept only text there: the tool message gets the text, and the images follow in a user message after the round's tool messages. Through a router, images stay in the tool message only when every deployment takes them. In naive tool mode the images go in the user message that carries the tool result.
+- A provider that rejects a user message right after a tool message (reported for Mistral) cannot take images from tools; return text only for such models.
+
+Hooks (`on_tool_end`) and `RunResult.tool_calls` receive the text of the result.
+
+## Annotations
+
+Tools can carry behaviour hints that mirror MCP tool annotations. The agent reads `read_only` to decide which calls may run in parallel (see below); the others are not enforced, and hooks and other code can read all of them from `tool.annotations`.
+
+```python
+from cyclops.toolkit import ToolAnnotations
+
+
+@tool(annotations=ToolAnnotations(read_only=True, open_world=True))
+def fetch_page(url: str) -> str:
+    """Fetch a web page."""
+    ...
+```
+
+`BaseTool` subclasses pass `annotations=` to `super().__init__()`. The fields are `read_only`, `destructive`, `idempotent` and `open_world`; each defaults to `None` (unknown).
 
 ## Parallel calls and timeouts
 
-When the model asks for several tools in one step, calls to tools marked read-only (`@tool(annotations=ToolAnnotations(read_only=True))`) run at the same time. Every other call may change something, so those run one at a time in the order the model gave them, alongside the read-only ones. `AgentConfig.max_parallel_tool_calls` (default `10`) caps how many calls of a step run at once. A call waiting for its turn has not started: it gets no `ToolCallStarted` event until it runs. If middleware raises, that call ends the step: the calls still running are cancelled, and a call that has not started by then never starts and gets `Tool call cancelled.`
+When the model asks for several tools in one step, calls to tools marked `read_only=True` run at the same time. Every other call may change something, so those run one at a time in the order the model gave them, alongside the read-only ones. `AgentConfig.max_parallel_tool_calls` (default `10`) caps how many calls of a step run at once. A call waiting for its turn has not started: it gets no `ToolCallStarted` event until it runs. If middleware raises, that call ends the step: the calls still running are cancelled, and a call that has not started by then never starts and gets `Tool call cancelled.`
 
 `AgentConfig.tool_timeout` sets how many seconds any call may run, and a tool's own `timeout` overrides it:
 
@@ -165,7 +215,7 @@ The search runs in the agent for every provider, Anthropic included. Anthropic's
 
 ## ToolRegistry
 
-`ToolRegistry` is a named collection of tools. It is useful when managing tools separately from any single agent, such as in a plugin or a shared tool library.
+`ToolRegistry` is a named collection of tools. It is useful when you want to manage a set of tools separately from any single agent, such as in a plugin or a shared tool library.
 
 ```python
 from cyclops.toolkit.registry import ToolRegistry
@@ -181,24 +231,41 @@ def ping(host: str) -> str:
     return f"pong from {host} in 12ms"
 
 
-# Or register an existing tool manually:
-registry.register(ping)
+# Or register a tool manually. Names must be unique; registering
+# a second tool with the same name raises ValueError.
+@tool
+def pong(host: str) -> str:
+    """Reply to a ping."""
+    return f"pong to {host}"
 
-# Inspect:
-print(registry.list_tools())       # ['ping']
-print(registry.get_tool("ping"))   # <Tool ping>
+
+registry.register(pong)
+
+# Retrieve and inspect:
+print(registry.list_tools())          # ['ping', 'pong']
+print(registry.get_tool("ping"))      # <Tool ping>
+print(registry.get_definitions())     # {'ping': ToolDefinition(...)}
 
 # Execute a tool by name:
 import asyncio
 result = asyncio.run(registry.execute_tool("ping", host="example.com"))
 ```
 
-## Passing tools to Agent
+## Using tools with Agent
 
-Pass any list of tools (decorated functions or `BaseTool` instances) to the `Agent` constructor.
+Pass a list of tools (decorated functions or `BaseTool` instances) to the `Agent` constructor. Tool names must be unique; the constructor raises `ValueError` on a duplicate.
 
 ```python
 from cyclops import Agent, AgentConfig
+from cyclops.toolkit import tool
+
+
+@tool
+def calculate(operation: str, a: float, b: float) -> str:
+    """Perform a basic math operation: add, subtract, multiply, divide."""
+    ops = {"add": a + b, "subtract": a - b, "multiply": a * b, "divide": a / b}
+    return str(ops.get(operation, "unknown operation"))
+
 
 config = AgentConfig(model="groq/llama-3.1-8b-instant")
 agent = Agent(config, tools=[get_weather, db_tool, calculate])
@@ -206,7 +273,7 @@ agent = Agent(config, tools=[get_weather, db_tool, calculate])
 print(agent.run("What is the weather in Tokyo?"))
 ```
 
-Pull tools from a registry:
+You can also pull tools out of a registry:
 
 ```python
 tools = [registry.get_tool(name) for name in registry.list_tools()]
@@ -214,7 +281,7 @@ agent = Agent(config, tools=tools)
 ```
 
 :::note
-If the model does not support native function calling (some Ollama models, for example), set `tool_mode="naive"` in `AgentConfig`. Cyclops also falls back to prompt-based tool invocation automatically when `tool_mode="auto"` and the API returns a function-calling error.
+If the model does not support native function calling (e.g. some Ollama models), set `tool_mode="naive"` in `AgentConfig`. With `tool_mode="auto"`, Cyclops falls back to prompt-based tool invocation for that agent when LiteLLM raises `UnsupportedParamsError` and `litellm.get_supported_openai_params` does not list `tools` for the model (through a Router, for every deployment behind the alias). Any other error is raised unchanged.
 :::
 
 ## Full example

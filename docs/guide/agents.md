@@ -176,7 +176,7 @@ for msg in session.messages:
     print(msg["role"], ":", msg["content"])
 ```
 
-A new `Session()` starts a new conversation.
+Each message in `session.messages` is a plain dict with at least `"role"` and `"content"` keys. Tool messages also include `"tool_call_id"` and `"name"`. A new `Session()` starts a new conversation.
 
 ## Provider options
 

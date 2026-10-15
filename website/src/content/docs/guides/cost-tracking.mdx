@@ -6,9 +6,9 @@ description: Track tokens and estimated cost for every agent run.
 import exampleSrc from '../../../../../examples/cost_tracking.py?raw';
 import { Code } from '@astrojs/starlight/components';
 
-## run_with_response() vs run()
+## run_with_response() and arun_with_response()
 
-`run()` returns a plain string. `run_with_response()` returns a `RunResult` that includes the text reply, why the run stopped, every tool call made, and token/cost totals summed over every LiteLLM completion in the run.
+Instead of returning a plain string, these methods return a `RunResult` that includes the text reply, why the run stopped, every tool call made, and token/cost totals summed over every LiteLLM completion in the run.
 
 ```python
 from cyclops import Agent, AgentConfig
@@ -31,12 +31,10 @@ The async version works identically:
 ```python
 import asyncio
 
-
 async def main():
     result = await agent.arun_with_response("Explain neural networks briefly.")
     print(result.content)
     print(f"Cost: ${result.cost:.6f}")
-
 
 asyncio.run(main())
 ```
@@ -51,15 +49,15 @@ asyncio.run(main())
 | `model` | `str` | The model identifier used (from `AgentConfig.model`). |
 | `run_id` | `str` | Unique id of the run, also given to tool middleware and guards. |
 | `stop_reason` | `str` | `"completed"` for a final answer, `"max_tokens"` when the output limit cut the last completion, `"content_filter"` when the provider filtered or refused it ([output limit and filtering](/guides/agents/#output-limit-and-filtering)), `"max_steps"` or `"budget"` when the run reached a [limit](/guides/agents/#step-and-budget-limits), `"guard"` when a [guard](/guides/hooks/#end-of-run-guards) still rejected the answer after `max_guard_rounds`, `"cancelled"` when a run handle was cancelled, `"error"` when it failed. |
-| `finish_reason` | `str` or `None` | The last completion's finish reason as LiteLLM normalizes it: `"stop"`, `"length"`, `"tool_calls"` or `"content_filter"`. `None` if the run made none. |
+| `finish_reason` | `str \| None` | The last completion's finish reason as LiteLLM normalizes it: `"stop"`, `"length"`, `"tool_calls"` or `"content_filter"`. `None` if the run made none. |
 | `steps` | `int` | LLM completions made in the run. |
-| `usage` | `Usage` or `None` | Tokens and cost summed over every completion in the run, including those of [subagents](/guides/subagents/) it called. `None` if any completion reported no usage. |
-| `error` | `Exception` or `None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |
-| `tokens_used` | `int` or `None` | Total tokens (prompt + completion), from `usage`. |
-| `prompt_tokens` | `int` or `None` | Tokens in the prompt/context sent to the model, from `usage`. |
-| `completion_tokens` | `int` or `None` | Tokens in the generated response, from `usage`. |
-| `cached_tokens` | `int` or `None` | Prompt tokens the provider served from its cache, from `usage`. |
-| `cost` | `float` or `None` | Estimated USD cost computed by LiteLLM, from `usage`. `None` if LiteLLM can't price a completion of the run. |
+| `usage` | `Usage \| None` | Tokens and cost summed over every completion in the run, including those of [subagents](/guides/subagents/) it called. `None` if any completion reported no usage. |
+| `error` | `Exception \| None` | The exception that ended the run with `"error"`. Left out of `model_dump()`. |
+| `tokens_used` | `int \| None` | Total tokens (prompt + completion), from `usage`. |
+| `prompt_tokens` | `int \| None` | Tokens in the prompt/context sent to the model, from `usage`. |
+| `completion_tokens` | `int \| None` | Tokens in the generated response, from `usage`. |
+| `cached_tokens` | `int \| None` | Prompt tokens the provider served from its cache, from `usage`. |
+| `cost` | `float \| None` | Estimated USD cost computed by LiteLLM, from `usage`. `None` if LiteLLM can't price a completion of the run. |
 
 `tokens_used`, `prompt_tokens`, `completion_tokens`, `cached_tokens` and `cost` are read-only properties over `usage`.
 
@@ -70,7 +68,7 @@ Each `ToolCall` in `tool_calls` has:
 | `id` | `str` | Unique call identifier assigned by the LLM. |
 | `name` | `str` | Name of the tool that was called. |
 | `arguments` | `dict` | Arguments the model passed to the tool. |
-| `result` | `Any` or `None` | The value returned by the tool. |
+| `result` | `Any \| None` | The value returned by the tool. |
 
 ## Failed runs
 
@@ -82,9 +80,9 @@ if result.stop_reason == "error":
     print(f"Failed after {result.steps} steps: {result.error}, cost ${result.cost}")
 ```
 
-## Accumulating cost across multiple calls
+## Logging costs over time
 
-Track totals across many runs with a simple dataclass:
+A common production pattern is to accumulate cost and token data across many agent runs:
 
 ```python
 import asyncio
@@ -106,9 +104,9 @@ class UsageTracker:
         self.total_tokens += response.tokens_used or 0
 
     def report(self) -> None:
-        print(f"Runs         : {len(self.runs)}")
-        print(f"Total cost   : ${self.total_cost:.4f}")
-        print(f"Total tokens : {self.total_tokens:,}")
+        print(f"Runs       : {len(self.runs)}")
+        print(f"Total cost : ${self.total_cost:.4f}")
+        print(f"Total tokens: {self.total_tokens:,}")
 
 
 tracker = UsageTracker()
@@ -131,9 +129,9 @@ for q in questions:
 tracker.report()
 ```
 
-## Inspecting tool calls
+## Tool calls in the response
 
-When tools are used, each invocation is recorded in `result.tool_calls`:
+When tools are used, each tool invocation is recorded in `result.tool_calls`:
 
 ```python
 from cyclops.toolkit import tool
@@ -152,7 +150,7 @@ result = agent.run_with_response("What is the current price of AAPL?")
 
 print(result.content)
 for tc in result.tool_calls:
-    print(f"  Called: {tc.name}({tc.arguments}) -> {tc.result}")
+    print(f"  Called: {tc.name}({tc.arguments}) → {tc.result}")
 ```
 
 :::note

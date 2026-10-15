@@ -31,7 +31,7 @@ import { CardGrid, Card } from '@astrojs/starlight/components';
     Decorate any Python function with `@tool`. Type annotations become the JSON schema. The docstring becomes the description.
   </Card>
   <Card title="Streaming built in" icon="rocket">
-    `stream()` and `astream()` work with and without tools. True token streaming for tool-free agents; final-answer streaming after tool execution.
+    `stream()` and `astream()` stream every completion token by token, including the steps that call tools.
   </Card>
   <Card title="Structured output" icon="document">
     Pass a Pydantic model as `response_model` to get a typed instance back instead of a string. Your IDE sees the correct type.
