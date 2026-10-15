@@ -27,7 +27,7 @@ With a `session_store`, every run with a session saves it there as `durability` 
 
 Every run method takes a keyword-only `session: Optional[Session] = None`.
 
-Every run method takes `input_message: UserContent`: text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or that LiteLLM's model map says the model can't take, raise `ValueError` before the run starts. See [Images and Files](guide/multimodal.md).
+Every run method takes `input_message: UserContent`: text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or of a kind LiteLLM's model map marks the model as not taking (`supports_vision`, `supports_pdf_input` or `supports_audio_input` set to false), raise `ValueError` before the run starts. See [Images and Files](guide/multimodal.md).
 
 **Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `compact`, `acompact`, `as_tool`
 

@@ -64,8 +64,9 @@ class Agent:
         """Start a run in a task on the running event loop and return its handle.
 
         input_message is text, or a list of OpenAI chat content parts (text,
-        image_url, file, input_audio). Parts that aren't, or that LiteLLM's model
-        map says the model can't take, raise ValueError before the run starts.
+        image_url, file, input_audio). Parts that aren't, or of a kind LiteLLM's
+        model map marks the model as not taking, raise ValueError before the run
+        starts.
         With stream=False the completions aren't streamed, so each step's text
         arrives as one TextDelta. response_model asks the provider for that
         schema when it supports one; the result's content is the raw JSON.

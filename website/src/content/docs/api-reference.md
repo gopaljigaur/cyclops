@@ -40,7 +40,7 @@ With a `session_store`, every run with a session saves it there as `durability` 
 | `compact` | `compact(session: Session) -> bool` | Summarize the session's older messages now; `acompact` is the async form. See [Context window](/guides/agents/#context-window). |
 | `as_tool` | `as_tool(name: str, description: str, *, annotations: Optional[ToolAnnotations] = None, timeout: Optional[float] = None) -> AgentTool` | This agent as a tool that runs it on its `input` argument, nested in the calling agent's run. See [Subagents](/guides/subagents/). |
 
-`UserContent` is text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or that LiteLLM's model map says the model can't take, raise `ValueError` before the run starts. See [Images and Files](/guides/multimodal/).
+`UserContent` is text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or of a kind LiteLLM's model map marks the model as not taking (`supports_vision`, `supports_pdf_input` or `supports_audio_input` set to false), raise `ValueError` before the run starts. See [Images and Files](/guides/multimodal/).
 
 ---
 

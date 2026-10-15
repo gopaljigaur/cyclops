@@ -11,7 +11,7 @@ from litellm.types.llms.openai import (
 from pydantic import ConfigDict, Field, TypeAdapter
 from typing_extensions import Annotated
 
-from cyclops.core.providers import _input_unsupported
+from cyclops.core.providers import _INPUT_SUPPORT, _input_unsupported
 from cyclops.core.types import AgentConfig
 
 # An OpenAI chat content part, as LiteLLM types it.
@@ -60,7 +60,7 @@ def _user_content(config: AgentConfig, content: UserContent) -> _Content:
     """Content for a user message, checked against what the model takes.
 
     Raises ValueError for parts that are not OpenAI chat content parts, and for
-    images, PDFs or audio that LiteLLM's model map says a deployment can't take.
+    images, PDFs or audio that LiteLLM's model map marks a deployment as not taking.
     """
     if isinstance(content, str):
         return content
@@ -72,8 +72,9 @@ def _user_content(config: AgentConfig, content: UserContent) -> _Content:
         model = _input_unsupported(config, kind)
         if model is not None:
             raise ValueError(
-                f"{model} takes no {kind} input according to LiteLLM's model map; "
-                "if it does, register that with litellm.register_model"
+                f"{model} takes no {kind} input: LiteLLM's model map sets "
+                f"{_INPUT_SUPPORT[kind]} to false for it; if the model does take "
+                "it, correct the entry with litellm.register_model"
             )
     return parts
 

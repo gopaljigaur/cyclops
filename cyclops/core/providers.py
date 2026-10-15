@@ -76,16 +76,20 @@ def _lacks_tools(model: str, custom_llm_provider: Optional[str]) -> bool:
 
 
 def _input_unsupported(config: AgentConfig, kind: str) -> Optional[str]:
-    """The first deployment LiteLLM maps without support for this kind of input.
+    """The first deployment LiteLLM's model map marks as not taking this input.
 
-    A model LiteLLM doesn't map, as on a custom endpoint, is left to its provider.
+    Only an explicit false counts: most entries leave the flags out. The entry
+    is read from litellm.model_cost under provider/model, else model, and not
+    from get_model_info, which asks some providers (Ollama) over the network.
     """
+    flag = _INPUT_SUPPORT[kind]
     for p in _deployments(config):
-        try:
-            info = litellm.get_model_info(p["model"], p.get("custom_llm_provider"))
-        except Exception:  # not mapped
-            continue
-        if not info.get(_INPUT_SUPPORT[kind]):
+        model, provider = litellm.get_llm_provider(
+            p["model"], custom_llm_provider=p.get("custom_llm_provider")
+        )[:2]
+        costs = litellm.model_cost
+        info = costs.get(f"{provider}/{model}") or costs.get(model) or {}
+        if info.get(flag) is False:
             return p["model"]
     return None
 

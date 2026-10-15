@@ -4,6 +4,7 @@ import asyncio
 from base64 import b64encode
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import litellm
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -13,6 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 
 from cyclops.core.agent import Agent
+from cyclops.core.content import _user_content
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.middleware import GuardContext
 from cyclops.core.session import FileSessionStore, Session
@@ -121,13 +123,26 @@ def _agent(model="gpt-4o", **config):
     return Agent(AgentConfig(model=model, **config))
 
 
+# LiteLLM's model map sets these flags to false.
+NO_VISION = "o3-mini"
+NO_PDF = "vertex_ai/gemini-live-2.5-flash-native-audio"
+NO_AUDIO = "bedrock/moonshotai.kimi-k2.5"
+
+
+def _file(**file):
+    return {"type": "file", "file": file}
+
+
 @pytest.mark.parametrize(
     "model, part, kind",
     [
-        ("gpt-3.5-turbo", IMAGE_DATA, "image"),
-        ("gpt-3.5-turbo", IMAGE_URL, "image"),
-        ("mistral/mistral-large-latest", PDF, "pdf"),
-        ("gpt-4o", AUDIO, "audio"),
+        (NO_VISION, IMAGE_DATA, "image"),
+        (NO_VISION, IMAGE_URL, "image"),
+        (NO_VISION, _file(file_data=f"data:image/png;base64,{PNG_B64}"), "image"),
+        (NO_PDF, PDF, "pdf"),
+        (NO_PDF, _file(file_id="file-123", format="application/pdf"), "pdf"),
+        (NO_AUDIO, AUDIO, "audio"),
+        (NO_AUDIO, _file(file_data="data:audio/wav;base64,UklGRg=="), "audio"),
     ],
 )
 def test_unsupported_input_raises_before_any_completion(model, part, kind):
@@ -143,31 +158,45 @@ def test_unsupported_input_checks_every_router_deployment():
     router = litellm.Router(
         model_list=[
             {"model_name": "chat", "litellm_params": {"model": "gpt-4o"}},
-            {"model_name": "chat", "litellm_params": {"model": "gpt-3.5-turbo"}},
+            {"model_name": "chat", "litellm_params": {"model": NO_VISION}},
         ]
     )
-    with pytest.raises(ValueError, match="gpt-3.5-turbo takes no image input"):
+    with pytest.raises(ValueError, match=f"{NO_VISION} takes no image input"):
         _agent("chat", router=router).run([TEXT, IMAGE_DATA])
 
 
-def test_model_litellm_does_not_map_gets_the_parts():
-    mock = AsyncMock(return_value=_make_completion_response("A cat."))
+@pytest.mark.parametrize(
+    "model, part",
+    [
+        # Mapped without the flag.
+        ("gpt-3.5-turbo", IMAGE_DATA),
+        ("gpt-4o", AUDIO),
+        # Not mapped.
+        ("openai/my-endpoint-model", IMAGE_DATA),
+        # A file of unknown type.
+        (NO_VISION, _file(file_id="file-123")),
+    ],
+)
+def test_input_not_marked_unsupported_is_sent(model, part):
+    mock = AsyncMock(return_value=_make_completion_response("Done."))
     with patch("litellm.acompletion", new=mock):
-        assert _agent("openai/my-endpoint-model").run([TEXT, IMAGE_DATA]) == "A cat."
+        assert _agent(model).run([TEXT, part]) == "Done."
+    assert mock.call_args.kwargs["messages"][-1]["content"] == [TEXT, part]
 
 
-def test_supported_audio_is_sent():
-    mock = AsyncMock(return_value=_make_completion_response("Hello."))
-    with patch("litellm.acompletion", new=mock):
-        assert _agent(GEMINI).run([TEXT, AUDIO]) == "Hello."
-    assert mock.call_args.kwargs["messages"][-1]["content"] == [TEXT, AUDIO]
+def test_input_check_makes_no_network_call():
+    # LiteLLM's get_model_info asks an Ollama server for its model info, and
+    # logs a failed request instead of raising it.
+    requests = []
 
+    def send(self, request, **kwargs):
+        requests.append(request.url)
+        raise httpx.ConnectError("no network in tests", request=request)
 
-def test_file_without_a_media_type_is_left_to_the_provider():
-    part = {"type": "file", "file": {"file_id": "file-123"}}
-    mock = AsyncMock(return_value=_make_completion_response("Read it."))
-    with patch("litellm.acompletion", new=mock):
-        assert _agent("gpt-3.5-turbo").run([TEXT, part]) == "Read it."
+    config = AgentConfig(model="ollama/llava")
+    with patch.object(httpx.Client, "send", send):
+        assert _user_content(config, [TEXT, IMAGE_DATA]) == [TEXT, IMAGE_DATA]
+    assert requests == []
 
 
 @pytest.mark.parametrize(
@@ -192,7 +221,7 @@ def test_parts_that_are_not_chat_content_parts_raise(content):
 def test_start_raises_before_the_run_starts():
     async def main():
         with pytest.raises(ValueError):
-            _agent("gpt-3.5-turbo").start([TEXT, IMAGE_DATA])
+            _agent(NO_VISION).start([TEXT, IMAGE_DATA])
 
     asyncio.run(main())
 
@@ -245,7 +274,7 @@ def test_steer_with_an_image_the_model_cannot_take_raises():
     async def main():
         mock = AsyncMock(return_value=_make_completion_response("Hi."))
         with patch("litellm.acompletion", new=mock):
-            handle = _agent("gpt-3.5-turbo").start("hello", stream=False)
+            handle = _agent(NO_VISION).start("hello", stream=False)
             with pytest.raises(ValueError, match="takes no image input"):
                 handle.steer([IMAGE_DATA])
             return await handle

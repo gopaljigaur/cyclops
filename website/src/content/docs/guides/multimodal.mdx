@@ -52,21 +52,13 @@ As LiteLLM 1.105 sends them: Anthropic gets `image` and `document` blocks, with 
 
 ## Models that can't take the input
 
-Before the run starts, Cyclops checks LiteLLM's model map for every image (`supports_vision`), PDF (`supports_pdf_input`) and audio part (`supports_audio_input`), for every deployment of the model behind a `router`. A model the map lists without that support raises `ValueError`, so nothing is sent and no part is dropped:
+Before the run starts, Cyclops reads LiteLLM's model map (`litellm.model_cost`, the entry under `provider/model`, else `model`) for every deployment of the model behind a `router`. If the entry sets `supports_vision` to false and an image is sent, `supports_pdf_input` to false and a PDF is sent, or `supports_audio_input` to false and audio is sent, the run raises `ValueError`, so nothing is sent and no part is dropped:
 
 ```text
-gpt-3.5-turbo takes no image input according to LiteLLM's model map; if it does, register that with litellm.register_model
+o3-mini takes no image input: LiteLLM's model map sets supports_vision to false for it; if the model does take it, correct the entry with litellm.register_model
 ```
 
-A model LiteLLM doesn't map, such as one on a custom OpenAI compatible endpoint, gets the parts and its provider decides. If the map is wrong about a model, register it:
-
-```python
-import litellm
-
-litellm.register_model({"ollama/llava": {"litellm_provider": "ollama", "mode": "chat", "supports_vision": True}})
-```
-
-A file whose media type is unknown (a `file_id` without `format`) is not checked.
+Only an explicit false counts. Most entries leave these flags out, and a model with no entry at all, such as one on a custom OpenAI compatible endpoint, gets the parts and its provider decides, as in Pydantic AI, the OpenAI Agents SDK and the Vercel AI SDK, which don't check. The check reads only the map LiteLLM ships, never a provider over the network. A file whose media type is unknown (a `file_id` without `format`) is not checked.
 
 ## Steering, sessions and guards
 
@@ -79,6 +71,8 @@ result = await handle
 ```
 
 The parts are the user message's `content` in the transcript, so a session keeps them, stores save them as JSON, and every later completion sends them again. Base64 data makes each saved session and each request that large: for big or many files, prefer URLs or provider file ids. `GuardContext.messages`, `AgentHooks.on_run_start` and `Message.content` see the list as it is.
+
+Compaction counts the parts with `litellm.token_counter`; a message with audio, which LiteLLM can't count, counts as one image does (`DEFAULT_IMAGE_TOKEN_COUNT`, 250 tokens).
 
 `TelemetryHooks` records the length of the input's text only, never the parts' data.
 
