@@ -25,6 +25,7 @@ from cyclops import (
     tool,
 )
 from cyclops.core.events import ToolCallFinished
+from cyclops.core.tool_results import _ToolResults
 from tests.test_agent import _stream, _tool_call_chunk
 from tests.test_fallback import _overloaded
 from cyclops.toolkit.types import ImageContent, TextContent
@@ -128,10 +129,37 @@ def test_a_long_result_is_stored_and_read_to_the_end():
         f"{TEXT[10:30]}\n[Characters 10 to 30 of 50. Read on with "
         f'read_tool_result(handle="{handle}", offset=30).]'
     )
-    assert last == f"{TEXT[30:]}\n[Characters 30 to 50 of 50, the end of the result.]"
+    # Reading on stops where the preview's end part starts.
+    assert last == (
+        f"{TEXT[30:40]}\n[Characters 30 to 40 of 50. The rest, from 40, "
+        "was in the preview.]"
+    )
     # The reader is sent from the first step, so the tools never change.
     assert _sent_tools(mock) == [["dump", "read_tool_result"]] * 4
     assert result.tool_calls[0].result == preview
+
+
+@pytest.mark.parametrize("size, limit", [(50, 20), (21, 20), (1000, 100)])
+async def test_reading_on_from_the_preview_covers_the_omitted_range_once(size, limit):
+    text = "".join(chr(ord("a") + i % 26) for i in range(size))
+    results = _ToolResults(None)
+    preview = await results.preview(text, limit)
+    handle = re.findall(r'handle="(\w+)"', preview)[0]
+    offset = int(re.findall(r"offset=(\d+)", preview)[0])
+
+    read = []
+    while True:
+        page = await results.read(handle, offset)
+        body, note = page.rsplit("\n", 1)
+        read.append(body)
+        found = re.findall(r"offset=(\d+)", note)
+        if not found:
+            break
+        offset = int(found[0])
+
+    # The preview's start, the pages and the preview's end make the text once.
+    head, tail = limit // 2, size - (limit - limit // 2)
+    assert text[:head] + "".join(read) + text[tail:] == text
 
 
 def test_a_page_is_at_most_the_limit_of_the_stored_result():

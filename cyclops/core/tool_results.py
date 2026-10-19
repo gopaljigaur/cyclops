@@ -53,10 +53,14 @@ def _read_on(handle: str, offset: int) -> str:
     return f'{READ_TOOL_NAME}(handle="{handle}", offset={offset})'
 
 
+def _tail(text: str, limit: int) -> int:
+    """Where the preview's end part of text starts."""
+    return len(text) - (limit - limit // 2)
+
+
 def _preview(text: str, handle: str, limit: int) -> str:
     """The start and end of text, limit characters in all, around a note of the rest."""
-    head = limit // 2
-    tail = len(text) - (limit - head)
+    head, tail = limit // 2, _tail(text, limit)
     note = (
         f"[Characters {head} to {tail} of {len(text)} omitted. "
         f"Read them with {_read_on(handle, head)}.]"
@@ -64,12 +68,14 @@ def _preview(text: str, handle: str, limit: int) -> str:
     return f"{text[:head]}\n{note}\n{text[tail:]}"
 
 
-def _page(text: str, handle: str, offset: int, limit: int) -> str:
-    """The characters of text from offset, at most limit, and where they are."""
-    end = min(offset + limit, len(text))
+def _page(text: str, handle: str, offset: int, limit: int, stop: int) -> str:
+    """The characters of text from offset, at most limit and up to stop, and where they are."""
+    end = min(offset + limit, stop)
     where = f"Characters {offset} to {end} of {len(text)}"
     if end == len(text):
         note = f"[{where}, the end of the result.]"
+    elif end == stop:
+        note = f"[{where}. The rest, from {end}, was in the preview.]"
     else:
         note = f"[{where}. Read on with {_read_on(handle, end)}.]"
     return f"{text[offset:end]}\n{note}"
@@ -120,7 +126,10 @@ class _ToolResults:
             raise ValueError(f"No stored tool result has the handle '{handle}'")
         if offset >= len(text):
             raise ValueError(f"offset {offset} is past the end, at {len(text)}")
-        return _page(text, handle, offset, min(limit or page, page))
+        # Pages from inside the omitted range stop where the preview's end part starts.
+        tail = _tail(text, page)
+        stop = tail if offset < tail else len(text)
+        return _page(text, handle, offset, min(limit or page, page), stop)
 
     async def free(self) -> None:
         """Delete every result this run stored."""
