@@ -16,6 +16,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Set,
 )
 
 import anyio
@@ -169,6 +170,8 @@ class _Connection:
         self._closing = asyncio.Event()
         self._detached = False
         self._busy = 0
+        self._calls: Set[asyncio.Task] = set()
+        self._draining: Optional[ClientSession] = None
         self._last_used = 0.0
 
     @contextlib.asynccontextmanager
@@ -260,7 +263,7 @@ class _Connection:
 
     def _lost(self, session: ClientSession, error: BaseException) -> None:
         """Mark a dropped session; reconnect remote servers in the background."""
-        if self.session is not session:
+        if session is not self.session and session is not self._draining:
             return
         self.session = None
         self._closing.set()
@@ -328,6 +331,18 @@ class _Connection:
                     return tools
 
     async def _reconnect(self) -> ClientSession:
+        if not self._closing.is_set():
+            # Not a drop: calls already sent on the session get their own answer
+            # first, so each one the server refused is retried, not cut off.
+            # A refusal comes within a round trip; a call still running after
+            # connect_timeout is cut off and not retried.
+            self._draining, self.session = self.session, None
+            self.status = ServerStatus("connecting", self.status.error)
+            try:
+                if self._calls:
+                    await asyncio.wait(self._calls, timeout=self.connect_timeout)
+            finally:
+                self._draining = None
         await self.close()
         retry = 0
         while True:
@@ -400,6 +415,8 @@ class _Connection:
         call = asyncio.create_task(
             session.call_tool(tool, arguments, read_timeout_seconds=self.call_timeout)
         )
+        self._calls.add(call)
+        call.add_done_callback(self._calls.discard)
         # A failed transport leaves its calls waiting, so also stop with the owner.
         # Through a future of this call: asyncio.wait on the owner itself keeps
         # every caller alive on 3.14.0 to 3.14.6 (python/cpython#152569).
