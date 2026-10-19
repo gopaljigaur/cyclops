@@ -1,7 +1,9 @@
 """Core type definitions"""
 
+import re
 import uuid
-from typing import Any, Dict, List, Literal, Optional, Union
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple, Union
 from litellm.types.llms.openai import REASONING_EFFORT
 from pydantic import BaseModel, Field, model_validator
 
@@ -263,6 +265,99 @@ def _added(total: Optional[Usage], usage: Optional[Usage]) -> Optional[Usage]:
     if total is None or usage is None:
         return None
     return total + usage
+
+
+class ContextUsage(BaseModel):
+    """How much of the model's context window a session's next request takes."""
+
+    tokens: int = Field(
+        description="Tokens of the system prompt, tools and transcript, counted "
+        "as compaction counts them"
+    )
+    max_input_tokens: int = Field(
+        description="The model's input limit; through a router, the smallest "
+        "of its deployments'"
+    )
+    compaction_threshold: Optional[int] = Field(
+        description="Tokens at which a run compacts; None without compaction"
+    )
+
+
+# A Go duration, as OpenAI's reset headers send it: 1s, 6m0s, 120ms.
+_DURATION = re.compile(r"(?:\d+(?:\.\d+)?(?:ms|h|m|s))+")
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def _count(value: Optional[str]) -> Optional[int]:
+    return int(value) if value is not None and value.isdigit() else None
+
+
+def _duration(value: Optional[str]) -> Optional[float]:
+    if value is None or not _DURATION.fullmatch(value):
+        return None
+    return sum(float(n) * _UNIT_SECONDS[u] for n, u in _DURATION_PART.findall(value))
+
+
+def _until(value: Optional[str]) -> Optional[float]:
+    """Seconds until an RFC 3339 time. Before 3.11 fromisoformat reads no Z."""
+    if value is None:
+        return None
+    try:
+        reset = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max((reset - datetime.now(timezone.utc)).total_seconds(), 0.0)
+
+
+class RateLimit(BaseModel):
+    """The rate limits a provider reported with a response or an error."""
+
+    remaining_requests: Optional[int] = None
+    reset_requests: Optional[float] = Field(
+        default=None, description="Seconds until the request limit resets"
+    )
+    remaining_tokens: Optional[int] = None
+    reset_tokens: Optional[float] = Field(
+        default=None, description="Seconds until the token limit resets"
+    )
+
+    @classmethod
+    def from_headers(cls, headers: Mapping[str, str]) -> Optional["RateLimit"]:
+        """The limits in a response's headers; None if they report none.
+
+        Reads OpenAI's x-ratelimit-* headers, which OpenAI-compatible providers
+        send too, and Anthropic's anthropic-ratelimit-* headers.
+        """
+        fields = {}
+        for field, readers in _RATE_LIMIT_HEADERS.items():
+            for header, read in readers:
+                value = read(headers.get(header))
+                if value is not None:
+                    fields[field] = value
+                    break
+        return cls(**fields) if fields else None
+
+
+# Each RateLimit field's headers, and how to read them.
+_RATE_LIMIT_HEADERS: Dict[str, List[Tuple[str, Callable[[Optional[str]], Any]]]] = {
+    "remaining_requests": [
+        ("x-ratelimit-remaining-requests", _count),
+        ("anthropic-ratelimit-requests-remaining", _count),
+    ],
+    "reset_requests": [
+        ("x-ratelimit-reset-requests", _duration),
+        ("anthropic-ratelimit-requests-reset", _until),
+    ],
+    "remaining_tokens": [
+        ("x-ratelimit-remaining-tokens", _count),
+        ("anthropic-ratelimit-tokens-remaining", _count),
+    ],
+    "reset_tokens": [
+        ("x-ratelimit-reset-tokens", _duration),
+        ("anthropic-ratelimit-tokens-reset", _until),
+    ],
+}
 
 
 StopReason = Literal[

@@ -29,7 +29,7 @@ Every run method takes a keyword-only `session: Optional[Session] = None`.
 
 Every run method takes `input_message: UserContent`: text or a list of OpenAI chat content parts (`ContentPart`: `text`, `image_url`, `file`, `input_audio`). Parts of another shape, or of a kind LiteLLM's model map marks the model as not taking (`supports_vision`, `supports_pdf_input` or `supports_audio_input` set to false), raise `ValueError` before the run starts. See [Images and Files](guide/multimodal.md).
 
-**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `compact`, `acompact`, `as_tool`
+**Methods:** `start`, `run`, `arun`, `stream`, `astream`, `stream_events`, `astream_events`, `run_with_response`, `arun_with_response`, `compact`, `acompact`, `context_usage`, `as_tool`
 
 `as_tool(name, description, *, annotations=None, timeout=None) -> AgentTool` returns a tool that runs the agent on its `input` argument, nested in the calling agent's run. See [Subagents](guide/subagents.md).
 
@@ -199,10 +199,43 @@ class ToolCallStarted(Event):  call_id: Optional[str]; name: str; arguments: Dic
 class ToolCallFinished(Event): call_id: Optional[str]; name: str; result: str; is_error: bool
 class GuardRejected(Event):    feedback: str
 class OutputRejected(Event):   feedback: str
-class ModelFallback(Event):    model: str; fallback_model: str; error: Optional[Exception]; usage: Optional[Usage]
-class StepFinished(Event):     step: int; model: Optional[str]; usage: Optional[Usage]; finish_reason: Optional[str]
+class CompletionRetry(Event):  model: str; delay: float; status_code: Optional[int]; headers: Dict[str, str]; rate_limit: Optional[RateLimit]; error: Exception
+class ModelFallback(Event):    model: str; fallback_model: str; error: Optional[Exception]; usage: Optional[Usage]; status_code: Optional[int]; headers: Dict[str, str]; rate_limit: Optional[RateLimit]
+class StepFinished(Event):     step: int; model: Optional[str]; usage: Optional[Usage]; finish_reason: Optional[str]; headers: Dict[str, str]; rate_limit: Optional[RateLimit]
 class Compacted(Event):        summary: str; replaced_messages: int; tokens_before: int; tokens_after: int
 class RunFinished(Event):      result: RunResult
+```
+
+---
+
+### RateLimit
+
+`cyclops.core.types`, exported from `cyclops`. The rate limits in a provider's response headers. See [Rate limits](guide/streaming.md#rate-limits).
+
+```python
+class RateLimit(BaseModel):
+    remaining_requests: Optional[int]
+    reset_requests: Optional[float]  # seconds until the request limit resets
+    remaining_tokens: Optional[int]
+    reset_tokens: Optional[float]  # seconds until the token limit resets
+
+    @classmethod
+    def from_headers(cls, headers: Mapping[str, str]) -> Optional["RateLimit"]: ...
+```
+
+`from_headers` reads OpenAI's `x-ratelimit-*` and Anthropic's `anthropic-ratelimit-*` headers, and returns `None` when they hold none.
+
+---
+
+### ContextUsage
+
+`cyclops.core.types`, exported from `cyclops`. What `Agent.context_usage(session)` returns. See [Context usage](guide/agents.md#context-usage).
+
+```python
+class ContextUsage(BaseModel):
+    tokens: int  # system prompt, tools and transcript, as compaction counts them
+    max_input_tokens: int
+    compaction_threshold: Optional[int]  # None without compaction
 ```
 
 ---

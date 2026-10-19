@@ -9,14 +9,16 @@ from litellm import _should_retry
 from cyclops.core.completion import (
     _acompletion,
     _completion_kwargs,
+    _error_headers,
     _Output,
+    _response_headers,
     _streamed_completion,
     _usage,
 )
-from cyclops.core.events import Event, ModelFallback
+from cyclops.core.events import Event, ModelFallback, ReasoningDelta, TextDelta
 from cyclops.core.run_state import _Run
 from cyclops.core.hooks import _call_hook
-from cyclops.core.types import AgentConfig, Usage
+from cyclops.core.types import AgentConfig, RateLimit, Usage
 
 # A model's config and the arguments of its completions.
 _Request = Tuple[AgentConfig, Dict[str, Any]]
@@ -42,14 +44,15 @@ def _falls_back(error: Exception) -> bool:
 
 
 class _Watched:
-    """A run, noting whether a streamed completion emitted anything to it."""
+    """A run, noting whether a streamed completion emitted a delta to it."""
 
     def __init__(self, run: _Run) -> None:
         self.run = run
         self.emitted = False
 
     def emit(self, event: Event) -> None:
-        self.emitted = True
+        if isinstance(event, (TextDelta, ReasoningDelta)):
+            self.emitted = True
         self.run.emit(event)
 
     async def taken(self, ahead: int = 0) -> None:
@@ -65,7 +68,7 @@ async def _send(
     if streamed:
         response = await _streamed_completion(config, messages, kwargs, run)
     else:
-        response = await _acompletion(config, messages=messages, **kwargs)
+        response = await _acompletion(config, run, messages=messages, **kwargs)
     return response, _usage(response, time.perf_counter() - start)
 
 
@@ -90,9 +93,15 @@ async def _complete_with_fallbacks(
         except Exception as e:
             if watched.emitted or not _falls_back(e):
                 raise
+            headers = _error_headers(e)
             run.emit(
                 ModelFallback(
-                    model=config.model, fallback_model=fallback.model, error=e
+                    model=config.model,
+                    fallback_model=fallback.model,
+                    error=e,
+                    status_code=getattr(e, "status_code", None),
+                    headers=headers,
+                    rate_limit=RateLimit.from_headers(headers),
                 )
             )
             continue
@@ -103,9 +112,14 @@ async def _complete_with_fallbacks(
         run.spend(config.model, usage)
         if run.over_budget():
             return None
+        headers = _response_headers(response)
         run.emit(
             ModelFallback(
-                model=config.model, fallback_model=fallback.model, usage=usage
+                model=config.model,
+                fallback_model=fallback.model,
+                usage=usage,
+                headers=headers,
+                rate_limit=RateLimit.from_headers(headers),
             )
         )
     response, usage = await _send(requests[-1], messages, run, streamed)

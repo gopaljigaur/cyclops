@@ -202,12 +202,15 @@ class _ContextWindow:
             return room
         return None
 
+    def threshold(self, compaction: Compaction) -> float:
+        """Tokens at which a request is compacted."""
+        return compaction.threshold * self.max_input_tokens
+
     async def compact_if_needed(
         self, history: List[Dict[str, Any]], compaction: Compaction
     ) -> Optional[Compacted]:
         """Compact once the request reaches the compaction threshold."""
-        threshold = compaction.threshold * self.max_input_tokens
-        if self._stuck or self.tokens(history) < threshold:
+        if self._stuck or self.tokens(history) < self.threshold(compaction):
             return None
         return await self.compact(history, compaction)
 
@@ -230,7 +233,7 @@ class _ContextWindow:
         self._counts[:cut] = [self._count(message)]
         self._total = sum(self._counts)
         after = self.tokens(history)
-        threshold = compaction.threshold * self.max_input_tokens
+        threshold = self.threshold(compaction)
         if after >= threshold:
             self._stuck = True
             logger.warning(
@@ -303,7 +306,7 @@ class _ContextWindow:
         prompt = head + "\n\n".join(lines) + tail
         start = time.perf_counter()
         response = await _acompletion(
-            config, messages=[{"role": "user", "content": prompt}], **kwargs
+            config, None, messages=[{"role": "user", "content": prompt}], **kwargs
         )
         api_duration = time.perf_counter() - start
         await _call_hook(config, "on_llm_end", response)

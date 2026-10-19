@@ -1,10 +1,10 @@
 """Typed events a run emits while it progresses."""
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Annotated, Any, Dict, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from cyclops.core.types import RunResult, Usage
+from cyclops.core.types import RateLimit, RunResult, Usage
 
 
 class Event(BaseModel):
@@ -59,6 +59,35 @@ class OutputRejected(Event):
     feedback: str
 
 
+_Headers = Annotated[
+    Dict[str, str],
+    Field(
+        default_factory=dict,
+        description="The provider's HTTP response headers, as LiteLLM passes them on",
+    ),
+]
+_RateLimit = Annotated[
+    Optional[RateLimit],
+    Field(
+        default=None,
+        description="The rate limits in headers; None if they report none",
+    ),
+]
+
+
+class CompletionRetry(Event):
+    """A completion failed with a transient error and is sent again after delay."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    model: str
+    delay: float = Field(description="Seconds before the next attempt")
+    status_code: Optional[int] = Field(description="The error's HTTP status")
+    headers: _Headers
+    rate_limit: _RateLimit
+    error: Exception = Field(exclude=True)
+
+
 class ModelFallback(Event):
     """A model failed or refused, so the step's completion goes to the next model."""
 
@@ -72,6 +101,11 @@ class ModelFallback(Event):
     usage: Optional[Usage] = Field(
         default=None, description="The refused completion's usage, counted in the run"
     )
+    status_code: Optional[int] = Field(
+        default=None, description="The error's HTTP status; None if it refused"
+    )
+    headers: _Headers
+    rate_limit: _RateLimit
 
 
 class StepFinished(Event):
@@ -86,6 +120,8 @@ class StepFinished(Event):
         default=None,
         description="The completion's finish reason as LiteLLM normalizes it",
     )
+    headers: _Headers
+    rate_limit: _RateLimit
 
 
 class Compacted(Event):
@@ -111,6 +147,7 @@ __all__ = [
     "ToolCallFinished",
     "GuardRejected",
     "OutputRejected",
+    "CompletionRetry",
     "ModelFallback",
     "StepFinished",
     "Compacted",

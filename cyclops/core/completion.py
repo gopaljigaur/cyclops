@@ -20,7 +20,7 @@ import litellm
 from litellm import _calculate_retry_after, _should_retry
 
 from cyclops.core.caching import _cache_points
-from cyclops.core.events import Event, ReasoningDelta, TextDelta
+from cyclops.core.events import CompletionRetry, Event, ReasoningDelta, TextDelta
 from cyclops.core.providers import (
     _caches_at_markers,
     _every_deployment,
@@ -29,7 +29,7 @@ from cyclops.core.providers import (
     _takes_param,
 )
 from cyclops.core.hooks import _call_hook
-from cyclops.core.types import AgentConfig, Usage
+from cyclops.core.types import AgentConfig, RateLimit, Usage
 from cyclops.utils.compat import asyncio_timeout
 
 
@@ -140,6 +140,47 @@ def _retry_delay(
     )
 
 
+# LiteLLM's prefix on the provider's own headers in a response's hidden params.
+_PROVIDER_HEADER = "llm_provider-"
+
+
+def _response_headers(response) -> Dict[str, str]:
+    """The provider's HTTP headers of a completion."""
+    headers = response._hidden_params.get("additional_headers") or {}
+    return {
+        k[len(_PROVIDER_HEADER) :]: v
+        for k, v in headers.items()
+        if k.startswith(_PROVIDER_HEADER)
+    }
+
+
+def _error_headers(error: Exception) -> Dict[str, str]:
+    """The provider's HTTP headers of a failed completion, if it got a response."""
+    return dict(getattr(error, "litellm_response_headers", None) or {})
+
+
+def _retry_event(
+    config: AgentConfig, error: Exception, delay: float
+) -> CompletionRetry:
+    headers = _error_headers(error)
+    return CompletionRetry(
+        model=config.model,
+        delay=delay,
+        status_code=getattr(error, "status_code", None),
+        headers=headers,
+        rate_limit=RateLimit.from_headers(headers),
+        error=error,
+    )
+
+
+class _Output(Protocol):
+    """Where a completion's events go: a run, as _Run implements it."""
+
+    def emit(self, event: Event) -> None: ...
+
+    async def taken(self, ahead: int = 0) -> None: ...
+
+
 async def _attempt(config: AgentConfig, /, **kwargs):
     await _call_hook(config, "on_llm_start", kwargs.get("messages", []))
     try:
@@ -151,8 +192,11 @@ async def _attempt(config: AgentConfig, /, **kwargs):
         raise
 
 
-async def _acompletion(config: AgentConfig, /, **kwargs):
-    """Make a completion, retrying transient provider errors."""
+async def _acompletion(config: AgentConfig, run: Optional[_Output], /, **kwargs):
+    """Make a completion, retrying transient provider errors.
+
+    Each retry emits CompletionRetry to run, if given.
+    """
     retries = 0
     while True:
         try:
@@ -162,6 +206,8 @@ async def _acompletion(config: AgentConfig, /, **kwargs):
             if delay is None:
                 raise
             retries += 1
+            if run is not None:
+                run.emit(_retry_event(config, e, delay))
             await asyncio.sleep(delay)
 
 
@@ -208,19 +254,11 @@ async def _astream_completion(
 _READ_AHEAD = 16
 
 
-class _Output(Protocol):
-    """Where a streamed completion's deltas go: a run, as _Run implements it."""
-
-    def emit(self, event: Event) -> None: ...
-
-    async def taken(self, ahead: int = 0) -> None: ...
-
-
 async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Output):
     """Stream a completion, emitting its deltas, and build the whole response.
 
     Until a delta is emitted, a transient error is retried as in _acompletion
-    and a stalled stream once.
+    and a stalled stream once, each retry emitting CompletionRetry.
     """
     retries, stalled = 0, False
     while True:
@@ -246,15 +284,17 @@ async def _streamed_completion(config: AgentConfig, messages, kwargs, run: _Outp
                     # a run cancelled there leaks one (#103). Wait here instead.
                     finished = chunk.choices and chunk.choices[0].finish_reason
                     await run.taken(ahead=0 if finished else _READ_AHEAD)
-        except StreamIdleTimeout:
+        except StreamIdleTimeout as e:
             if emitted or stalled:
                 raise
             stalled = True
+            run.emit(_retry_event(config, e, 0))
         except Exception as e:
             delay = None if emitted else _retry_delay(config, e, retries)
             if delay is None:
                 raise
             retries += 1
+            run.emit(_retry_event(config, e, delay))
             await asyncio.sleep(delay)
         else:
             # The step's tool calls and the next completion wait for the caller.
