@@ -14,6 +14,7 @@ from cyclops.core.hooks import _call_hook, _tool_call_id
 from cyclops.core.middleware import Deny, ToolCallContext, ToolMiddleware
 from cyclops.core.providers import _every_deployment, _takes_tool_message_images
 from cyclops.core.run_state import _Run
+from cyclops.core.tool_results import READ_TOOL_NAME, _ToolResults
 from cyclops.core.types import AgentConfig, DeniedToolCall, ToolCall
 from cyclops.toolkit.types import ToolResult
 from cyclops.utils.compat import asyncio_timeout
@@ -34,19 +35,6 @@ class _Rendered(NamedTuple):
 def _render(result: ToolResult) -> _Rendered:
     content = result.to_message_content()
     return _Rendered(content, ToolResult.message_text(content), result.is_error)
-
-
-def _limited(rendered: _Rendered, limit: Optional[int]) -> _Rendered:
-    """The rendered result with text past limit characters cut from its middle."""
-    text = rendered.text
-    if limit is None or len(text) <= limit:
-        return rendered
-    head = limit // 2
-    tail = len(text) - (limit - head)
-    text = f"{text[:head]}\n[{tail - head} characters omitted]\n{text[tail:]}"
-    images = _images(rendered.content)
-    content = [{"type": "text", "text": text}, *images] if images else text
-    return rendered._replace(content=content, text=text)
 
 
 def _images(content: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -205,10 +193,15 @@ class _ToolExecutor:
     """Runs a run's tool calls and records them in its transcript and result."""
 
     def __init__(
-        self, config: AgentConfig, tools_by_name: Dict[str, Any], run: _Run
+        self,
+        config: AgentConfig,
+        tools_by_name: Dict[str, Any],
+        results: _ToolResults,
+        run: _Run,
     ) -> None:
         self.config = config
         self.tools_by_name = tools_by_name
+        self.results = results
         self.run = run
         self._slots = asyncio.Semaphore(config.max_parallel_tool_calls)
         self._in_order = asyncio.Lock()
@@ -342,7 +335,7 @@ class _ToolExecutor:
                 rendered = _render(ToolResult.error_result(error))
             else:
                 args, rendered = await self._run_tool(call_id, name, args)
-            rendered = _limited(rendered, self.config.max_tool_output_chars)
+            rendered = await self._limited(name, rendered)
         except BaseException as e:
             # Middleware raised or the call was cancelled: it still finishes.
             run.emit(
@@ -362,6 +355,20 @@ class _ToolExecutor:
             )
         )
         return args, rendered
+
+    async def _limited(self, name: str, rendered: _Rendered) -> _Rendered:
+        """The rendered result, with text past the tool's limit stored and previewed."""
+        tool = self.tools_by_name.get(name)
+        limit = self.config.max_tool_output_chars
+        if tool is not None and tool.max_output_chars is not None:
+            limit = tool.max_output_chars
+        # The read tool's pages are within the limit already.
+        if limit is None or len(rendered.text) <= limit or name == READ_TOOL_NAME:
+            return rendered
+        text = await self.results.preview(rendered.text, limit)
+        images = _images(rendered.content)
+        content = [{"type": "text", "text": text}, *images] if images else text
+        return rendered._replace(content=content, text=text)
 
     async def _run_tool(
         self, call_id: Optional[str], name: str, args: Dict[str, Any]

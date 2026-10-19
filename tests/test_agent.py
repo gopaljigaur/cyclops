@@ -468,6 +468,7 @@ def test_invalid_tool_arguments_return_parse_error():
     session = Session()
     tool = MagicMock(wraps=_make_simple_tool())
     tool.name = "add"
+    tool.max_output_chars = None
     agent = Agent(config=_make_config(), tools=[tool])
     tc = _make_tool_call("tc_1", "add", '{"a": 1,')
     responses = [

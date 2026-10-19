@@ -19,10 +19,11 @@ class Agent:
         *,
         session_store: Optional[SessionStore] = None,
         durability: Literal["sync", "async", "exit"] = "async",
+        tool_result_store: Optional[ToolResultStore] = None,
     ): ...
 ```
 
-With a `session_store`, every run with a session saves it there as `durability` says. See [Sessions](/guides/sessions/#saving-automatically).
+With a `session_store`, every run with a session saves it there as `durability` says. Tool results past their limit are kept in `tool_result_store` (in memory when `None`) until the run ends. See [Sessions](/guides/sessions/#saving-automatically).
 
 **Methods** (each run method also takes a keyword-only `session: Optional[Session] = None`)
 
@@ -117,7 +118,7 @@ class AgentConfig(BaseModel):
 | `thinking_budget` | `None` | Thinking tokens for models that take a budget; not with `reasoning_effort`. See [Reasoning](/guides/agents/#reasoning). |
 | `completion_kwargs` | `{}` | Extra LiteLLM completion arguments sent with every call. |
 | `compaction` | `None` | Summarize older messages once a request nears the model's input limit. See [Context window](/guides/agents/#context-window). |
-| `max_tool_output_chars` | `None` | Longest tool result text sent to the model; longer text is cut in the middle. |
+| `max_tool_output_chars` | `None` | Longest tool result text sent to the model whole; longer text is stored and sent as its start and end, which the model can read between. See [Tool output limit](/guides/agents/#tool-output-limit). |
 | `prompt_caching` | `True` | Cache breakpoints for providers that cache at markers; `"5m"` or `"1h"` sets the time to live, `False` sends none. See [Prompt caching](/guides/agents/#prompt-caching). |
 | `middleware` | `[]` | `ToolMiddleware` run around every tool call, in order. |
 | `guards` | `[]` | Async functions that can send the model back when it ends its turn. |
@@ -164,6 +165,22 @@ class SessionStore(Protocol):
 class InMemorySessionStore: ...                  # SessionStore in this process
 class FileSessionStore:                          # <directory>/<id>.jsonl
     def __init__(self, directory: str | Path): ...
+```
+
+---
+
+### ToolResultStore
+
+`cyclops.core.tool_results`. Where runs keep tool results longer than their limit; a run deletes what it stored when it ends. See [Tool output limit](/guides/agents/#tool-output-limit).
+
+```python
+class ToolResultStore(Protocol):
+    async def put(self, handle: str, text: str) -> None: ...
+    async def get(self, handle: str) -> Optional[str]: ...
+    async def delete(self, handle: str) -> None: ...
+
+
+class InMemoryToolResultStore: ...               # ToolResultStore in this process
 ```
 
 ---
@@ -428,6 +445,7 @@ def tool(
     annotations: Optional[ToolAnnotations] = None,
     timeout: Optional[float] = None,
     defer_loading: bool = False,
+    max_output_chars: Optional[int] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -456,6 +474,7 @@ class BaseTool(ABC):
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
         defer_loading: bool = False,
+        max_output_chars: Optional[int] = None,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 
@@ -485,6 +504,7 @@ class Tool(BaseTool):
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
         defer_loading: bool = False,
+        max_output_chars: Optional[int] = None,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 ```

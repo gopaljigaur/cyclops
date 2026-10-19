@@ -20,10 +20,11 @@ class Agent:
         *,
         session_store: Optional[SessionStore] = None,
         durability: Literal["sync", "async", "exit"] = "async",
+        tool_result_store: Optional[ToolResultStore] = None,
     ): ...
 ```
 
-With a `session_store`, every run with a session saves it there as `durability` says. See [Sessions](guide/sessions.md#saving-automatically).
+With a `session_store`, every run with a session saves it there as `durability` says. Tool results past their limit are kept in `tool_result_store` (in memory when `None`) until the run ends. See [Sessions](guide/sessions.md#saving-automatically).
 
 Every run method takes a keyword-only `session: Optional[Session] = None`.
 
@@ -126,6 +127,22 @@ class SessionStore(Protocol):
 class InMemorySessionStore: ...                  # SessionStore in this process
 class FileSessionStore:                          # <directory>/<id>.jsonl
     def __init__(self, directory: str | Path): ...
+```
+
+---
+
+### ToolResultStore
+
+`cyclops.core.tool_results`. Where runs keep tool results longer than their limit; a run deletes what it stored when it ends. See [Tool output limit](guide/agents.md#tool-output-limit).
+
+```python
+class ToolResultStore(Protocol):
+    async def put(self, handle: str, text: str) -> None: ...
+    async def get(self, handle: str) -> Optional[str]: ...
+    async def delete(self, handle: str) -> None: ...
+
+
+class InMemoryToolResultStore: ...               # ToolResultStore in this process
 ```
 
 ---
@@ -366,6 +383,7 @@ def tool(
     annotations: Optional[ToolAnnotations] = None,
     timeout: Optional[float] = None,
     defer_loading: bool = False,
+    max_output_chars: Optional[int] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]: ...
 ```
 
@@ -384,6 +402,7 @@ class BaseTool(ABC):
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
         defer_loading: bool = False,
+        max_output_chars: Optional[int] = None,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 
@@ -407,6 +426,7 @@ class Tool(BaseTool):
         annotations: Optional[ToolAnnotations] = None,
         timeout: Optional[float] = None,
         defer_loading: bool = False,
+        max_output_chars: Optional[int] = None,
     ): ...
     async def execute(self, **kwargs) -> Any: ...
 ```

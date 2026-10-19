@@ -19,6 +19,7 @@ def tool(
     annotations: Optional[ToolAnnotations] = None,
     timeout: Optional[float] = None,
     defer_loading: bool = False,
+    max_output_chars: Optional[int] = None,
 ) -> Union[Tool, Callable[[Callable], Tool]]:
     """Decorator to convert a function into a tool
 
@@ -52,7 +53,13 @@ def tool(
         )
 
         created_tool = Tool(
-            tool_name, tool_description, f, annotations, timeout, defer_loading
+            tool_name,
+            tool_description,
+            f,
+            annotations,
+            timeout,
+            defer_loading,
+            max_output_chars,
         )
 
         if registry:
