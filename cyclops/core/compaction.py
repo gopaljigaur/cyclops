@@ -10,6 +10,7 @@ from litellm.constants import DEFAULT_REASONING_EFFORT_MAX_THINKING_BUDGET
 from cyclops.core.completion import _acompletion, _completion_kwargs, _usage
 from cyclops.core.events import Compacted
 from cyclops.core.providers import _asks_server, _model_info
+from cyclops.core.hooks import _call_hook
 from cyclops.core.types import AgentConfig, Compaction, Usage
 from cyclops.toolkit.types import ToolResult
 
@@ -238,8 +239,7 @@ class _ContextWindow:
                 after,
                 threshold,
             )
-        if self.config.hooks:
-            self.config.hooks.on_compaction(summary, before, after)
+        await _call_hook(self.config, "on_compaction", summary, before, after)
         return Compacted(
             summary=summary,
             replaced_messages=cut,
@@ -306,8 +306,7 @@ class _ContextWindow:
             config, messages=[{"role": "user", "content": prompt}], **kwargs
         )
         api_duration = time.perf_counter() - start
-        if config.hooks:
-            config.hooks.on_llm_end(response)
+        await _call_hook(config, "on_llm_end", response)
         self.spend(config.model, _usage(response, api_duration))
         choice = response.choices[0]
         summary = choice.message.content

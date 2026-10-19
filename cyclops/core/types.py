@@ -97,6 +97,12 @@ class AgentConfig(BaseModel):
         description="Seconds a tool call may run; a tool's own timeout wins",
     )
     hooks: Optional[AgentHooks] = None
+    hook_timeout: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Seconds each async hook call may run before it raises "
+        "TimeoutError",
+    )
     middleware: List[ToolMiddleware] = Field(default_factory=list)
     guards: List[Guard] = Field(default_factory=list)
     max_guard_rounds: int = Field(

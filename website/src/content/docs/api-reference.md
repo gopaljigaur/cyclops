@@ -77,6 +77,7 @@ class AgentConfig(BaseModel):
     max_parallel_tool_calls: int = 10
     tool_timeout: Optional[float] = None   # seconds
     hooks: Optional[AgentHooks] = None
+    hook_timeout: Optional[float] = None   # seconds
     num_retries: int = 2
     timeout: float = 600   # seconds
     stream_idle_timeout: float = 120   # seconds
@@ -108,6 +109,7 @@ class AgentConfig(BaseModel):
 | `max_parallel_tool_calls` | `10` | Most tool calls of one step that run at the same time. |
 | `tool_timeout` | `None` | Seconds a tool call may run before it is cancelled and fails. A tool's own `timeout` wins. |
 | `hooks` | `None` | `AgentHooks` instance for lifecycle callbacks and tool approval. |
+| `hook_timeout` | `None` | Seconds each async hook call may run before it raises `TimeoutError`. See [Hook timeouts](/guides/hooks/#hook-timeouts). |
 | `num_retries` | `2` | Retries of a completion after a rate limit, overload, 5xx, timeout or connection error. |
 | `timeout` | `600` | Seconds LiteLLM's HTTP client waits to connect and for each read or write. |
 | `stream_idle_timeout` | `120` | Seconds a stream may go without a chunk after its first. |
@@ -279,10 +281,13 @@ class DeniedToolCall(BaseModel):
 Lifecycle callback base class. Subclass and override any methods you need.
 
 ```python
+# Any method may be async def. MaybeAwaitable[T] is T or an awaitable of T.
 class AgentHooks:
-    def on_run_start(self, input_message: Union[str, List[Dict[str, Any]]]) -> None: ...
+    def on_run_start(self, input_message: Union[str, List[Dict[str, Any]]]) -> MaybeAwaitable[Optional[UserContent]]: ...
     def on_run_end(self, content: str) -> None: ...
     def on_run_error(self, error: BaseException) -> None: ...
+    def on_subagent_start(self, agent_path: Tuple[str, ...], input_message: str) -> None: ...
+    def on_subagent_end(self, agent_path: Tuple[str, ...], result: RunResult) -> None: ...
     def on_llm_start(self, messages: List[Dict[str, Any]]) -> None: ...
     def on_llm_end(self, response: Any) -> None: ...
     def on_llm_error(self, error: Exception) -> None: ...
@@ -294,9 +299,11 @@ class AgentHooks:
 
 | Method | When it fires | Return value |
 |---|---|---|
-| `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()`, with the input text or its list of content parts | `None` |
+| `on_run_start` | Once at the start of `run()`, `arun()`, `stream()`, or `astream()`, with the input text or its list of content parts | Text or content parts to replace the input, or `None` to keep it |
 | `on_run_end` | When a run finishes, streamed or not | `None` |
 | `on_run_error` | Instead of `on_run_end` when a run raises, is cancelled, or its stream is closed early. A run its caller stopped (a stream closed early) gets a `CancelledError` whose `args` are `(RUN_STOPPED,)`, from `cyclops.core.hooks`. | `None` |
+| `on_subagent_start` | Before a subagent run nested in this agent's run starts, with its `agent_path` and input | `None` |
+| `on_subagent_end` | When that subagent run ends, however it ended, with its `agent_path` and `RunResult` | `None` |
 | `on_llm_start` | Before each LiteLLM completion call | `None` |
 | `on_llm_end` | After each completion; for a stream, with the assembled response | `None` |
 | `on_llm_error` | When a LiteLLM call raises an exception | `None` |

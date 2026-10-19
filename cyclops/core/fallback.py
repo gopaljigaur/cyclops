@@ -15,6 +15,7 @@ from cyclops.core.completion import (
 )
 from cyclops.core.events import Event, ModelFallback
 from cyclops.core.run_state import _Run
+from cyclops.core.hooks import _call_hook
 from cyclops.core.types import AgentConfig, Usage
 
 # A model's config and the arguments of its completions.
@@ -97,8 +98,7 @@ async def _complete_with_fallbacks(
             continue
         if watched.emitted or response.choices[0].finish_reason != "content_filter":
             return config.model, response, usage
-        if config.hooks:
-            config.hooks.on_llm_end(response)
+        await _call_hook(config, "on_llm_end", response)
         # A refused completion is billed too.
         run.spend(config.model, usage)
         if run.over_budget():
