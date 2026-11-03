@@ -3,6 +3,7 @@
 import sys
 from base64 import b64decode
 from json import dumps, loads
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -260,11 +261,6 @@ def _anthropic_stream(*blocks, stop_reason):
     return _sse(*events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="LiteLLM repeats streamed thinking at its signature (#108)",
-)
 def test_streamed_anthropic_tool_loop_sends_back_the_signed_thinking():
     """End to end through LiteLLM's Anthropic SSE parser and request builder."""
     streams = [
@@ -462,7 +458,20 @@ def _request_body(monkeypatch, model, message="hello", **config):
         return httpx.Response(200, json=REPLIES[request.url.host], request=request)
 
     config = AgentConfig(model=model, completion_kwargs={"api_key": "test"}, **config)
-    with patch.object(httpx.AsyncClient, "send", send):
+    # LiteLLM validates image URLs before the mocked HTTP request, including DNS.
+    addresses = [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("93.184.216.34", 443),
+        )
+    ]
+    with (
+        patch.object(socket, "getaddrinfo", return_value=addresses),
+        patch.object(httpx.AsyncClient, "send", send),
+    ):
         assert Agent(config).run(message) == "hi"
     (body,) = bodies
     return body
