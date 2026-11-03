@@ -32,6 +32,12 @@ def add(a: int, b: int) -> int:
 
 
 @tool
+def dump() -> str:
+    """Return a long text."""
+    return "x" * 1000
+
+
+@tool
 async def wait() -> str:
     """Wait until cancelled."""
     await asyncio.Event().wait()
@@ -50,6 +56,14 @@ async def plain():
 async def tools():
     result = await agent().arun_with_response("hi")
     assert result.stop_reason == "completed" and result.tool_calls
+
+
+async def long_results():
+    # Stores the result past the limit and offers the reader tool.
+    result = await agent(tools=[dump], max_tool_output_chars=100).arun_with_response(
+        "hi"
+    )
+    assert "read_tool_result" in result.tool_calls[0].result
 
 
 async def streaming():
@@ -131,6 +145,7 @@ async def sync_api():
 SUCCEEDING = [
     plain,
     tools,
+    long_results,
     streaming,
     early_close,
     abandoned_generator,

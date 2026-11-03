@@ -1,6 +1,7 @@
 """Oversized tool results: stored whole, sent as a preview, read in pages by handle."""
 
 import uuid
+from contextvars import ContextVar
 from typing import Annotated, Any, Dict, List, Optional, Protocol
 
 from pydantic import Field
@@ -89,15 +90,12 @@ def _limits_output(config: AgentConfig, tools: List[Any]) -> bool:
 
 
 class _ToolResults:
-    """The results one run stored, and the tool that reads them."""
+    """The results one run stored."""
 
     def __init__(self, store: Optional[ToolResultStore]) -> None:
         self.store = store or InMemoryToolResultStore()
         # Each stored result's page size: the limit of the tool that returned it.
         self._pages: Dict[str, int] = {}
-        self.tool = Tool(
-            READ_TOOL_NAME, _DESCRIPTION, self.read, ToolAnnotations(read_only=True)
-        )
 
     async def preview(self, text: str, limit: int) -> str:
         """Store text and return its preview, with its handle."""
@@ -107,18 +105,9 @@ class _ToolResults:
         return _preview(text, handle, limit)
 
     async def read(
-        self,
-        handle: str,
-        offset: Annotated[int, Field(ge=0)] = 0,
-        limit: Optional[Annotated[int, Field(gt=0)]] = None,
+        self, handle: str, offset: int = 0, limit: Optional[int] = None
     ) -> str:
-        """Read a stored tool result from a character offset.
-
-        Args:
-            handle: The handle in the result's note.
-            offset: The first character to read.
-            limit: Most characters to read; at most, and by default, a page.
-        """
+        """Read a stored tool result from a character offset."""
         page = self._pages.get(handle)
         # Only this run's results, though the store may be shared.
         text = None if page is None else await self.store.get(handle)
@@ -136,6 +125,32 @@ class _ToolResults:
         for handle in self._pages:
             await self.store.delete(handle)
         self._pages.clear()
+
+
+# The results of the run in progress, for the reader tool.
+_current: ContextVar[Optional[_ToolResults]] = ContextVar("_current", default=None)
+
+
+async def _read(
+    handle: str,
+    offset: Annotated[int, Field(ge=0)] = 0,
+    limit: Optional[Annotated[int, Field(gt=0)]] = None,
+) -> str:
+    """Read a stored tool result from a character offset.
+
+    Args:
+        handle: The handle in the result's note.
+        offset: The first character to read.
+        limit: Most characters to read; at most, and by default, a page.
+    """
+    results = _current.get()
+    if results is None:
+        raise ValueError("Tool results can only be read during a run")
+    return await results.read(handle, offset, limit)
+
+
+# Built once: a tool built per run left cyclic garbage behind every run.
+READ_TOOL = Tool(READ_TOOL_NAME, _DESCRIPTION, _read, ToolAnnotations(read_only=True))
 
 
 __all__ = ["InMemoryToolResultStore", "ToolResultStore"]

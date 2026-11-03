@@ -14,10 +14,10 @@ from cyclops.core.session import Durability, Session, SessionStore
 from cyclops.core.subagents import AgentTool
 from cyclops.core.sync import _iterate_sync, _run_coroutine_sync
 from cyclops.core.tool_results import (
+    READ_TOOL,
     READ_TOOL_NAME,
     ToolResultStore,
     _limits_output,
-    _ToolResults,
 )
 from cyclops.core.tool_search import SEARCH_TOOL_NAME, _ToolSearch
 from cyclops.core.types import AgentConfig, Compaction, RunResult, Usage, _added
@@ -221,7 +221,7 @@ class Agent:
 
         mode = self._get_tool_mode()
         # The tools a run starts with: deferred ones only once found.
-        loaded = self._run_tools(_ToolResults(None)).loaded
+        loaded = self._run_tools().loaded
         compaction = self.config.compaction or Compaction()
         window = _compaction_window(self.config, compaction, spend)
         tools = None
@@ -263,12 +263,12 @@ class Agent:
         )
         return run, task
 
-    def _run_tools(self, results: _ToolResults) -> _ToolSearch:
+    def _run_tools(self) -> _ToolSearch:
         """The tools of a run: the agent's, and the reader when output is limited."""
         tools, by_name = self.tools, self._tools_by_name
         if _limits_output(self.config, tools):
-            tools = [*tools, results.tool]
-            by_name = {**by_name, READ_TOOL_NAME: results.tool}
+            tools = [*tools, READ_TOOL]
+            by_name = {**by_name, READ_TOOL_NAME: READ_TOOL}
         return _ToolSearch(tools, by_name)
 
     def _get_tool_mode(self) -> str:
