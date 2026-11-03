@@ -42,7 +42,7 @@ from cyclops.core.tool_execution import (
     _parse_naive_tool_call,
     _ToolExecutor,
 )
-from cyclops.core.tool_results import _ToolResults
+from cyclops.core.tool_results import _current, _ToolResults
 from cyclops.core.tool_search import _ToolSearch
 from cyclops.core.types import AgentConfig, RunResult, StopReason, Usage, _added
 from cyclops.skills import Skills
@@ -206,10 +206,11 @@ class _RunLoop:
 
     async def _steps(self, input_message: _Content, mode: str) -> None:
         results = _ToolResults(self.agent.tool_result_store)
-        tools = self.agent._run_tools(results)
+        token = _current.set(results)
         try:
-            await self._step_loop(input_message, mode, tools, results)
+            await self._step_loop(input_message, mode, self.agent._run_tools(), results)
         finally:
+            _current.reset(token)
             await results.free()
 
     async def _step_loop(
