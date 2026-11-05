@@ -593,16 +593,16 @@ def test_cost_budget_ends_the_run_between_steps():
     assert result.cost == pytest.approx(0.001)
 
 
-def test_unknown_cost_does_not_end_the_run():
+def test_unknown_cost_ends_a_run_with_max_cost():
     agent = Agent(config=_make_config(max_cost=0.001), tools=[_make_simple_tool()])
-    responses = [*_tool_call_responses(1), _make_completion_response("2")]
+    mock = AsyncMock(side_effect=_tool_call_responses(3))
 
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=responses)):
-        result = agent.run_with_response("1 + 1?")
+    with patch("litellm.acompletion", new=mock):
+        result = agent.run_with_response("loop")
 
     assert result.cost is None
-    assert result.stop_reason == "completed"
-    assert result.content == "2"
+    assert result.stop_reason == "budget"
+    assert mock.call_count == 1
 
 
 def test_final_answer_completes_even_over_budget():
@@ -631,23 +631,6 @@ def test_token_budget_counts_steps_after_one_without_usage():
 
     assert result.stop_reason == "budget"
     assert result.usage is None
-    assert mock.call_count == 3
-
-
-def test_cost_budget_counts_steps_after_one_without_pricing():
-    """A completion LiteLLM can't price doesn't switch the cost limit off."""
-    agent = Agent(config=_make_config(max_cost=0.002), tools=[_make_simple_tool()])
-    cost = MagicMock(side_effect=[Exception("no pricing"), 0.001, 0.001, 0.001])
-    mock = AsyncMock(side_effect=_tool_call_responses(4))
-
-    with (
-        patch("litellm.acompletion", new=mock),
-        patch("litellm.completion_cost", new=cost),
-    ):
-        result = agent.run_with_response("loop")
-
-    assert result.stop_reason == "budget"
-    assert result.cost is None
     assert mock.call_count == 3
 
 

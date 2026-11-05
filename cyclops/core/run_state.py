@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import math
 from collections import deque
 from typing import Any, AsyncGenerator, Deque, Dict, Generator, List, Optional, Tuple
 
@@ -104,7 +105,8 @@ class _Run:
         """Count one completion of model in this run and every run it is nested in."""
         if usage is not None:
             self.spent_tokens += usage.total_tokens
-            self.spent_cost += usage.cost or 0.0
+            # A completion LiteLLM can't price leaves the cost unbounded.
+            self.spent_cost += math.inf if usage.cost is None else usage.cost
         result = self.result
         result.usage = _added(result.usage, usage)
         by_model = result.usage_by_model
