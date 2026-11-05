@@ -48,3 +48,38 @@ async for event in lead.astream_events("Compare the populations of Paris and Ber
 ```
 
 A subagent tool called outside any run, such as `await tool.execute(input="...")`, runs the agent on its own.
+
+## Subagents from markdown files
+
+Subagents can also be defined in markdown files, in the format Claude Code (`.claude/agents/`, plugin `agents/` directories) and OpenCode (`agents/`) use: YAML frontmatter, then the system prompt.
+
+```markdown
+---
+name: reviewer
+description: Reviews a diff for bugs. Use after code changes.
+tools: read_file, grep
+model: gpt-4o-mini
+---
+You review diffs. Report each bug with the file and line.
+```
+
+| Field | Rules |
+|---|---|
+| `name` | Lowercase letters, digits and hyphens, at most 64 characters. The tool's name. |
+| `description` | The tool's description: say what the subagent does and when to call it. |
+| `tools` | Optional. Names of the parent's tools the subagent may use, as a comma-separated string or a YAML list; names the parent lacks are skipped. Absent, it gets all of them, as in Claude Code. |
+| `model` | Optional. Absent, `inherit`, or one of Claude Code's aliases (`sonnet`, `opus`, `haiku`, `fable`), the subagent uses the parent's model. |
+
+Other frontmatter fields are ignored. Frontmatter that is not valid YAML, such as an unquoted description containing `: `, is read as one `key: value` per line, as Claude Code reads it.
+
+```python
+from cyclops import Agent, AgentConfig, Subagents
+
+config = AgentConfig(model="gpt-4o")
+tools = [read_file, grep, write_file]
+subagents = Subagents("./agents")
+
+lead = Agent(config, tools=[*tools, *subagents.tools(config, tools)])
+```
+
+`Subagents(*dirs)` reads every `*.md` file in the given directories and their subdirectories. `subagents.tools(config, tools)` returns one `AgentTool` per file: an agent with `config`, but the file's model and system prompt, and the tools the file names. `Subagents()` raises `FileNotFoundError` for a missing directory and `ValueError` for a file without frontmatter or the same name in two files.
