@@ -2,6 +2,7 @@
 
 from cyclops.core.agent import Agent, RunHandle
 from cyclops.core.agent_files import SubagentFile, Subagents
+from cyclops.core.plugin_dirs import PluginDirs
 from cyclops.core.content import ContentPart, UserContent
 from cyclops.core.hooks import AgentHooks
 from cyclops.core.completion import StreamIdleTimeout
@@ -39,6 +40,7 @@ __all__ = [
     "AgentTool",
     "SubagentFile",
     "Subagents",
+    "PluginDirs",
     "ContentPart",
     "DeniedToolCall",
     "Deny",

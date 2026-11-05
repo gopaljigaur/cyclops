@@ -167,3 +167,38 @@ weather = "my_weather_toolkit.plugin:WeatherToolkit"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 ```
+
+## Plugin directories
+
+Claude Code plugins are directories, not Python packages: skill folders in `skills/`, subagent files in `agents/`, and MCP servers in `.mcp.json`. `PluginDirs(*dirs)` reads those parts of one or more such directories so an agent can use them:
+
+```text
+my-plugin/
+├── .claude-plugin/plugin.json
+├── skills/release-notes/SKILL.md
+├── agents/reviewer.md
+└── .mcp.json
+```
+
+```python
+from cyclops import Agent, AgentConfig, MCPClient, PluginDirs
+
+plugins = PluginDirs("./my-plugin", "~/plugins/other")
+config = AgentConfig(model="gpt-4o")
+
+async with MCPClient() as mcp:
+    for name, server in plugins.mcp_servers.items():
+        await mcp.attach(name, **server)
+    tools = mcp.tools()
+    agent = Agent(
+        config,
+        tools=[*tools, *plugins.subagents.tools(config, tools)],
+        skills=plugins.skills,
+    )
+```
+
+- `plugins.skills` is a [`Skills`](skills.md) over every plugin's `skills/`.
+- `plugins.subagents` is a [`Subagents`](subagents.md#subagents-from-markdown-files) over every plugin's `agents/`.
+- `plugins.mcp_servers` maps each server in the plugins' `.mcp.json` files to the keyword arguments of [`MCPClient.attach`](mcp.md). `${CLAUDE_PLUGIN_ROOT}` and environment variables in the config are expanded.
+
+Installing plugins, from git or a marketplace, is up to you. A name used by two plugins raises `ValueError`, and a directory that does not exist raises `FileNotFoundError`.
