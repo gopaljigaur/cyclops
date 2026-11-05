@@ -34,7 +34,7 @@ config = AgentConfig(
 | `router` | `Router \| None` | `None` | Optional LiteLLM `Router` for fallback and load balancing. |
 | `max_steps` | `int` | `10` | Most LLM completions in one run, guard rounds and output retries included; at least 1. |
 | `max_total_tokens` | `int \| None` | `None` | Most tokens one run may use, checked between steps. |
-| `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps. |
+| `max_cost` | `float \| None` | `None` | Most USD one run may cost, checked between steps; a completion LiteLLM can't price ends the run. |
 | `max_subagent_depth` | `int` | `5` | Most levels of [subagent](/guides/subagents/) runs below one run. |
 | `max_concurrent_subagents` | `int` | `10` | Most subagent runs one run has going at once; more calls wait. |
 | `max_parallel_tool_calls` | `int` | `10` | Most tool calls of one step that run at the same time; at least 1. See [Parallel calls and timeouts](/guides/tools/#parallel-calls-and-timeouts). |
@@ -314,7 +314,7 @@ When tools are in use the agent can call tools several times before producing th
 - `max_total_tokens` caps the tokens summed over the run's completions.
 - `max_cost` caps the run's estimated USD cost.
 
-Reaching a limit is not an error. The run ends with `stop_reason="max_steps"` or `stop_reason="budget"` on the `RunResult` from `run_with_response()`, and `content` is empty. A step in progress always finishes, so a run can exceed a budget by its last step. A completion that reports no usage, or a cost LiteLLM can't price, doesn't count against a budget.
+Reaching a limit is not an error. The run ends with `stop_reason="max_steps"` or `stop_reason="budget"` on the `RunResult` from `run_with_response()`, and `content` is empty. A step in progress always finishes, so a run can exceed a budget by its last step. A completion that reports no usage doesn't count against a budget. With `max_cost` set, a completion LiteLLM can't price ends the run with `stop_reason="budget"` after its step, since the run's cost is no longer known; a deployment's `input_cost_per_token` and `output_cost_per_token`, or a `base_model`, prices it ([cost tracking](/guides/cost-tracking/)).
 
 ```python
 config = AgentConfig(
