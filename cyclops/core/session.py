@@ -31,6 +31,15 @@ logger = logging.getLogger(__name__)
 Durability = Literal["sync", "async", "exit"]
 
 
+class Task(BaseModel):
+    """One entry of a task list, kept by the task tools."""
+
+    id: str
+    subject: str
+    description: str = ""
+    status: Literal["pending", "in_progress", "completed"] = "pending"
+
+
 class Session(BaseModel):
     """One conversation: its transcript and what its runs used.
 
@@ -47,6 +56,9 @@ class Session(BaseModel):
     usage: Optional[Usage] = Field(
         default_factory=Usage,
         description="Summed over every run; None once a run's usage was unknown",
+    )
+    tasks: List[Task] = Field(
+        default_factory=list, description="The task list kept by the task tools"
     )
 
     def fork(self) -> "Session":
@@ -78,7 +90,7 @@ class SessionStore(Protocol):
     async def add_messages(
         self, session: Session, messages: List[Dict[str, Any]]
     ) -> None:
-        """Add messages to the end of the stored session and store its usage.
+        """Add messages to the end of the stored session and store its usage and tasks.
 
         Called only for a session saved before.
         """
@@ -88,14 +100,17 @@ class SessionStore(Protocol):
 
 
 class _Added(BaseModel):
-    """Messages added to a stored session, and its usage after them."""
+    """Messages added to a stored session, and its usage and tasks after them."""
 
     messages: List[Dict[str, Any]]
     usage: Optional[Usage]
+    tasks: List[Task] = Field(default_factory=list)
 
 
 def _added_json(session: Session, messages: List[Dict[str, Any]]) -> str:
-    return _Added(messages=messages, usage=session.usage).model_dump_json()
+    return _Added(
+        messages=messages, usage=session.usage, tasks=session.tasks
+    ).model_dump_json()
 
 
 def _replay(lines: Iterable[str]) -> Session:
@@ -106,6 +121,7 @@ def _replay(lines: Iterable[str]) -> Session:
         addition = _Added.model_validate_json(line)
         session.messages += addition.messages
         session.usage = addition.usage
+        session.tasks = addition.tasks
     return session
 
 
@@ -271,6 +287,7 @@ __all__ = [
     "Durability",
     "Session",
     "SessionStore",
+    "Task",
     "InMemorySessionStore",
     "FileSessionStore",
 ]

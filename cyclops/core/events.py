@@ -1,9 +1,10 @@
 """Typed events a run emits while it progresses."""
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
+from cyclops.core.session import Task
 from cyclops.core.types import RunResult, Usage
 
 
@@ -97,6 +98,12 @@ class Compacted(Event):
     tokens_after: int = Field(description="Request tokens after, as counted")
 
 
+class TasksUpdated(Event):
+    """A task tool changed the run's task list."""
+
+    tasks: List[Task] = Field(description="The whole list after the change")
+
+
 class RunFinished(Event):
     """The run ended; always the last event."""
 
@@ -114,5 +121,6 @@ __all__ = [
     "ModelFallback",
     "StepFinished",
     "Compacted",
+    "TasksUpdated",
     "RunFinished",
 ]

@@ -151,8 +151,16 @@ class Session(BaseModel):
     id: str                        # a random hex id by default
     messages: List[Dict[str, Any]]
     usage: Optional[Usage]
+    tasks: List[Task]              # kept by TASK_TOOLS
     def fork(self) -> Session: ...                # a copy with a new id
     def truncate(self, index: int) -> None: ...   # keep messages[:index]
+
+
+class Task(BaseModel):
+    id: str
+    subject: str
+    description: str = ""
+    status: Literal["pending", "in_progress", "completed"] = "pending"
 
 
 class SessionStore(Protocol):
@@ -257,6 +265,7 @@ class OutputRejected(Event):   feedback: str
 class ModelFallback(Event):    model: str; fallback_model: str; error: Optional[Exception]; usage: Optional[Usage]
 class StepFinished(Event):     step: int; model: Optional[str]; usage: Optional[Usage]; finish_reason: Optional[str]
 class Compacted(Event):        summary: str; replaced_messages: int; tokens_before: int; tokens_after: int
+class TasksUpdated(Event):     tasks: List[Task]
 class RunFinished(Event):      result: RunResult
 ```
 

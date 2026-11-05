@@ -36,7 +36,7 @@ data = session.model_dump_json()
 session = Session.model_validate_json(data)
 ```
 
-A `SessionStore` keeps sessions between runs or processes. It has four async methods: `load(session_id)` (returns `None` when there is no such session), `save(session)`, which replaces the stored session, `add_messages(session, messages)`, which adds messages to the end of a session saved before and stores its usage, and `delete(session_id)`. Cyclops ships two:
+A `SessionStore` keeps sessions between runs or processes. It has four async methods: `load(session_id)` (returns `None` when there is no such session), `save(session)`, which replaces the stored session, `add_messages(session, messages)`, which adds messages to the end of a session saved before and stores its usage and task list, and `delete(session_id)`. Cyclops ships two:
 
 - `InMemorySessionStore()` keeps sessions in the process.
 - `FileSessionStore(directory)` writes each session to `<directory>/<id>.jsonl`: the saved session on the first line, then one line per `add_messages`. Ids must be letters, digits, `_` or `-`.
@@ -101,6 +101,18 @@ agent.run("Ask it differently.", session=session)
 ```
 
 Both change the session in memory only; the next run with a store, or your own `save`, stores the result.
+
+## Task list
+
+`TASK_TOOLS` are four tools an agent can keep a task list with while it works through many steps: `create_task`, `update_task` (status `pending`, `in_progress` or `completed`), `list_tasks` and `get_task`. They are opt in:
+
+```python
+from cyclops import TASK_TOOLS, Agent
+
+agent = Agent(config, tools=[*TASK_TOOLS, *my_tools])
+```
+
+With a session, the list is `session.tasks` and is saved and loaded with the session, so it outlives compaction and carries over to the next run. Without one, each run starts an empty list, and each [subagent](/guides/subagents/) run has its own. Every change emits a `TasksUpdated` event with the whole list, for showing progress.
 
 ## Moving from Memory
 

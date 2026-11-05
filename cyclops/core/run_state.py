@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Deque, Dict, Generator, List, Optional, 
 from cyclops.core.content import UserContent, _Content, _user_content
 from cyclops.core.events import Event, ReasoningDelta, RunFinished, TextDelta
 from cyclops.core.hooks import RUN_STOPPED
-from cyclops.core.session import Session
+from cyclops.core.session import Session, Task
 from cyclops.core.types import AgentConfig, RunResult, Usage, _added
 
 
@@ -67,6 +67,8 @@ class _Run:
         self.result = RunResult(model=config.model)
         self.history = history
         self.session = session
+        # The session's task list, so it is saved with it; a fresh one per run without.
+        self.tasks: List[Task] = [] if session is None else session.tasks
         self.parent = parent
         self.agent_path: Tuple[str, ...] = ()
         self.events: _Events
