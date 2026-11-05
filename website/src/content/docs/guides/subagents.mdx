@@ -73,10 +73,10 @@ You review diffs. Report each bug with the file and line.
 |---|---|
 | `name` | Lowercase letters, digits and hyphens, at most 64 characters. The tool's name. |
 | `description` | The tool's description: say what the subagent does and when to call it. |
-| `tools` | Optional. Names of the parent's tools the subagent may use, as a comma-separated string or a YAML list. Absent, it gets all of them, as in Claude Code. |
-| `model` | Optional. Absent or `inherit`, the subagent uses the parent's model. |
+| `tools` | Optional. Names of the parent's tools the subagent may use, as a comma-separated string or a YAML list; names the parent lacks are skipped. Absent, it gets all of them, as in Claude Code. |
+| `model` | Optional. Absent, `inherit`, or one of Claude Code's aliases (`sonnet`, `opus`, `haiku`, `fable`), the subagent uses the parent's model. |
 
-Other frontmatter fields are ignored.
+Other frontmatter fields are ignored. Frontmatter that is not valid YAML, such as an unquoted description containing `: `, is read as one `key: value` per line, as Claude Code reads it.
 
 ```python
 from cyclops import Agent, AgentConfig, Subagents
@@ -88,7 +88,7 @@ subagents = Subagents("./agents")
 lead = Agent(config, tools=[*tools, *subagents.tools(config, tools)])
 ```
 
-`Subagents(*dirs)` reads every `*.md` file in the given directories and their subdirectories. `subagents.tools(config, tools)` returns one `AgentTool` per file: an agent with `config`, but the file's model and system prompt, and the tools the file names. `Subagents()` raises `FileNotFoundError` for a missing directory and `ValueError` for a file without frontmatter or the same name in two files; `tools()` raises `ValueError` for a tool name not in `tools`.
+`Subagents(*dirs)` reads every `*.md` file in the given directories and their subdirectories. `subagents.tools(config, tools)` returns one `AgentTool` per file: an agent with `config`, but the file's model and system prompt, and the tools the file names. `Subagents()` raises `FileNotFoundError` for a missing directory and `ValueError` for a file without frontmatter or the same name in two files.
 
 ## Full example
 

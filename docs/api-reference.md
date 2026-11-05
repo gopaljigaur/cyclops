@@ -64,7 +64,7 @@ class SubagentFile(BaseModel):
     name: str
     description: str
     tools: Optional[List[str]] = None   # None: all of the parent's tools
-    model: Optional[str] = None         # None or "inherit": the parent's model
+    model: Optional[str] = None         # None, "inherit" or a Claude Code alias: the parent's model
     prompt: str                         # the markdown body
 ```
 

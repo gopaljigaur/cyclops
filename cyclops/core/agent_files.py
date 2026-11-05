@@ -10,6 +10,9 @@ from cyclops.core.subagents import AgentTool
 from cyclops.core.types import AgentConfig
 from cyclops.skills.skills import _frontmatter
 
+# Claude Code's model aliases name its own models, so they keep the parent's too.
+_PARENT_MODEL = (None, "inherit", "sonnet", "opus", "haiku", "fable")
+
 
 class SubagentFile(BaseModel):
     """One parsed subagent file: frontmatter fields, then the system prompt."""
@@ -53,7 +56,7 @@ class Subagents:
         """One AgentTool per subagent, built on the parent's config and tools.
 
         A subagent keeps config but for its own system prompt and model, and
-        gets the tools it names, or all of them when it names none.
+        gets those of tools it names, or all of them when it names none.
         """
         by_name = {t.name: t for t in tools}
         result = []
@@ -61,13 +64,8 @@ class Subagents:
             if a.tools is None:
                 chosen = list(tools)
             else:
-                unknown = [n for n in a.tools if n not in by_name]
-                if unknown:
-                    raise ValueError(
-                        f"Subagent '{a.name}' names unknown tools: {unknown}"
-                    )
-                chosen = [by_name[n] for n in a.tools]
-            model = config.model if a.model in (None, "inherit") else a.model
+                chosen = [by_name[n] for n in a.tools if n in by_name]
+            model = config.model if a.model in _PARENT_MODEL else a.model
             sub = config.model_copy(update={"model": model, "system_prompt": a.prompt})
             result.append(Agent(sub, tools=chosen).as_tool(a.name, a.description))
         return result

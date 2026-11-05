@@ -25,8 +25,10 @@ def _frontmatter(file: Path) -> Tuple[Dict[str, Any], str]:
         raise ValueError(f"{file} has no YAML frontmatter")
     try:
         front = yaml.safe_load(match.group(1))
-    except yaml.YAMLError as e:
-        raise ValueError(f"{file} has invalid YAML frontmatter: {e}") from e
+    except yaml.YAMLError:
+        # Claude Code reads frontmatter strict YAML rejects as top-level key: value lines.
+        lines = [line.partition(":") for line in match.group(1).splitlines()]
+        front = {k.strip(): v.strip() for k, sep, v in lines if sep and k[:1].strip()}
     if not isinstance(front, dict):
         raise ValueError(f"{file} frontmatter must be a YAML mapping")
     return front, match.group(2)
