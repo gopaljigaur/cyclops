@@ -1,12 +1,26 @@
 """Skills, subagents and MCP servers from plugin directories in Claude Code's layout"""
 
 import json
+import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
-from cyclops.core.agent_files import Subagents
-from cyclops.skills import Skills
+from cyclops.core.agent_files import SubagentFile, Subagents
+from cyclops.skills import Skill, Skills
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _parse(from_file: Callable[[Path], T], file: Path) -> Optional[T]:
+    """Parse a plugin's skill or agent file, or warn and skip it when invalid."""
+    try:
+        return from_file(file)
+    except ValueError as e:
+        logger.warning("Skipping %s: %s", file, e)
+        return None
 
 
 def _expand(value: Any, root: Path) -> Any:
@@ -42,10 +56,16 @@ class PluginDirs:
         for root in roots:
             if not root.is_dir():
                 raise FileNotFoundError(f"Plugin directory not found: {root}")
-        self.skills = Skills(*(r / "skills" for r in roots if (r / "skills").is_dir()))
-        self.subagents = Subagents(
-            *(r / "agents" for r in roots if (r / "agents").is_dir())
-        )
+        # One bad file skips only itself, so the rest of its plugin still loads.
+        self.skills = Skills()
+        self.subagents = Subagents()
+        for root in roots:
+            for file in sorted(root.glob("skills/*/SKILL.md")):
+                if skill := _parse(Skill.from_file, file):
+                    self.skills._add(skill, file)
+            for file in sorted(root.glob("agents/**/*.md")):
+                if agent := _parse(SubagentFile.from_file, file):
+                    self.subagents._add(agent, file)
         # Keyword arguments for MCPClient.attach, by server name.
         self.mcp_servers: Dict[str, Dict[str, Any]] = {}
         for root in roots:

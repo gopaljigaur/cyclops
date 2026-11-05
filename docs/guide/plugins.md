@@ -201,4 +201,4 @@ async with MCPClient() as mcp:
 - `plugins.subagents` is a [`Subagents`](subagents.md#subagents-from-markdown-files) over every plugin's `agents/`.
 - `plugins.mcp_servers` maps each server in the plugins' `.mcp.json` files to the keyword arguments of [`MCPClient.attach`](mcp.md). `${CLAUDE_PLUGIN_ROOT}` and environment variables in the config are expanded.
 
-Installing plugins, from git or a marketplace, is up to you. A name used by two plugins raises `ValueError`, and a directory that does not exist raises `FileNotFoundError`.
+Installing plugins, from git or a marketplace, is up to you. A skill or agent file that fails to parse or validate is skipped with a logged warning, so one bad file does not stop its plugin loading. A name used by two plugins raises `ValueError`, and a directory that does not exist raises `FileNotFoundError`.

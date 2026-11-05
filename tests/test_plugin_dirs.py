@@ -95,3 +95,34 @@ async def test_server_attaches_with_its_kwargs(tmp_path):
             tools = await mcp.attach(name, **kwargs)
 
     assert tools and all(t.name.startswith("demo__") for t in tools)
+
+
+def test_invalid_skill_and_agent_files_are_skipped(tmp_path, caplog):
+    root = _plugin(tmp_path / "a")
+    for folder, front in [
+        ("notes", "name: notes\ndescription: Notes."),
+        ("long", f"name: long\ndescription: {'x' * 1025}"),
+        ("misnamed", "name: other\ndescription: Notes."),
+    ]:
+        (root / "skills" / folder).mkdir(parents=True)
+        (root / "skills" / folder / "SKILL.md").write_text(
+            f"---\n{front}\n---\nBody.\n"
+        )
+    (root / "agents").mkdir()
+    (root / "agents" / "reviewer.md").write_text(
+        "---\nname: reviewer\ndescription: Reviews.\n---\nReview.\n"
+    )
+    (root / "agents" / "nameless.md").write_text(
+        "---\ndescription: Reviews.\n---\nReview.\n"
+    )
+
+    plugins = PluginDirs(root)
+
+    assert list(plugins.skills.skills) == ["notes"]
+    assert list(plugins.subagents.agents) == ["reviewer"]
+    skipped = sorted(r.getMessage().split(":")[0] for r in caplog.records)
+    assert skipped == [
+        f"Skipping {root / 'agents' / 'nameless.md'}",
+        f"Skipping {root / 'skills' / 'long' / 'SKILL.md'}",
+        f"Skipping {root / 'skills' / 'misnamed' / 'SKILL.md'}",
+    ]

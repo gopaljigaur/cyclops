@@ -47,10 +47,12 @@ class Subagents:
             if not root.is_dir():
                 raise FileNotFoundError(f"Subagents directory not found: {root}")
             for file in sorted(root.glob("**/*.md")):
-                agent = SubagentFile.from_file(file)
-                if agent.name in self.agents:
-                    raise ValueError(f"Duplicate subagent '{agent.name}' in {file}")
-                self.agents[agent.name] = agent
+                self._add(SubagentFile.from_file(file), file)
+
+    def _add(self, agent: SubagentFile, file: Path) -> None:
+        if agent.name in self.agents:
+            raise ValueError(f"Duplicate subagent '{agent.name}' in {file}")
+        self.agents[agent.name] = agent
 
     def tools(self, config: AgentConfig, tools: List) -> List[AgentTool]:
         """One AgentTool per subagent, built on the parent's config and tools.
