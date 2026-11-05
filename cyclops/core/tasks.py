@@ -97,8 +97,7 @@ TASK_TOOLS: List[Tool] = [
     ),
     Tool(
         "update_task",
-        "Change a task on your task list, as to mark it in_progress or "
-        "completed.",
+        "Change a task on your task list, as to mark it in_progress or " "completed.",
         _update,
     ),
     Tool(
