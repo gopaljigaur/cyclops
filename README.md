@@ -64,7 +64,7 @@ print(agent.run("What is Apple's stock price?"))
 | | |
 |---|---|
 | **Tool loop** | Calls tools in a loop until the model stops asking for them, not just one round |
-| **Subagents** | `agent.as_tool()` lets one agent delegate tasks to others, with shared cancellation, events and budgets |
+| **Subagents** | `agent.as_tool()` lets one agent delegate tasks to others, with shared cancellation, events and budgets; `Subagents` loads them from Claude Code style markdown files |
 | **Streaming** | `agent.stream()` and `agent.astream()` for token-by-token output |
 | **Structured output** | `agent.run(..., response_model=MyModel)` returns a Pydantic instance |
 | **Images and files** | Run input can be OpenAI chat content parts: images, PDFs and audio, checked against what the model takes |

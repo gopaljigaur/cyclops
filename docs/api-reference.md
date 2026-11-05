@@ -50,6 +50,26 @@ class AgentTool(BaseTool):
 
 ---
 
+### Subagents
+
+`cyclops.core.agent_files`: subagents defined in the `.md` files of one or more directories. See [Subagents](guide/subagents.md#subagents-from-markdown-files).
+
+```python
+class Subagents:
+    def __init__(self, *dirs: Union[str, Path]): ...
+    agents: Dict[str, SubagentFile]
+    def tools(self, config: AgentConfig, tools: List) -> List[AgentTool]: ...
+
+class SubagentFile(BaseModel):
+    name: str
+    description: str
+    tools: Optional[List[str]] = None   # None: all of the parent's tools
+    model: Optional[str] = None         # None or "inherit": the parent's model
+    prompt: str                         # the markdown body
+```
+
+---
+
 ### AgentConfig
 
 Pydantic model that holds all LLM and agent runtime settings.

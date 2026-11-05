@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import yaml
 from pydantic import BaseModel, Field
@@ -18,6 +18,20 @@ _TOOL_DESCRIPTION = (
 )
 
 
+def _frontmatter(file: Path) -> Tuple[Dict[str, Any], str]:
+    """Split a markdown file into its YAML frontmatter mapping and its body."""
+    match = _FRONTMATTER.match(file.read_text())
+    if match is None:
+        raise ValueError(f"{file} has no YAML frontmatter")
+    try:
+        front = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{file} has invalid YAML frontmatter: {e}") from e
+    if not isinstance(front, dict):
+        raise ValueError(f"{file} frontmatter must be a YAML mapping")
+    return front, match.group(2)
+
+
 class Skill(BaseModel):
     """One skill: a folder holding a SKILL.md and any files it refers to."""
 
@@ -29,18 +43,8 @@ class Skill(BaseModel):
     @classmethod
     def from_file(cls, file: Path) -> "Skill":
         """Parse a SKILL.md: YAML frontmatter, then the markdown body."""
-        match = _FRONTMATTER.match(file.read_text())
-        if match is None:
-            raise ValueError(f"{file} has no YAML frontmatter")
-        try:
-            front = yaml.safe_load(match.group(1))
-        except yaml.YAMLError as e:
-            raise ValueError(f"{file} has invalid YAML frontmatter: {e}") from e
-        if not isinstance(front, dict):
-            raise ValueError(f"{file} frontmatter must be a YAML mapping")
-        skill = cls.model_validate(
-            {**front, "path": file.parent, "body": match.group(2)}
-        )
+        front, body = _frontmatter(file)
+        skill = cls.model_validate({**front, "path": file.parent, "body": body})
         if skill.name != file.parent.name:
             raise ValueError(f"{file}: name '{skill.name}' does not match its folder")
         return skill
