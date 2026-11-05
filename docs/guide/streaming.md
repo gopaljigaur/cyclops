@@ -134,6 +134,7 @@ async for event in agent.astream_events("What is 2 + 3?"):
 | `ModelFallback` | `model`, `fallback_model`, `error`, `usage` | When a model failed or refused and the step's completion goes to the next of the [fallback models](agents.md#fallback-models). `error` is `None` for a refusal, whose usage is in `usage`. |
 | `StepFinished` | `step`, `model`, `usage`, `finish_reason` | After one completion and the tool calls it asked for. `model` is the model that answered. |
 | `Compacted` | `summary`, `replaced_messages`, `tokens_before`, `tokens_after` | Before a completion, when a summary replaced older messages. See [Context window](agents.md#context-window). |
+| `TasksUpdated` | `tasks` | After a [task tool](sessions.md#task-list) changed the task list, with the whole list. |
 | `RunFinished` | `result` | Last event, with the run's `RunResult`, including usage and cost. |
 
 Every event has `agent_path`, the names of the nested agents it came from, outermost first. It is empty for events of the agent you ran; events of a [subagent](subagents.md) carry its tool name, and its `RunFinished` comes before the outer run's.
