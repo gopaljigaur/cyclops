@@ -63,7 +63,9 @@ class Subagents:
             else:
                 unknown = [n for n in a.tools if n not in by_name]
                 if unknown:
-                    raise ValueError(f"Subagent '{a.name}' names unknown tools: {unknown}")
+                    raise ValueError(
+                        f"Subagent '{a.name}' names unknown tools: {unknown}"
+                    )
                 chosen = [by_name[n] for n in a.tools]
             model = config.model if a.model in (None, "inherit") else a.model
             sub = config.model_copy(update={"model": model, "system_prompt": a.prompt})

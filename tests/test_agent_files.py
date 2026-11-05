@@ -16,7 +16,11 @@ def _write(root, name, front="", body="You review code."):
 def test_builds_agent_tools_from_files(tmp_path):
     _write(tmp_path / "a", "reviewer", "tools: add, sub\nmodel: gpt-4o\ncolor: red\n")
     _write(tmp_path / "b" / "nested", "helper", "model: inherit\n", "You help.")
-    parent = [_make_simple_tool("add"), _make_simple_tool("sub"), _make_simple_tool("mul")]
+    parent = [
+        _make_simple_tool("add"),
+        _make_simple_tool("sub"),
+        _make_simple_tool("mul"),
+    ]
 
     reviewer, helper = Subagents(tmp_path / "a", tmp_path / "b").tools(
         _make_config(max_steps=4), parent
