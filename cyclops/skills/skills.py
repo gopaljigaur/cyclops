@@ -62,16 +62,18 @@ class Skills:
             if not root.is_dir():
                 raise FileNotFoundError(f"Skills directory not found: {root}")
             for file in sorted(root.glob("*/SKILL.md")):
-                skill = Skill.from_file(file)
-                if skill.name in self.skills:
-                    raise ValueError(f"Duplicate skill '{skill.name}' in {file}")
-                self.skills[skill.name] = skill
+                self._add(Skill.from_file(file), file)
         self.tool = Tool(
             "load_skill",
             _TOOL_DESCRIPTION,
             self.load,
             ToolAnnotations(read_only=True),
         )
+
+    def _add(self, skill: Skill, file: Path) -> None:
+        if skill.name in self.skills:
+            raise ValueError(f"Duplicate skill '{skill.name}' in {file}")
+        self.skills[skill.name] = skill
 
     def prompt(self) -> str:
         """The skill listing appended to the system prompt."""

@@ -77,6 +77,20 @@ class SubagentFile(BaseModel):
 
 ---
 
+### PluginDirs
+
+`cyclops.core.plugin_dirs`: the `skills/`, `agents/` and `.mcp.json` of one or more Claude Code plugin directories. See [Plugin directories](/guides/plugins/#plugin-directories).
+
+```python
+class PluginDirs:
+    def __init__(self, *dirs: Union[str, Path]): ...
+    skills: Skills
+    subagents: Subagents
+    mcp_servers: Dict[str, Dict[str, Any]]   # MCPClient.attach kwargs by server name
+```
+
+---
+
 ### AgentConfig
 
 Pydantic model holding all LLM and agent runtime settings.

@@ -72,7 +72,7 @@ print(agent.run("What is Apple's stock price?"))
 | **Skills** | Load instructions from `SKILL.md` folders only when the task needs them |
 | **Sessions** | `Session` transcripts with usage, saved and loaded through a `SessionStore` (in memory or files), automatically after each step or run; forked and truncated |
 | **MCP** | Connect to any MCP server as a tool source, or expose your tools as an MCP server |
-| **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically |
+| **Plugins** | Install `cyclops-toolkit-*` packages and tools are discovered automatically; `PluginDirs` reads the skills, agents and MCP servers of Claude Code plugin directories |
 | **Any LLM** | OpenAI, Anthropic, Groq, Gemini, Ollama, Together AI, Bedrock, and 100+ more via LiteLLM |
 | **Provider options** | `completion_kwargs` passes any LiteLLM argument (keys, headers, retries); typed `reasoning_effort` and `thinking_budget`; reasoning stays in history; `prompt_caching` on by default |
 | **Fallback routing** | Pass a LiteLLM Router for automatic failover and load balancing |
