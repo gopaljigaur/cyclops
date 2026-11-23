@@ -119,7 +119,6 @@ def test_missing_frontmatter(tmp_path):
     [
         ("", "must be a YAML mapping"),
         ("- a\n- b", "must be a YAML mapping"),
-        ("name: [unclosed", "invalid YAML frontmatter"),
     ],
 )
 def test_malformed_frontmatter_names_the_file(tmp_path, front, error):

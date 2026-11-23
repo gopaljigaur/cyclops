@@ -31,7 +31,7 @@ description: Write release notes from a list of changes. Use when asked for rele
 | `name` | Lowercase letters, digits and hyphens, at most 64 characters. Must match the folder name. |
 | `description` | 1 to 1024 characters. Say what the skill does and when to use it: this is all the model sees until it loads the skill. |
 
-Other frontmatter fields are allowed and ignored. Files next to `SKILL.md` (references, templates, data) are read only when the model asks for them.
+Other frontmatter fields are allowed and ignored. Frontmatter that is not valid YAML is read as one `key: value` per line. Files next to `SKILL.md` (references, templates, data) are read only when the model asks for them.
 
 ## Using skills
 
